@@ -1,0 +1,51 @@
+[
+  {
+    "model": "RS-00",
+    "version": "0.0.3.32",
+    "filename": "rs00-0.0.3.32.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs00-0.0.3.32.bin",
+    "sha256": "a889f1b027b53fd7b18bb6db5e7df1f97d4edd62d6ff9c8b5665293c1f9ffa80"
+  },
+  {
+    "model": "RS-01",
+    "version": "0.1.3.18",
+    "filename": "rs01-0.1.3.18.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs01-0.1.3.18.bin",
+    "sha256": "b5b98892ead7f869f81800d8dcd453f6d371e876fe439e072c46c501ca6d3439"
+  },
+  {
+    "model": "RS-02",
+    "version": "0.2.3.34",
+    "filename": "rs02-0.2.3.34.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs02-0.2.3.34.bin",
+    "sha256": "767e427cd1f952fd4e0a30427fb7d9bf8af2d4f2a0d183c03fc0aa04b8be97bd"
+  },
+  {
+    "model": "RS-03",
+    "version": "0.3.1.42",
+    "filename": "rs03-0.3.1.42.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs03-0.3.1.42.bin",
+    "sha256": "aa8cdd5743c165a8d9b9487a1f3ade2a5b28047457a95448ef56b1836152d6fc"
+  },
+  {
+    "model": "RS-04",
+    "version": "0.4.1.32",
+    "filename": "rs04-0.4.1.32.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs04-0.4.1.32.bin",
+    "sha256": "a907c03cfe9c9b16f3b6b047abc689d3c6ab00f7c4484ed4712f6c3ff0ba3c3e"
+  },
+  {
+    "model": "RS-05",
+    "version": "0.5.0.14",
+    "filename": "rs05_0.5.0.14.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs05_0.5.0.14.bin",
+    "sha256": "e05502e115a014029c79f5ad052b6c8b1e1790b557763c8a42da0dc35b6d79be"
+  },
+  {
+    "model": "RS-06",
+    "version": "0.6.0.12",
+    "filename": "rs06_0.6.0.12.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs06_0.6.0.12.bin",
+    "sha256": "b752368a10d5212f4f9b526351cda4828b1e01f7b91092359b51e5268c87aa58"
+  }
+]

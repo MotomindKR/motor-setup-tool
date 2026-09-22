@@ -1,0 +1,10 @@
+ARG BASE=ubuntu:22.04
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+# No Rust, MuJoCo, iproute2, gdbus or gsettings installed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates python3 xvfb xauth dbus libgl1 libegl1 libgl1-mesa-dri \
+    && rm -rf /var/lib/apt/lists/*
+RUN (getent passwd 1000 || useradd -u 1000 smoke) && (getent passwd 1001 || useradd -u 1001 ci-smoke)
+COPY packaging/smoke-test.sh /usr/local/bin/motomind-smoke
+ENTRYPOINT ["bash", "/usr/local/bin/motomind-smoke"]

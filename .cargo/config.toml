@@ -1,0 +1,2 @@
+[env]
+MUJOCO_DOWNLOAD_DIR = { value = ".tools/mujoco", relative = true }

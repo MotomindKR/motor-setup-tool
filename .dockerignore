@@ -1,0 +1,5 @@
+*
+!packaging/
+!packaging/Dockerfile
+!packaging/Dockerfile.smoke
+!packaging/smoke-test.sh

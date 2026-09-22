@@ -1,0 +1,6 @@
+# Brand assets
+
+- `motomind-logo.svg`: downloaded from https://www.motomind.co.kr/src/motomind_logo.svg on 2026-09-22, as linked by https://www.motomind.co.kr/ko. Official artwork, original brand red preserved. Optimized with SVGO 4 (`--multipass`), viewBox retained. Motomind trademark remains the property of Motomind.
+- `fonts/Pretendard-{Regular,SemiBold,Bold}.otf`: upstream static fonts (400/600/700), including Korean and Latin glyphs, from https://github.com/orioncactus/pretendard/tree/main/packages/pretendard/dist/public/static. Redistributed under SIL OFL; see `fonts/OFL.txt`.
+
+All assets are embedded in the native binary; displaying the UI does not require network access. Egui rasterizes the SVG at its requested display size. Native font families replace CSS fallback stacks; bundled Pretendard supplies Korean and Latin, and egui fonts supply additional fallback glyphs. Physical values use `MotomindNumbers-Bold.otf`, an OFL subset derived from Pretendard Bold with its existing `tnum` glyphs made the default. The derivative is renamed to respect reserved font names. `fonts/build_numbers.py` regenerates it and verifies equal digit advances. Technical logs use egui's monospace font.

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Motomind Motor Calibration / Setup
+Comment=Calibrate and configure RobStride motors over SocketCAN
+Exec=motomind-motor-calib
+Icon=com.motomind.MotorSetup
+Terminal=false
+Categories=Science;Engineering;
+Keywords=Motor;Calibration;RobStride;CAN;MuJoCo;
+StartupWMClass=MotoMind · Motor Calibration

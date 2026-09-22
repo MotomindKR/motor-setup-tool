@@ -1,0 +1,2 @@
+Upstream Cargo.toml declares CC0-1.0; no separate license file is published.
+Full CC0 text from: https://raw.githubusercontent.com/spdx/license-list-data/v3.27.0/text/CC0-1.0.txt

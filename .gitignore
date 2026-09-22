@@ -1,0 +1,12 @@
+/target/
+/.venv/
+/.tools/
+/runs/
+__pycache__/
+.pytest_cache/
+
+
+/firmware-cache/
+/.can-locks/
+/dist/
+/diagnostics/

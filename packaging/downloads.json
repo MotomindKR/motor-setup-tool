@@ -1,0 +1,12 @@
+{
+  "x86_64": {
+    "mujoco": {"url":"https://github.com/google-deepmind/mujoco/releases/download/3.12.0/mujoco-3.12.0-linux-x86_64.tar.gz", "sha256":"a9367911e6d5eaeade17c2197304687421c1fc932cdf7bcd4cb8cfaf0374dcb2"},
+    "appimagetool": {"url":"https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage", "sha256":"ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"},
+    "runtime": {"url":"https://api.github.com/repos/AppImage/type2-runtime/releases/assets/456065460", "sha256":"1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf"}
+  },
+  "aarch64": {
+    "mujoco": {"url":"https://github.com/google-deepmind/mujoco/releases/download/3.12.0/mujoco-3.12.0-linux-aarch64.tar.gz", "sha256":"08fd5627a2ef7d5a42580c40e014ab2c1a644f082010c584ca361a3ed8cad838"},
+    "appimagetool": {"url":"https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage", "sha256":"f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"},
+    "runtime": {"url":"https://api.github.com/repos/AppImage/type2-runtime/releases/assets/456064894", "sha256":"7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372"}
+  }
+}

@@ -1,0 +1,127 @@
+name: Linux AppImage release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          text = open('Cargo.toml').read()
+          version = re.search(r'^version = "([^"]+)"', text, re.M).group(1)
+          assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match Cargo.toml version'
+          PY
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .tools/ci-cargo
+            .tools/packaging
+            target/appimage
+          key: appimage-22.04-rust1.98.1-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
+      - name: Build on Ubuntu 22.04 baseline
+        run: |
+          docker build -f packaging/Dockerfile -t motomind-packager .
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e CARGO_HOME=/work/.tools/ci-cargo -e GITHUB_SHA \
+            -v "$PWD:/work" motomind-packager bash scripts/build-appimage.sh
+      - name: Verify in clean Ubuntu 22.04 and 24.04 runtimes
+        run: |
+          artifact=$(find dist -maxdepth 1 -name '*.AppImage' -printf '%f\n')
+          for baseline in 22.04 24.04; do
+            docker build --build-arg BASE=ubuntu:$baseline -f packaging/Dockerfile.smoke -t motomind-smoke:$baseline .
+            mkdir -p "dist/smoke-$baseline"
+            docker run --rm --user "$(id -u):$(id -g)" \
+              -e SMOKE_OUTPUT=/results -v "$PWD/dist:/input:ro" \
+              -v "$PWD/dist/smoke-$baseline:/results" motomind-smoke:$baseline \
+              "/input/$artifact"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.AppImage
+            dist/*.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots-${{ matrix.arch }}
+          path: dist/smoke-*
+
+  publish:
+    name: Publish both architectures
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: appimage-*
+          merge-multiple: true
+          path: dist
+      - name: Create release with verified AppImages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -c ./*.sha256
+          test "$(find . -maxdepth 1 -name '*.AppImage' | wc -l)" -eq 2
+          cat > release-notes.md <<'NOTES'
+          Motor Calibration / Setup for Linux.
+
+          - **amd64**: Intel/AMD 64-bit computers.
+          - **arm64**: ARM 64-bit computers.
+          - Ubuntu 22.04 / glibc 2.35 or newer; a desktop OpenGL driver is required.
+          - MuJoCo and app libraries are bundled. Rust and Python are not required.
+
+          Download the matching AppImage, make it executable, and run it:
+          ```sh
+          chmod +x Motomind-Motor-Setup-*.AppImage
+          ./Motomind-Motor-Setup-<version>-linux-<architecture>.AppImage
+          ```
+          If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the command.
+          The host must provide the adapter driver and an already-configured SocketCAN interface.
+          Recordings are stored under `$XDG_DATA_HOME/motomind-motor-calib/runs`
+          (default: `~/.local/share/motomind-motor-calib/runs`).
+          NOTES
+          # Creating a draft first keeps partially uploaded releases out of downloads.
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Motor Calibration / Setup $RELEASE_TAG" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" ./*.AppImage ./*.sha256 --clobber
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --draft=false
+          fi
