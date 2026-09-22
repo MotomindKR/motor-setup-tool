@@ -617,7 +617,7 @@ impl CalibrationApp {
             ui.add_space(10.);
             let previous_tab = self.sidebar_tab;
             theme::segmented(ui, |ui| {
-                ui.spacing_mut().button_padding.x = 4.;
+                ui.spacing_mut().button_padding.x = 2.;
                 ui.spacing_mut().item_spacing.x = 4.;
                 let width = (ui.available_width() - 3. * ui.spacing().item_spacing.x) / 4.;
                 for (tab, label) in [
@@ -629,7 +629,11 @@ impl CalibrationApp {
                     if ui
                         .add_sized(
                             [width, 36.],
-                            egui::Button::selectable(self.sidebar_tab == tab, label).truncate(),
+                            egui::Button::selectable(
+                                self.sidebar_tab == tab,
+                                RichText::new(label).size(13.),
+                            )
+                            .truncate(),
                         )
                         .clicked()
                     {
