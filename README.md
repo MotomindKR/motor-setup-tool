@@ -28,14 +28,18 @@ Make the downloaded file executable in your file manager, then open it. From a
 terminal, replacing the filename with the one you downloaded:
 
 ```sh
-chmod +x motor-setup-tool-0.1.1-linux-amd64.AppImage
-./motor-setup-tool-0.1.1-linux-amd64.AppImage
+chmod +x motor-setup-tool-0.1.2-linux-amd64.AppImage
+./motor-setup-tool-0.1.2-linux-amd64.AppImage
 ```
 
 Requires **Ubuntu 22.04 or newer**, or another Linux distribution with glibc 2.35+
 and a working desktop OpenGL driver. MuJoCo is included; Rust and Python are not
 needed. If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1` before the
 command. Checksums are included with each release.
+
+Opening the AppImage adds **Motor Setup Tool** to your applications menu with its
+icon. Keep the AppImage file; the launcher points to it. After moving or replacing
+the file, open it once to refresh the launcher.
 
 ## Your first calibration
 

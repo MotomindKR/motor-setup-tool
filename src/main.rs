@@ -1,5 +1,6 @@
 mod app;
 mod bridge;
+mod desktop;
 mod engine;
 mod experiment;
 mod firmware;
@@ -13,6 +14,12 @@ mod theme;
 mod types;
 
 fn main() -> anyhow::Result<()> {
+    if std::env::args().any(|a| a == "--install-desktop") {
+        let launcher = desktop::install_appimage()?
+            .ok_or_else(|| anyhow::anyhow!("Run --install-desktop from the AppImage"))?;
+        println!("Installed {}", launcher.display());
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--version") {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -120,7 +127,12 @@ fn main() -> anyhow::Result<()> {
         println!("Accepted: {}", report.accepted);
         return Ok(());
     }
-    let icon = image::load_from_memory(include_bytes!("../assets/icons/256.png"))?.into_rgba8();
+    // Development builds and passive CLI commands do not modify desktop entries.
+    // Screenshot launches use isolated data in CI and also exercise registration.
+    if let Err(error) = desktop::install_appimage() {
+        eprintln!("Could not register the desktop launcher: {error:#}");
+    }
+    let icon = image::load_from_memory(desktop::WINDOW_ICON)?.into_rgba8();
     let options = eframe::NativeOptions {
         persist_window: !std::env::args().any(|a| a.starts_with("--screenshot=")),
         // Keep window/layout preferences across the package and desktop-ID rename.
@@ -128,7 +140,7 @@ fn main() -> anyhow::Result<()> {
             .map(|directory| directory.join("app.ron")),
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Motor Setup Tool · Motomind")
-            .with_app_id("com.motomind.MotorSetup")
+            .with_app_id(desktop::APP_ID)
             .with_icon(eframe::egui::IconData {
                 width: icon.width(),
                 height: icon.height(),

@@ -110,6 +110,8 @@ jobs:
           ./motor-setup-tool-<version>-linux-<architecture>.AppImage
           ```
           If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the command.
+          Opening the app registers its launcher and icon in your applications menu.
+          After moving or replacing the AppImage, open it once to refresh that launcher.
           The host must provide the adapter driver and an already-configured SocketCAN interface.
           Recordings are stored under `$XDG_DATA_HOME/motomind-motor-calib/runs`
           (default: `~/.local/share/motomind-motor-calib/runs`).

@@ -51,13 +51,29 @@ assert r['cache'] == os.environ['XDG_CACHE_HOME'] + '/motomind-motor-calib'
 assert r['locks'] == r['data'] + '/can-locks'
 print('Relocated binary, bundled MuJoCo, XDG paths and passive CAN enumeration: OK')
 PY
+test ! -e "$XDG_DATA_HOME/applications/com.motomind.MotorSetup.desktop"
 for theme in light dark; do
     timeout 45s dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' \
         "$work/relocated app/motor.AppImage" --screenshot="$work/$theme.png" --screenshot-theme="$theme"
     test -s "$work/$theme.png"
 done
+timeout 45s dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' \
+    python3 /usr/local/bin/verify-motomind-desktop "$work/desktop.png"
+# A moved AppImage must refresh the launcher. Exercise literal percent/quoting
+# characters through the real desktop parser, not a hand-written approximation.
+python3 - "$work/relocated app/motor.AppImage" <<'PY'
+from pathlib import Path
+import subprocess, sys
+old = Path(sys.argv[1])
+new = old.with_name('motor 100% $literal `tick` "quote" \\slash.AppImage')
+old.rename(new)
+subprocess.run([str(new), '--install-desktop'], check=True)
+PY
+timeout 45s dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' \
+    python3 /usr/local/bin/verify-motomind-desktop "$work/desktop-moved.png"
 if [[ -n "${SMOKE_OUTPUT:-}" ]]; then
     mkdir -p "$SMOKE_OUTPUT"
-    cp "$work/check.json" "$work/light.png" "$work/dark.png" "$SMOKE_OUTPUT/"
+    cp "$work/check.json" "$work/light.png" "$work/dark.png" \
+        "$work/desktop.png" "$work/desktop-moved.png" "$SMOKE_OUTPUT/"
 fi
 printf 'Light and dark desktop rendering: OK\n'

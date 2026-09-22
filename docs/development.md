@@ -147,6 +147,7 @@ Run these options with `./scripts/run.sh` or the packaged AppImage:
 | Option | Effect |
 |---|---|
 | `--version` | Print the app version |
+| `--install-desktop` | Register the current AppImage's launcher and icons without opening a window |
 | `--list-can` | List CAN interfaces without sending motor commands |
 | `--self-check` | Check MuJoCo, writable data paths, theme lookup, and passive CAN discovery |
 | `--open=/path/to/run` | Open saved graphs |

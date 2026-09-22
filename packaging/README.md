@@ -63,6 +63,14 @@ ID both use `com.motomind.MotorSetup`. The icon is included as SVG and 16–512 
 PNGs under `usr/share/icons/hicolor`, with a root icon and `.DirIcon` for AppImage
 launchers. See [assets](../assets/README.md) to regenerate the PNGs.
 
+On GUI startup, an AppImage registers its desktop entry and icons under
+`$XDG_DATA_HOME` (default `~/.local/share`). This lets GNOME/Wayland match the
+window's application ID; assets inside the temporary AppImage mount alone are
+not discoverable by the desktop. The launcher targets the original AppImage,
+not its temporary binary path, and refreshes when a moved/new version is opened.
+`--install-desktop` performs the same registration without opening a window.
+Development binaries and passive CLI checks do not register a launcher.
+
 The executable searches `$ORIGIN/../lib`; bundled libraries search `$ORIGIN`.
 System glibc, the ELF loader, and OpenGL driver/dispatch stay on the host.
 Packaging rejects GLIBC requirements newer than 2.35. The AppImage runtime and
@@ -87,7 +95,10 @@ argument `BASE=ubuntu:24.04` to test the second runtime used by release CI.
 The smoke test relocates the AppImage into a path containing spaces, unsets
 development library paths, and uses fresh user directories. It checks MuJoCo
 stepping, writable data paths, passive CAN enumeration, and light/dark rendering
-under Xvfb with software OpenGL. Only `dist/` is mounted: source code and the
+under Xvfb with software OpenGL. It also resolves the installed icon and launches
+the app through GLib's desktop-entry loader, including after relocation to a
+filename containing spaces, percent signs, quotes, and other reserved characters.
+Only `dist/` is mounted: source code and the
 developer's toolchain are inaccessible. It does not operate a motor.
 
 Real adapter/firmware behavior and GPU/Wayland integration require separate
