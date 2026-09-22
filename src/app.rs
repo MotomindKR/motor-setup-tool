@@ -1149,7 +1149,6 @@ impl CalibrationApp {
                     ui.label(RichText::new("Torque · Nm").family(theme::bold()));
                     styled_plot("torque")
                         .height(380.)
-                        .legend(Legend::default())
                         .x_axis_label("Time · s")
                         .show(ui, |plot| {
                             plot.line(
@@ -1306,6 +1305,11 @@ fn metric(ui: &mut egui::Ui, label: &str, before: f64, after: f64, unit: &str) {
 fn styled_plot(id: &str) -> Plot<'static> {
     // Hide crowded ticks instead of leaving near-transparent, unreadable labels.
     Plot::new(id)
+        .legend(
+            Legend::default()
+                .follow_insertion_order(true)
+                .background_alpha(0.95),
+        )
         .custom_x_axes(vec![AxisHints::new_x().label_spacing(60.0..=60.5)])
         .custom_y_axes(vec![AxisHints::new_y().label_spacing(28.0..=28.5)])
 }

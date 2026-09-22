@@ -1,4 +1,6 @@
-# Measurements and staged identification
+# Identification reference
+
+[Developer guide](development.md) · [Simulation and exports](simulation.md)
 
 The full suite defaults to 40 seconds of training followed by 20 seconds of
 independent validation. Only training samples select parameters. The exported
@@ -17,7 +19,7 @@ There is one preset per motor. Intervals scale with recording duration. Held-out
 validation uses different frequencies, speed levels, pulse widths and amplitudes.
 Requested target speed reaches 75% of the configured speed cutoff. The preset
 speed cutoff is 45% of the smaller of nominal no-load speed and wire range.
-Preset torque uses the existing bench cap; travel is ±24 rad from the initial
+Preset torque uses the bench cap below; travel is ±24 rad from the initial
 position. Sweep range, durations and limits can be edited in Advanced.
 
 Speed stages use a bounded host PI controller. Torque bursts directly request
@@ -30,9 +32,8 @@ Kp/Kd at zero. No motor motion starts when opening the app.
 
 The motion preview shows requested speed and burst torque, not predicted motor
 response. High-frequency tracking may be amplitude-limited. `excitation_revision`
-separates the new suite from older recordings; recorded commands remain the
-replay input. The UI upgrades old saved test settings once and requires review
-before a hardware run.
+identifies the waveform generation used for each session; recorded commands
+remain the replay input. The UI requires limit review before a hardware run.
 
 ## Motor specifications versus test settings
 
@@ -75,8 +76,7 @@ Temperature limits refer to reported motor temperature, not the ambient rating.
    This reduces the mismatch between short-window fitting and plotted rollouts.
    A reduced training objective does not guarantee improved held-out behavior.
 5. Run full training and held-out trajectories from their initial states only.
-   The held-out data never tunes parameters. Original acceptance thresholds
-   remain unchanged, and rejected candidates are not promoted.
+   The held-out data never tunes parameters. Rejected candidates are not promoted to accepted exports.
 
 Breakaway calibration is deferred. New fits use MuJoCo's constant joint
 `frictionloss`, with no additional static peak (`static_friction = 0`). The
@@ -85,26 +85,20 @@ there is no separate breakaway experiment or parameter search. Low-speed and
 reversal discrepancies remain visible in full-trajectory validation. Historical
 reports containing a Stribeck peak retain their original replay semantics.
 
-## Applying an accepted result
+## Acceptance and limitations
 
-Compile a model with the exported joint armature, damping and kinetic friction
-and a direct torque actuator with gear=1. Then apply delayed command history. The exported `replay_wrapper.py` provides the
-same stepping semantics as native Rust, using maximum 1 ms steps and splitting
-at command/observation boundaries. It advances the entire MuJoCo model.
+Acceptance requires optimizer convergence, sufficient parameter separation,
+no delay-boundary hit, no material worsening of either held-out RMSE, and
+held-out velocity RMSE below the larger of 0.05 rad/s or 20% of measured RMS
+velocity. These are engineering acceptance thresholds, not confidence intervals.
 
-```python
-import json
-import mujoco
-from replay_wrapper import TorqueReplay
+The fit assumes accurate commanded torque and identifies an effective model
+of the unloaded gearbox output. Delay includes host scheduling, CAN transport,
+firmware, filtering, and reception. It does not separately identify those
+contributions or independently resolve delay below the feedback interval.
+Temperature/load-dependent friction, compliance, backlash, torque strength,
+and PD gains are outside the fitted model.
 
-artifact = json.load(open("calibration.json"))
-model = mujoco.MjModel.from_xml_path("post_calibration.xml")
-data = mujoco.MjData(model)
-replay = TorqueReplay(model, data, artifact)
-# Commands use the same time origin as data.time, in seconds and output Nm.
-replay.advance_to(0.01, [(0.0, 0.02)])
-```
-
-XML contains delay as metadata, but loading XML alone does not activate it. Do not use a rejected `candidate.json` as an accepted result.
-The helper was compared against Rust replay on both synthetic and real traces;
-maximum state differences were below 1e-12 with MuJoCo 3.12.0.
+See [Simulation and exports](simulation.md) to apply an accepted result. For
+implementation changes, keep the validation recording out of all parameter
+and seed selection decisions.
