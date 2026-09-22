@@ -319,15 +319,59 @@ pub fn checkbox(
     value: &mut bool,
     text: impl Into<egui::WidgetText>,
 ) -> egui::Response {
-    let border = colors(ui).muted;
-    ui.scope(|ui| {
-        ui.visuals_mut().widgets.inactive.corner_radius = 4.into();
-        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1_f32, border);
-        ui.visuals_mut().widgets.hovered.corner_radius = 4.into();
-        ui.visuals_mut().widgets.active.corner_radius = 4.into();
-        ui.checkbox(value, text)
-    })
-    .inner
+    let palette = colors(ui);
+    let text = text.into();
+    let label = text.text().to_owned();
+    let icon_id = egui::Id::new("motomind-checkbox");
+    let mut atoms = egui::Atoms::new(text);
+    atoms.push_left(egui::Atom::custom(icon_id, egui::vec2(20., 36.)));
+    // Keep egui's native layout, label hit target, keyboard focus and checkbox
+    // accessibility semantics; only the box and checkmark have custom paint.
+    let mut prepared = egui::AtomLayout::new(atoms)
+        .sense(egui::Sense::click())
+        .min_size(egui::vec2(36., 36.))
+        .allocate(ui);
+    if prepared.response.clicked() {
+        *value = !*value;
+        prepared.response.mark_changed();
+    }
+    prepared.response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *value, &label)
+    });
+    prepared.fallback_text_color = palette.ink;
+    let painted = prepared.paint(ui);
+    if let Some(slot) = painted.rect(icon_id) {
+        let rect = egui::Rect::from_center_size(slot.center(), egui::vec2(20., 20.));
+        let hovered = painted.response.hovered() || painted.response.is_pointer_button_down_on();
+        let (fill, border) = if *value {
+            (if hovered { PRIMARY_HOVER } else { PRIMARY }, Stroke::NONE)
+        } else {
+            (
+                palette.background,
+                Stroke::new(1.5_f32, if hovered { PRIMARY } else { palette.muted }),
+            )
+        };
+        ui.painter()
+            .rect(rect, 6, fill, border, egui::StrokeKind::Inside);
+        if *value {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                egui_material_icons::icons::ICON_CHECK,
+                FontId::new(17., icon_family()),
+                WHITE,
+            );
+        }
+        if painted.response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(3.),
+                8,
+                Stroke::new(1_f32, PRIMARY),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+    painted.response
 }
 
 pub fn segmented(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
@@ -440,6 +484,69 @@ pub fn desktop_theme() -> Option<egui::Theme> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checkbox_label_and_keyboard_toggle_but_disabled_control_does_not() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut checked = false;
+        let mut frame = |events, enabled, focus| {
+            let mut changed = false;
+            let mut rect = egui::Rect::NOTHING;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400., 200.),
+                    )),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.add_enabled_ui(enabled, |ui| {
+                            let response =
+                                checkbox(ui, &mut checked, "Motor secured · limits reviewed");
+                            if focus {
+                                response.request_focus();
+                            }
+                            changed = response.changed();
+                            rect = response.rect;
+                        });
+                    });
+                },
+            );
+            (checked, changed, rect)
+        };
+        let (_, _, rect) = frame(vec![], true, false);
+        let label = egui::pos2(rect.right() - 8., rect.center().y);
+        let pointer = |pressed| egui::Event::PointerButton {
+            pos: label,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(
+            vec![egui::Event::PointerMoved(label), pointer(true)],
+            true,
+            false,
+        );
+        let (checked, changed, _) = frame(vec![pointer(false)], true, true);
+        assert!(checked && changed);
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Space,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        let (checked, changed, _) = frame(vec![key(true)], true, false);
+        assert!(!checked && changed);
+        frame(vec![key(false)], true, false);
+        frame(vec![pointer(true)], false, false);
+        let (checked, changed, _) = frame(vec![pointer(false), key(true)], false, false);
+        assert!(!checked && !changed);
+    }
     #[test]
     fn jog_hold_survives_pointer_drag_in_a_scroll_area_until_release() {
         let ctx = egui::Context::default();
