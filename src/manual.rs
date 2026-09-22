@@ -144,7 +144,6 @@ fn run(
     );
     let mut fb = bus.stopped()?;
     let mut enabled = false;
-    let mut watchdog_verified = false;
     let mut was_jogging = false;
     let mut position = 0.;
     let mut previous = fb.position;
@@ -164,14 +163,13 @@ fn run(
             validate_feedback(c, &fb, 0.)?;
             output.lock().unwrap().preparing = true;
             bus.stopped()?;
-            if !watchdog_verified {
-                let expired = bus.watchdog_preflight(cancel)?;
-                ensure!(
-                    expired.mode == 0 && expired.faults == 0,
-                    "Firmware watchdog did not stop the motor; update firmware before jogging"
-                );
-                watchdog_verified = true;
-            }
+            // Recheck on every enable: a power cycle while disabled can reset
+            // the motor's volatile watchdog and operation-mode registers.
+            let expired = bus.watchdog_preflight(cancel)?;
+            ensure!(
+                expired.mode == 0 && expired.faults == 0,
+                "Firmware watchdog did not stop the motor; update firmware before jogging"
+            );
             // Re-check intent after the blocking handshake and quiet interval.
             let latest = input.lock().unwrap().clone();
             if cancel.load(Ordering::Relaxed) {
