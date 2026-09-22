@@ -7,6 +7,7 @@
 Calibrate a bare RobStride motor, compare its motion with MuJoCo, and manage its
 ID, zero position, and firmware from one Linux desktop app.
 
+- Monitor live motor feedback and use hold-to-jog controls in the Test tab.
 - Discover motors on available CAN buses and identify their model from firmware.
 - Measure armature inertia, damping, friction, and effective delay with one preset per model.
 - Compare measured motion with simulation before and after calibration.
@@ -42,13 +43,13 @@ housing, leave the shaft unloaded and clear, and have a physical stop available.
 
 1. Power the motor and connect CAN. [Configure the CAN interface](docs/user-guide.md#connect-a-motor) if needed.
 2. Select the bus under **Connection**, click **Scan**, and select your motor.
-3. Open **Test** and review the model's torque, speed, and travel limits.
+3. Open **Calibrate** and review the model's torque, speed, and travel limits.
 4. Check **Motor secured · limits reviewed**, then **Start calibration**.
 5. Review **Validation** to see how well the fitted simulation predicts a separate recording.
 
 Recording and fitting show progress. **Stop** ends acquisition or cancels fitting.
 Results are saved automatically. Use **Motor setup** for zero, ID, and firmware
-operations; use **Files** to reopen or refit a saved run.
+operations; use **Test** to monitor or jog a motor and **Files** to reopen or refit a saved run.
 
 ## Read the results
 

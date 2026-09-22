@@ -188,7 +188,7 @@ impl Bus {
         );
         Ok(())
     }
-    fn feedback(&self, timeout: Duration) -> Result<Feedback> {
+    pub(crate) fn feedback(&self, timeout: Duration) -> Result<Feedback> {
         let f = self.wait_for(timeout, |f| {
             protocol::feedback(
                 f,
@@ -206,7 +206,7 @@ impl Bus {
         )
         .unwrap())
     }
-    fn enable_zero_torque(&self, cancel: &AtomicBool) -> Result<Feedback> {
+    pub(crate) fn enable_zero_torque(&self, cancel: &AtomicBool) -> Result<Feedback> {
         ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
         self.flush()?;
         // Consume the zero-command reply before enable. Merely flushing right
@@ -263,6 +263,30 @@ impl Bus {
         anyhow::bail!(
             "Enable did not reach Run mode within 100 ms; last feedback mode={last:?} (0=Reset, 1=Calibration, 2=Run), faults=0x00. No calibration motion started"
         )
+    }
+    pub(crate) fn watchdog_preflight(&self, cancel: &AtomicBool) -> Result<Feedback> {
+        let bus = self;
+        let c = &self.config;
+        // Program raw firmware ticks and verify actual expiry below. Tick periods
+        // differ across published firmware revisions; do not silently assume ms.
+        // The nonzero watchdog is retained after the run; no flash save is issued.
+        bus.write_parameter(0x7028, 2000_u32.to_le_bytes())?;
+        bus.send(protocol::write_u8(c.host_id, c.motor_id, 0x7005, 0))?;
+        ensure!(
+            bus.read_parameter(0x7005)?[0] == 0,
+            "Failed to select torque/operation mode"
+        );
+        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        bus.enable_zero_torque(cancel)
+            .context("Watchdog preflight could not enable motor at zero torque")?;
+        let watchdog_start = Instant::now();
+        while watchdog_start.elapsed() < Duration::from_millis(300) {
+            ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+            thread::sleep(Duration::from_millis(2));
+        }
+        bus.flush()?;
+        bus.send(protocol::torque(c.motor_id, 0., &c.profile).0)?;
+        bus.feedback(Duration::from_millis(50))
     }
     pub fn stop(&self) -> Result<()> {
         self.send(protocol::frame(
@@ -533,7 +557,7 @@ pub fn change_id(c: &Config, new_id: u8) -> Result<()> {
     Ok(())
 }
 
-struct StopGuard<'a>(&'a Bus);
+pub(crate) struct StopGuard<'a>(pub &'a Bus);
 impl Drop for StopGuard<'_> {
     fn drop(&mut self) {
         for _ in 0..3 {
@@ -580,26 +604,7 @@ pub fn acquire(
         }),
     )?;
     check_firmware_model(c, firmware.as_deref())?;
-    // Program raw firmware ticks and verify actual expiry below. Tick periods
-    // differ across published firmware revisions; do not silently assume ms.
-    // The nonzero watchdog is retained after the run; no flash save is issued.
-    bus.write_parameter(0x7028, 2000_u32.to_le_bytes())?;
-    bus.send(protocol::write_u8(c.host_id, c.motor_id, 0x7005, 0))?;
-    ensure!(
-        bus.read_parameter(0x7005)?[0] == 0,
-        "Failed to select torque/operation mode"
-    );
-    ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
-    bus.enable_zero_torque(cancel)
-        .context("Watchdog preflight could not enable motor at zero torque")?;
-    let watchdog_start = Instant::now();
-    while watchdog_start.elapsed() < Duration::from_millis(300) {
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
-        thread::sleep(Duration::from_millis(2));
-    }
-    bus.flush()?;
-    bus.send(protocol::torque(c.motor_id, 0., &c.profile).0)?;
-    let expired = bus.feedback(Duration::from_millis(50))?;
+    let expired = bus.watchdog_preflight(cancel)?;
     bridge::write_json(
         &dir.join("watchdog_preflight.json"),
         &serde_json::json!({

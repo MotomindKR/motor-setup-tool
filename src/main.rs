@@ -5,6 +5,7 @@ mod experiment;
 mod firmware;
 mod fit;
 mod hardware;
+mod manual;
 mod paths;
 mod pipeline;
 mod protocol;

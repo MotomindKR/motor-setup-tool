@@ -28,6 +28,25 @@ pub fn release(model: &str) -> Result<Release> {
         .find(|r| r.model == model)
         .context("No bundled official firmware for selected model")
 }
+/// Compare only known firmware families against the verified, bundled catalog.
+/// Missing/malformed versions and newer installed versions are never upgrades.
+pub fn available_update(model: &str, installed: &str) -> Option<Release> {
+    fn parts(version: &str) -> Option<Vec<u8>> {
+        version
+            .split('.')
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .ok()
+    }
+    if protocol::firmware_model(installed).as_deref() != Some(model) {
+        return None;
+    }
+    let candidate = release(model).ok()?;
+    if protocol::firmware_model(&candidate.version).as_deref() != Some(model) {
+        return None;
+    }
+    (parts(installed)? < parts(&candidate.version)?).then_some(candidate)
+}
 fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
     ensure!(
         !bytes.is_empty() && bytes.len() <= 0x80000,
@@ -314,6 +333,26 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn update_notice_compares_numeric_versions_in_the_same_model() {
+        for profile in crate::types::Profile::presets() {
+            let r = release(&profile.model).unwrap();
+            let old = format!("0.{}.0.0", &profile.model[4..]);
+            assert_eq!(
+                available_update(&profile.model, &old).unwrap().version,
+                r.version
+            );
+            assert!(available_update(&profile.model, &r.version).is_none());
+            let future = format!("0.{}.99.0", &profile.model[4..]);
+            assert!(available_update(&profile.model, &future).is_none());
+        }
+        assert!(available_update("RS-00", "0.0.3.9").is_some());
+        assert!(available_update("RS-00", "0.0.3.100").is_none());
+        for invalid in ["", "unknown", "0.0.3", "0.0.3.32.1", "0.0.3.256", "0.5.0.1"] {
+            assert!(available_update("RS-00", invalid).is_none());
+        }
+        assert!(available_update("RS-99", "0.0.0.1").is_none());
+    }
     #[test]
     fn official_catalog_matches_models_and_rejects_altered_images() {
         for p in crate::types::Profile::presets() {

@@ -29,7 +29,7 @@ unique CAN ID. An unknown or unreadable firmware version blocks calibration.
 
 ## Run calibration
 
-1. Select **Test**. Review maximum torque, speed cutoff, requested speed, and travel.
+1. Select **Calibrate**. Review maximum torque, speed cutoff, requested speed, and travel.
 2. Open **Motion preview** to see the requested speed and torque bursts. These
    are test inputs, not predictions of the motor's response.
 3. If needed, adjust limits and recording duration under **Advanced**. **Restore
@@ -81,9 +81,38 @@ Select the motor, then open **Motor setup**:
   the same motor at its new address.
 - **Disable motor** requests and verifies stopped mode when the app is idle.
 
+## Monitor and jog a motor
+
+Open **Test** and choose **Start monitoring**. The motor is disabled first;
+position, speed, torque, temperature, mode, and fault bits update live. Graphs
+show the last 30 seconds. Unavailable or stale live values display `--`.
+
+To jog, secure the motor, clear the shaft, select a speed, and check
+**Motor secured · shaft clear**. Choose **Enable motor**, wait for the watchdog
+check, then hold **Jog −** or **Jog +**. Releasing the button disables the motor;
+choose **Enable motor** again before another jog. Enabling alone applies zero
+torque and does not hold position.
+
+Jog speed is capped at 1 rad/s or 10% of the model's calibration speed limit,
+whichever is lower. Torque is capped at 10% of rated torque or the calibration
+limit, whichever is lower. Travel is limited to ±one output revolution from
+each enable position, or the smaller calibration travel limit. These limits
+are intended for a secured bare motor.
+
+**Disable motor**, **Stop monitoring**, switching tabs, closing the window,
+loss of focus, stale UI input, missing feedback, faults, and exceeded limits
+stop jogging. The firmware watchdog must pass before jogging is permitted.
+Motor selection and setup operations are locked while monitoring; stop
+monitoring to change them. Monitoring does not create a calibration recording.
+
 ## Update firmware
 
-Open **Motor setup → Firmware update** and choose **Download and verify firmware**.
+After scanning, **Firmware update available** appears beside the selected motor
+when its version is older than the verified release in the app’s catalog. Click
+the notice to open the updater. This comparison works offline; it does not poll
+for future vendor releases or recommend downgrading newer firmware.
+
+Open **Motor setup → Firmware update** and choose **Download and verify**.
 Review the installed and target versions, then press the update button for the
 selected model and ID. The catalog's release is shown in the UI; it is bundled
 with the app rather than automatically following the vendor's newest release.

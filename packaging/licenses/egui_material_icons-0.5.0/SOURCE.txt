@@ -1,0 +1,3 @@
+LICENSE-MIT: https://raw.githubusercontent.com/lucasmerlin/hello_egui/8fac8abb42161a6e27a4488c90e6b1ff0f9932f5/LICENSE
+LICENSE-MATERIAL-SYMBOLS: https://raw.githubusercontent.com/google/material-design-icons/master/LICENSE
+Material Symbols Rounded font: Google Material Design Icons, Apache-2.0.

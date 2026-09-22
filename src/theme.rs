@@ -83,6 +83,15 @@ pub fn semibold() -> FontFamily {
 pub fn install(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
     let mut fonts = egui::FontDefinitions::default();
+    // Merge icons into our fonts rather than replacing Pretendard at runtime.
+    let mut icons = FontData::from_static(egui_material_icons::FONT_DATA);
+    icons.tweak.y_offset_factor = 0.05;
+    fonts
+        .font_data
+        .insert("material-icons".into(), icons.into());
+    for family in fonts.families.values_mut() {
+        family.insert(0, "material-icons".into());
+    }
     for (name, data) in [
         (
             "Motomind Numbers",
@@ -235,6 +244,18 @@ pub fn primary(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response 
         )
     })
     .inner
+}
+
+pub fn action(icon: &str, label: &str) -> RichText {
+    RichText::new(format!("{icon}  {label}"))
+}
+
+pub fn icon_button(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response {
+    let response = ui.add_sized([36., 36.], egui::Button::new(RichText::new(icon).size(20.)));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    response.on_hover_text(label)
 }
 
 pub fn checkbox(

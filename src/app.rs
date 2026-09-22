@@ -1,6 +1,7 @@
-use crate::{bridge, firmware, hardware, pipeline, theme, types::*};
+use crate::{bridge, firmware, hardware, manual, pipeline, theme, types::*};
 use anyhow::Result;
 use eframe::egui::{self, Color32, RichText};
+use egui_material_icons::icons::*;
 use egui_plot::{AxisHints, Legend, Line, Plot, PlotPoints};
 use std::{
     path::PathBuf,
@@ -28,6 +29,7 @@ enum Event {
 
 #[derive(Clone, Copy, PartialEq)]
 enum SidebarTab {
+    Calibrate,
     Test,
     Motor,
     Files,
@@ -45,6 +47,12 @@ pub struct CalibrationApp {
     sidebar_tab: SidebarTab,
     chart_view: ChartView,
     firmware_prepared: Option<firmware::Prepared>,
+    open_firmware: bool,
+    manual: Option<manual::Session>,
+    manual_status: manual::Status,
+    manual_history: std::collections::VecDeque<(Instant, crate::protocol::Feedback)>,
+    jog_reviewed: bool,
+    jog_speed: f64,
     firmware_updating: bool,
     firmware_progress: f32,
     work_progress: Option<WorkProgress>,
@@ -76,9 +84,15 @@ impl Default for CalibrationApp {
         Self {
             config: Config::default(),
             system_theme: None,
-            sidebar_tab: SidebarTab::Test,
+            sidebar_tab: SidebarTab::Calibrate,
             chart_view: ChartView::Motion,
             firmware_prepared: None,
+            open_firmware: false,
+            manual: None,
+            manual_status: manual::Status::default(),
+            manual_history: Default::default(),
+            jog_reviewed: false,
+            jog_speed: 0.5,
             firmware_updating: false,
             firmware_progress: 0.,
             work_progress: None,
@@ -157,6 +171,15 @@ impl CalibrationApp {
         app.screenshot_path =
             std::env::args().find_map(|a| a.strip_prefix("--screenshot=").map(PathBuf::from));
         if app.screenshot_path.is_some() {
+            if let Some(tab) = std::env::args().find_map(|a| match a.as_str() {
+                "--screenshot-tab=calibrate" => Some(SidebarTab::Calibrate),
+                "--screenshot-tab=test" => Some(SidebarTab::Test),
+                "--screenshot-tab=motor" => Some(SidebarTab::Motor),
+                "--screenshot-tab=files" => Some(SidebarTab::Files),
+                _ => None,
+            }) {
+                app.sidebar_tab = tab;
+            }
             app.screenshot_theme = std::env::args().find_map(|a| match a.as_str() {
                 "--screenshot-theme=light" => Some(egui::Theme::Light),
                 "--screenshot-theme=dark" => Some(egui::Theme::Dark),
@@ -185,6 +208,7 @@ impl CalibrationApp {
         if self.busy() {
             return;
         }
+        self.stop_monitor();
         if let Some(job) = self.job.take() {
             let _ = job.join();
         }
@@ -359,6 +383,7 @@ impl CalibrationApp {
                 .is_some_and(|m| m.model.as_deref() == Some(self.config.profile.model.as_str()))
     }
     fn invalidate_connection(&mut self) {
+        self.stop_monitor();
         self.found.clear();
         self.reviewed = false;
         self.firmware_prepared = None;
@@ -394,6 +419,10 @@ impl CalibrationApp {
         }
     }
     fn select_motor(&mut self, id: u8) {
+        self.stop_monitor();
+        self.manual_status = manual::Status::default();
+        self.manual_history.clear();
+        self.jog_reviewed = false;
         self.config.motor_id = id;
         if let Some(model) = self.selected_motor().and_then(|m| m.model.as_ref())
             && let Some(profile) = Profile::presets().into_iter().find(|p| &p.model == model)
@@ -477,11 +506,7 @@ impl CalibrationApp {
             if self.config.interface != before {
                 self.invalidate_connection();
             }
-            if ui
-                .button("Refresh")
-                .on_hover_text("Refresh available CAN buses")
-                .clicked()
-            {
+            if theme::icon_button(ui, ICON_REFRESH, "Refresh available CAN buses").clicked() {
                 self.refresh_interfaces();
             }
         });
@@ -501,7 +526,7 @@ impl CalibrationApp {
                 .map(|m| format!("{} · ID {}", m.model.as_deref().unwrap_or("Unknown"), m.id))
                 .unwrap_or("Select motor".into());
             egui::ComboBox::from_id_salt("discovered_motor")
-                .width(200.)
+                .width(170.)
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     for motor in &self.found {
@@ -520,7 +545,10 @@ impl CalibrationApp {
                 self.select_motor(id);
             }
             if ui
-                .add_enabled(self.bus_ready(), egui::Button::new("Scan"))
+                .add_enabled(
+                    self.bus_ready(),
+                    egui::Button::new(theme::action(ICON_SEARCH, "Scan")),
+                )
                 .on_hover_text("Scan motor IDs and detect model from firmware")
                 .clicked()
             {
@@ -535,23 +563,49 @@ impl CalibrationApp {
                 ui.small(format!("Firmware {version} · Model detected"));
             }
         }
+        let update = self.selected_motor().and_then(|motor| {
+            firmware::available_update(motor.model.as_deref()?, motor.firmware.as_deref()?)
+        });
+        if let Some(update) = update
+            && ui
+                .add(egui::Button::new(
+                    theme::action(ICON_SYSTEM_UPDATE_ALT, "Firmware update available")
+                        .color(theme::colors(ui).link),
+                ))
+                .on_hover_text(format!(
+                    "{} · firmware {}. Open Motor setup to review and install.",
+                    update.model, update.version
+                ))
+                .clicked()
+        {
+            self.sidebar_tab = SidebarTab::Motor;
+            self.open_firmware = true;
+        }
     }
     fn controls(&mut self, ui: &mut egui::Ui) {
         let before = self.config.clone();
         let busy = self.busy();
         ui.add_enabled_ui(!busy, |ui| {
-            self.connection_controls(ui);
+            ui.add_enabled_ui(self.manual.is_none(), |ui| self.connection_controls(ui));
             ui.add_space(10.);
+            let previous_tab = self.sidebar_tab;
             theme::segmented(ui, |ui| {
+                ui.spacing_mut().button_padding.x = 8.;
+                ui.spacing_mut().item_spacing.x = 4.;
+                ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Calibrate, "Calibrate");
                 ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Test, "Test");
                 ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Motor, "Motor setup");
                 ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Files, "Files");
             });
+            if previous_tab == SidebarTab::Test && self.sidebar_tab != SidebarTab::Test {
+                self.stop_monitor();
+            }
             ui.separator();
             match self.sidebar_tab {
-                SidebarTab::Test => {
+                SidebarTab::Test => self.manual_controls(ui),
+                SidebarTab::Calibrate => {
                     if self.motor_ready() {
-                        self.test_controls(ui);
+                        self.calibration_controls(ui);
                     } else {
                         ui.add_space(16.);
                         ui.label("Scan to load the preset for your motor.");
@@ -582,7 +636,13 @@ impl CalibrationApp {
             self.reviewed = false;
         }
         ui.add_space(12.);
-        if !busy && self.selected_motor().is_some() && ui.button("Disable motor").clicked() {
+        if !busy
+            && self.manual.is_none()
+            && self.selected_motor().is_some()
+            && ui
+                .button(theme::action(ICON_POWER_SETTINGS_NEW, "Disable motor"))
+                .clicked()
+        {
             let c = self.config.clone();
             self.spawn(move |tx, _| {
                 hardware::disable(&c)?;
@@ -616,7 +676,9 @@ impl CalibrationApp {
                     if ui
                         .add_enabled(
                             !self.firmware_updating,
-                            egui::Button::new(RichText::new("Stop").color(palette.error)),
+                            egui::Button::new(
+                                theme::action(ICON_STOP, "Stop").color(palette.error),
+                            ),
                         )
                         .clicked()
                     {
@@ -647,7 +709,7 @@ impl CalibrationApp {
         });
         ui.add_space(16.);
     }
-    fn test_controls(&mut self, ui: &mut egui::Ui) {
+    fn calibration_controls(&mut self, ui: &mut egui::Ui) {
         ui.label(
             RichText::new(format!("{} preset", self.config.profile.model)).family(theme::bold()),
         );
@@ -764,7 +826,13 @@ impl CalibrationApp {
         ui.add_space(14.);
         theme::checkbox(ui, &mut self.reviewed, "Motor secured · limits reviewed")
             .on_hover_text("Motor secured; torque, speed and travel limits reviewed");
-        if theme::primary(ui, "Start calibration", self.motor_ready() && self.reviewed).clicked() {
+        if theme::primary(
+            ui,
+            &format!("{ICON_PLAY_ARROW}  Start calibration"),
+            self.motor_ready() && self.reviewed,
+        )
+        .clicked()
+        {
             self.run();
         }
         ui.small(format!(
@@ -775,66 +843,78 @@ impl CalibrationApp {
         ui.collapsing("Motion preview", |ui| self.motion_preview(ui, 125.));
     }
     fn motor_controls(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("Firmware update", |ui| {
-            ui.small("Official V26.05.19 · verified download");
-            ui.hyperlink_to("RobStride release notes", firmware::RELEASE_URL);
-            if let Ok(release) = firmware::release(&self.config.profile.model) {
-                ui.label(format!("{} → firmware {}", release.model, release.version));
-            }
-            if ui
-                .add_enabled(
-                    self.motor_ready(),
-                    egui::Button::new("Download and verify firmware"),
-                )
-                .clicked()
-            {
-                let c = self.config.clone();
-                self.firmware_prepared = None;
-                self.spawn(move |tx, _| {
-                    let prepared = firmware::prepare(&c, |s| {
-                        let _ = tx.send(Event::Status(s));
-                    })?;
-                    let _ = tx.send(Event::FirmwarePrepared(prepared));
-                    Ok(())
-                });
-            }
-            if let Some(prepared) = self
-                .firmware_prepared
-                .clone()
-                .filter(|p| p.matches(&self.config))
-            {
-                ui.label(format!(
-                    "Installed {} → {}",
-                    prepared.current_version, prepared.release.version
-                ));
-
-                ui.label("Keep power and USB connected until finished.");
-                let label = format!(
-                    "Update {} · ID {}",
-                    prepared.release.model, prepared.motor_id
-                );
+        let open = std::mem::take(&mut self.open_firmware).then_some(true);
+        egui::CollapsingHeader::new("Firmware update")
+            .open(open)
+            .show(ui, |ui| {
+                ui.small("Official V26.05.19 · verified download");
+                ui.hyperlink_to("RobStride release notes", firmware::RELEASE_URL);
+                if let Ok(release) = firmware::release(&self.config.profile.model) {
+                    ui.label(format!("{} → firmware {}", release.model, release.version));
+                }
                 if ui
-                    .add_enabled(self.motor_ready(), egui::Button::new(label))
+                    .add_enabled(
+                        self.motor_ready(),
+                        egui::Button::new(theme::action(ICON_DOWNLOAD, "Download and verify")),
+                    )
                     .clicked()
                 {
                     let c = self.config.clone();
-                    self.firmware_updating = true;
-                    self.firmware_progress = 0.;
                     self.firmware_prepared = None;
-                    self.reviewed = false;
                     self.spawn(move |tx, _| {
-                        let installed = firmware::update(&c, &prepared, |fraction, s| {
-                            let _ = tx.send(Event::FirmwareProgress(fraction, s));
+                        let prepared = firmware::prepare(&c, |s| {
+                            let _ = tx.send(Event::Status(s));
                         })?;
-                        let _ = tx.send(Event::FirmwareInstalled(installed));
+                        let _ = tx.send(Event::FirmwarePrepared(prepared));
                         Ok(())
                     });
                 }
-            }
-        });
+                if let Some(prepared) = self
+                    .firmware_prepared
+                    .clone()
+                    .filter(|p| p.matches(&self.config))
+                {
+                    ui.label(format!(
+                        "Installed {} → {}",
+                        prepared.current_version, prepared.release.version
+                    ));
+
+                    ui.label("Keep power and USB connected until finished.");
+                    let label = format!(
+                        "Update {} · ID {}",
+                        prepared.release.model, prepared.motor_id
+                    );
+                    if ui
+                        .add_enabled(
+                            self.motor_ready(),
+                            egui::Button::new(theme::action(ICON_SYSTEM_UPDATE_ALT, &label)),
+                        )
+                        .clicked()
+                    {
+                        let c = self.config.clone();
+                        self.firmware_updating = true;
+                        self.firmware_progress = 0.;
+                        self.firmware_prepared = None;
+                        self.reviewed = false;
+                        self.spawn(move |tx, _| {
+                            let installed = firmware::update(&c, &prepared, |fraction, s| {
+                                let _ = tx.send(Event::FirmwareProgress(fraction, s));
+                            })?;
+                            let _ = tx.send(Event::FirmwareInstalled(installed));
+                            Ok(())
+                        });
+                    }
+                }
+            });
 
         ui.separator();
-        if ui.button("Set current position as zero").clicked() {
+        if ui
+            .button(theme::action(
+                ICON_MY_LOCATION,
+                "Set current position as zero",
+            ))
+            .clicked()
+        {
             self.motor_action(true);
         }
         ui.horizontal(|ui| {
@@ -876,6 +956,247 @@ impl CalibrationApp {
             ));
         });
     }
+    fn stop_monitor(&mut self) {
+        self.manual = None; // Joins the worker after its stop guard runs.
+        self.manual_status.enabled = false;
+        self.manual_status.preparing = false;
+    }
+    fn poll_monitor(&mut self, ctx: &egui::Context) {
+        let Some(session) = &self.manual else {
+            return;
+        };
+        let snapshot = session.snapshot();
+        if let (Some(received), Some(fb)) = (snapshot.received, &snapshot.feedback)
+            && self
+                .manual_history
+                .back()
+                .is_none_or(|(at, _)| *at != received)
+        {
+            self.manual_history.push_back((received, fb.clone()));
+            while self
+                .manual_history
+                .front()
+                .is_some_and(|(at, _)| received.duration_since(*at) > Duration::from_secs(30))
+            {
+                self.manual_history.pop_front();
+            }
+        }
+        self.manual_status = snapshot;
+        if session.finished() {
+            self.error = self.manual_status.error.clone();
+            self.stop_monitor();
+            return;
+        }
+        let focused = ctx.input(|i| i.focused && !i.viewport().close_requested());
+        if !focused || self.sidebar_tab != SidebarTab::Test {
+            let mut intent = session.intent.lock().unwrap();
+            intent.enabled = false;
+            intent.direction = 0;
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
+    }
+    fn manual_controls(&mut self, ui: &mut egui::Ui) {
+        if !self.motor_ready() {
+            ui.label("Scan to select a motor for testing.");
+            return;
+        }
+        let monitoring = self.manual.is_some();
+        if !monitoring {
+            if ui
+                .button(theme::action(ICON_PLAY_ARROW, "Start monitoring"))
+                .clicked()
+            {
+                let uuid = self.selected_motor().unwrap().uuid;
+                self.manual_status = manual::Status::default();
+                self.manual_history.clear();
+                self.error = None;
+                self.jog_reviewed = false;
+                self.manual = Some(manual::Session::start(self.config.clone(), uuid));
+            }
+            ui.small("Monitoring starts with the motor disabled.");
+        } else if ui
+            .button(theme::action(ICON_STOP, "Stop monitoring"))
+            .clicked()
+        {
+            self.stop_monitor();
+        }
+        ui.add_space(12.);
+        ui.label(RichText::new("Jog motor").family(theme::semibold()));
+        self.jog_speed = self.jog_speed.clamp(0.01, manual::max_speed(&self.config));
+        ui.add_enabled_ui(
+            !self.manual_status.enabled && !self.manual_status.preparing,
+            |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.jog_speed, 0.01..=manual::max_speed(&self.config))
+                        .text("rad/s")
+                        .fixed_decimals(2),
+                );
+                theme::checkbox(ui, &mut self.jog_reviewed, "Motor secured · shaft clear");
+            },
+        );
+        let fresh = self
+            .manual_status
+            .received
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(200));
+        let healthy = self
+            .manual_status
+            .feedback
+            .as_ref()
+            .is_some_and(|fb| fb.faults == 0 && fb.temperature < self.config.temperature_limit);
+        let mut enable = false;
+        let mut disable = false;
+        if self.manual_status.enabled || self.manual_status.preparing {
+            disable = ui
+                .button(theme::action(ICON_POWER_SETTINGS_NEW, "Disable motor"))
+                .clicked();
+        } else {
+            enable = ui
+                .add_enabled(
+                    self.manual.is_some() && fresh && healthy && self.jog_reviewed,
+                    egui::Button::new(theme::action(ICON_POWER_SETTINGS_NEW, "Enable motor")),
+                )
+                .clicked();
+        }
+        let mut direction = 0;
+        ui.add_enabled_ui(self.manual_status.enabled && fresh, |ui| {
+            ui.horizontal(|ui| {
+                let negative = ui.button(theme::action(ICON_ARROW_BACK, "Jog −"));
+                if negative.is_pointer_button_down_on() && negative.hovered() {
+                    direction -= 1;
+                }
+                let positive = ui.button(theme::action(ICON_ARROW_FORWARD, "Jog +"));
+                if positive.is_pointer_button_down_on() && positive.hovered() {
+                    direction += 1;
+                }
+            });
+        });
+        ui.small(if self.manual_status.preparing {
+            "Checking firmware watchdog…"
+        } else {
+            "Hold to jog. Release to disable."
+        });
+        ui.add_space(8.);
+        ui.small(format!(
+            "Torque limit {:.2} Nm · Travel ±{:.2} rad",
+            manual::torque_limit(&self.config),
+            manual::travel_limit(&self.config)
+        ));
+        if let Some(session) = &self.manual {
+            let mut intent = session.intent.lock().unwrap();
+            intent.heartbeat = Instant::now();
+            intent.speed = self.jog_speed;
+            intent.direction = direction;
+            if enable {
+                intent.enabled = true;
+            }
+            if disable
+                || !self.jog_reviewed
+                || !ui.input(|i| i.focused && !i.viewport().close_requested())
+            {
+                intent.enabled = false;
+                intent.direction = 0;
+            }
+        }
+    }
+    fn manual_view(&self, ui: &mut egui::Ui) {
+        let palette = theme::colors(ui);
+        ui.heading("Motor test");
+        if let Some(motor) = self.selected_motor() {
+            ui.label(format!(
+                "{} · ID {} · {}",
+                motor.model.as_deref().unwrap_or("Unknown"),
+                motor.id,
+                self.config.interface
+            ));
+        }
+        let fresh = self.manual.is_some()
+            && self
+                .manual_status
+                .received
+                .is_some_and(|at| at.elapsed() < Duration::from_millis(200));
+        let fb = self.manual_status.feedback.as_ref().filter(|_| fresh);
+        ui.horizontal(|ui| {
+            let (text, color) = if self.manual_status.preparing {
+                ("Checking watchdog", palette.muted)
+            } else if fb.is_some_and(|f| f.faults != 0) {
+                ("Motor fault", palette.error)
+            } else if self.manual_status.enabled && fresh {
+                ("Enabled", palette.success)
+            } else if fresh {
+                ("Disabled", palette.muted)
+            } else {
+                ("No live feedback", palette.muted)
+            };
+            theme::badge(ui, text, color);
+            if let Some(fb) = fb {
+                ui.monospace(format!("Mode {} · Faults 0x{:02x}", fb.mode, fb.faults));
+            }
+        });
+        ui.add_space(16.);
+        let values = [
+            ("Position", fb.map(|f| format!("{:.3}", f.position)), "rad"),
+            ("Speed", fb.map(|f| format!("{:.3}", f.velocity)), "rad/s"),
+            ("Torque", fb.map(|f| format!("{:.3}", f.torque)), "Nm"),
+            (
+                "Temperature",
+                fb.map(|f| format!("{:.1}", f.temperature)),
+                "°C",
+            ),
+        ];
+        let columns = if ui.available_width() >= 700. { 4 } else { 2 };
+        for row in values.chunks(columns) {
+            ui.columns(columns, |columns| {
+                for (ui, (label, value, unit)) in columns.iter_mut().zip(row) {
+                    theme::card(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.small(*label);
+                        ui.add_space(12.);
+                        ui.label(
+                            RichText::new(value.as_deref().unwrap_or("--"))
+                                .family(theme::numbers())
+                                .size(26.),
+                        );
+                        ui.small(*unit);
+                    });
+                }
+            });
+            ui.add_space(8.);
+        }
+        ui.add_space(16.);
+        if self.manual_history.is_empty() {
+            ui.label("Start monitoring to see live motor feedback.");
+            return;
+        }
+        let origin = self.manual_history.front().unwrap().0;
+        for (index, title) in ["Position · rad", "Speed · rad/s", "Torque · Nm"]
+            .into_iter()
+            .enumerate()
+        {
+            styled_plot(["live_position", "live_speed", "live_torque"][index])
+                .height(150.)
+                .y_axis_label(title)
+                .x_axis_label("Time · s")
+                .show(ui, |plot| {
+                    plot.line(
+                        Line::new(
+                            "Measured",
+                            PlotPoints::from_iter(self.manual_history.iter().map(|(at, f)| {
+                                [
+                                    at.duration_since(origin).as_secs_f64(),
+                                    match index {
+                                        0 => f.position,
+                                        1 => f.velocity,
+                                        _ => f.torque,
+                                    },
+                                ]
+                            })),
+                        )
+                        .color(palette.measured)
+                        .width(1.7_f32),
+                    );
+                });
+        }
+    }
     fn refit(&mut self) {
         let dir = PathBuf::from(&self.import_path);
         self.spawn(move |tx, cancel| {
@@ -894,10 +1215,10 @@ impl CalibrationApp {
                 .hint_text("Path to a recorded run"),
         );
         ui.horizontal(|ui| {
-            if ui.button("Open").clicked() {
+            if ui.button(theme::action(ICON_FOLDER_OPEN, "Open")).clicked() {
                 self.load_report();
             }
-            if ui.button("Refit").clicked() {
+            if ui.button(theme::action(ICON_REFRESH, "Refit")).clicked() {
                 self.refit();
             }
         });
@@ -905,7 +1226,10 @@ impl CalibrationApp {
             ui.add_space(12.);
             ui.label("Current run");
             ui.small(dir.display().to_string());
-            if ui.button("Copy folder path").clicked() {
+            if ui
+                .button(theme::action(ICON_CONTENT_COPY, "Copy folder path"))
+                .clicked()
+            {
                 ui.ctx().copy_text(dir.display().to_string());
             }
         }
@@ -1262,10 +1586,16 @@ impl CalibrationApp {
         if let Some(dir) = &self.directory {
             ui.horizontal(|ui| {
                 ui.small("Saved automatically");
-                if ui.small_button("Files").clicked() {
+                if ui
+                    .small_button(theme::action(ICON_FOLDER_OPEN, "Files"))
+                    .clicked()
+                {
                     self.sidebar_tab = SidebarTab::Files;
                 }
-                if ui.small_button("Copy path").clicked() {
+                if ui
+                    .small_button(theme::action(ICON_CONTENT_COPY, "Copy path"))
+                    .clicked()
+                {
                     ui.ctx().copy_text(dir.display().to_string());
                 }
             });
@@ -1404,6 +1734,7 @@ impl eframe::App for CalibrationApp {
             ctx.request_repaint();
         }
         self.poll();
+        self.poll_monitor(ctx);
         if self.screenshot_during_fit
             && self.screenshot_requested
             && self.screenshot_path.is_none()
@@ -1476,7 +1807,13 @@ impl eframe::App for CalibrationApp {
                 if self.busy() {
                     self.progress_card(ui);
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| self.comparison(ui));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if self.sidebar_tab == SidebarTab::Test {
+                        self.manual_view(ui);
+                    } else {
+                        self.comparison(ui);
+                    }
+                });
             });
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1485,6 +1822,7 @@ impl eframe::App for CalibrationApp {
 }
 impl Drop for CalibrationApp {
     fn drop(&mut self) {
+        self.stop_monitor();
         self.cancel.store(true, Ordering::Relaxed);
         if let Some(job) = self.job.take() {
             let _ = job.join();
@@ -1532,16 +1870,58 @@ mod tests {
         let mut app = CalibrationApp::default();
         let output = ctx.run(Default::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                for tab in [SidebarTab::Test, SidebarTab::Motor, SidebarTab::Files] {
+                for tab in [
+                    SidebarTab::Calibrate,
+                    SidebarTab::Test,
+                    SidebarTab::Motor,
+                    SidebarTab::Files,
+                ] {
                     app.sidebar_tab = tab;
                     ui.push_id(format!("tab{}", tab as u8), |ui| app.controls(ui));
                 }
                 app.comparison(ui);
+                app.manual_view(ui);
             });
         });
         assert!(!output.shapes.is_empty());
         assert!(!app.motor_ready());
         assert!(!app.reviewed);
         assert!(!app.busy());
+    }
+    #[test]
+    fn selected_motor_test_and_update_controls_do_not_start_hardware_on_render() {
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            let ctx = egui::Context::default();
+            theme::install(&ctx);
+            ctx.set_theme(theme);
+            let mut app = CalibrationApp::default();
+            app.interfaces.push(hardware::CanInterface {
+                name: "can0".into(),
+                up: true,
+                state: "ERROR-ACTIVE".into(),
+            });
+            app.found.push(hardware::DiscoveredMotor {
+                id: 7,
+                uuid: [0; 8],
+                model: Some("RS-00".into()),
+                firmware: Some("0.0.3.9".into()),
+                issue: None,
+            });
+            app.select_motor(7);
+            let output = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    app.sidebar_tab = SidebarTab::Test;
+                    app.controls(ui);
+                    app.manual_view(ui);
+                    app.sidebar_tab = SidebarTab::Motor;
+                    app.open_firmware = true;
+                    app.controls(ui);
+                });
+            });
+            assert!(!output.shapes.is_empty());
+            assert!(app.manual.is_none());
+            assert!(!app.busy());
+            assert!(!app.jog_reviewed);
+        }
     }
 }

@@ -67,11 +67,17 @@ docker run --rm --user "$(id -u):$(id -g)" \
   motomind-packager bash scripts/check-ci.sh
 ```
 
+The Test tab uses the same exclusive CAN lock and verified firmware watchdog
+as calibration. It runs its control loop on a worker thread; each UI frame
+renews a 250 ms intent lease. Jog button release latches the motor disabled.
+The UI never automatically enables a motor when a view is opened.
+
 ## Code map
 
 | Module | Responsibility |
 |---|---|
 | `app.rs`, `theme.rs` | UI, worker events, plots, shared appearance tokens |
+| `manual.rs` | Live feedback, manual enable/jog, UI heartbeat and jog limits |
 | `hardware.rs` | SocketCAN discovery, acquisition, stop conditions, bus ownership |
 | `protocol.rs`, `firmware.rs` | Frame encoding/decoding and firmware transfer |
 | `types.rs`, `experiment.rs` | Profiles, configuration, motion generation, progress |
@@ -148,3 +154,6 @@ Run these options with `./scripts/run.sh` or the packaged AppImage:
 Scan/version queries can stop motors. Firmware update is a write operation,
 not a diagnostic check. See the [user guide](user-guide.md#update-firmware)
 before using it.
+
+For a specific view, add `--screenshot-tab=calibrate|test|motor|files` to a
+screenshot command. Selecting the Test view does not start monitoring or motion.
