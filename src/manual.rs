@@ -163,7 +163,6 @@ fn run(
     );
     let mut fb = bus.stopped()?;
     let mut enabled = false;
-    let mut was_jogging = false;
     let mut has_jogged = false;
     let mut position = 0.;
     let mut previous = fb.position;
@@ -233,8 +232,6 @@ fn run(
             if direction != 0. {
                 has_jogged = true;
                 stop_reason = None;
-            } else if was_jogging {
-                stop_reason = Some("Jog released · motor remains enabled".into());
             }
             // Enabling alone applies zero torque. After a jog, releasing holds
             // zero speed with bounded braking torque, without a position hold.
@@ -283,7 +280,6 @@ fn run(
             error: None,
             stop_reason: stop_reason.clone(),
         };
-        was_jogging = enabled && request.direction != 0;
         thread::sleep(if enabled {
             Duration::from_millis(5)
         } else {
