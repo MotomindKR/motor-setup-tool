@@ -12,12 +12,39 @@ export APPIMAGE_EXTRACT_AND_RUN=1 LIBGL_ALWAYS_SOFTWARE=1
 unset LD_LIBRARY_PATH MUJOCO_DYNAMIC_LINK_DIR MUJOCO_DOWNLOAD_DIR CARGO_HOME RUSTUP_HOME
 cp "$artifact" "$work/relocated app/motor.AppImage"
 chmod +x "$work/relocated app/motor.AppImage"
+# Verify the desktop launch target and icons from the actual release artifact.
+cd "$work"
+"$work/relocated app/motor.AppImage" --appimage-extract > /dev/null
+python3 - "$work/squashfs-root" <<'PY'
+import configparser, os, pathlib, struct, sys, xml.etree.ElementTree as ET
+app = pathlib.Path(sys.argv[1])
+desktop_id = 'com.motomind.MotorSetup'
+entry = configparser.ConfigParser(interpolation=None)
+entry.read(app / (desktop_id + '.desktop'))
+desktop = entry['Desktop Entry']
+assert desktop['Exec'] == 'motor-setup-tool'
+assert desktop['Icon'] == desktop_id
+assert desktop['StartupWMClass'] == desktop_id
+assert os.access(app / 'usr/bin/motor-setup-tool', os.X_OK)
+assert (app / 'usr/share/applications' / (desktop_id + '.desktop')).is_file()
+assert (app / '.DirIcon').resolve() == app / (desktop_id + '.png')
+theme = app / 'usr/share/icons/hicolor'
+for size in (16, 24, 32, 48, 64, 128, 256, 512):
+    png = (theme / f'{size}x{size}/apps' / (desktop_id + '.png')).read_bytes()
+    assert png[:8] == b'\x89PNG\r\n\x1a\n'
+    assert struct.unpack('>II', png[16:24]) == (size, size)
+assert (app / '.DirIcon').read_bytes() == (theme / '256x256/apps' / (desktop_id + '.png')).read_bytes()
+svg = ET.parse(theme / 'scalable/apps' / (desktop_id + '.svg')).getroot()
+assert svg.attrib['viewBox'] == '0 0 512 512'
+print('Desktop executable, application ID, and scalable/raster icons: OK')
+PY
 cd /
 "$work/relocated app/motor.AppImage" --version
 "$work/relocated app/motor.AppImage" --self-check > "$work/check.json"
 python3 - "$work/check.json" <<'PY'
 import json, os, sys
 r = json.load(open(sys.argv[1]))
+assert r['name'] == 'motor-setup-tool'
 assert r['mujoco'] == '3.12.0'
 assert r['data'] == os.environ['XDG_DATA_HOME'] + '/motomind-motor-calib'
 assert r['cache'] == os.environ['XDG_CACHE_HOME'] + '/motomind-motor-calib'

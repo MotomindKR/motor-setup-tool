@@ -26,8 +26,8 @@ publication job. It requires available Actions runners and billing capacity.
 
 Release assets:
 
-- `Motomind-Motor-Setup-VERSION-linux-amd64.AppImage`
-- `Motomind-Motor-Setup-VERSION-linux-arm64.AppImage`
+- `motor-setup-tool-VERSION-linux-amd64.AppImage`
+- `motor-setup-tool-VERSION-linux-arm64.AppImage`
 - A `.sha256` file for each AppImage
 
 ## Build locally
@@ -56,7 +56,12 @@ byte-for-byte reproducible builds.
 
 - The release binary and MuJoCo 3.12.0.
 - Desktop libraries loaded by egui/winit, including those missed by `ldd` alone.
-- The desktop entry, Motomind logo, third-party license texts, and build metadata.
+- The desktop entry, motor/Motomind app icon, third-party license texts, and build metadata.
+
+The binary is `usr/bin/motor-setup-tool`. The desktop entry and window application
+ID both use `com.motomind.MotorSetup`. The icon is included as SVG and 16–512 px
+PNGs under `usr/share/icons/hicolor`, with a root icon and `.DirIcon` for AppImage
+launchers. See [assets](../assets/README.md) to regenerate the PNGs.
 
 The executable searches `$ORIGIN/../lib`; bundled libraries search `$ORIGIN`.
 System glibc, the ELF loader, and OpenGL driver/dispatch stay on the host.
@@ -73,7 +78,7 @@ persistence identity when changing display or repository names.
 ```sh
 docker build -f packaging/Dockerfile.smoke -t motomind-smoke .
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/dist:/input:ro" \
-  motomind-smoke /input/Motomind-Motor-Setup-VERSION-linux-amd64.AppImage
+  motomind-smoke /input/motor-setup-tool-VERSION-linux-amd64.AppImage
 ```
 
 Use the actual version and architecture in the filename. Set Docker build

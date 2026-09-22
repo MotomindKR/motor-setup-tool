@@ -14,10 +14,7 @@ mod types;
 
 fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--version") {
-        println!(
-            "Motomind Motor Calibration / Setup {}",
-            env!("CARGO_PKG_VERSION")
-        );
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if std::env::args().any(|a| a == "--list-can") {
@@ -39,6 +36,7 @@ fn main() -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::json!({
+                "name": env!("CARGO_PKG_NAME"),
                 "version": env!("CARGO_PKG_VERSION"), "mujoco": engine::VERSION,
                 "data": paths::data_dir()?, "cache": paths::cache_dir()?,
                 "locks": paths::lock_dir()?, "theme": format!("{:?}", theme::desktop_theme()),
@@ -122,17 +120,26 @@ fn main() -> anyhow::Result<()> {
         println!("Accepted: {}", report.accepted);
         return Ok(());
     }
+    let icon = image::load_from_memory(include_bytes!("../assets/icons/256.png"))?.into_rgba8();
     let options = eframe::NativeOptions {
         persist_window: !std::env::args().any(|a| a.starts_with("--screenshot=")),
+        // Keep window/layout preferences across the package and desktop-ID rename.
+        persistence_path: eframe::storage_dir("MotoMind · Motor Calibration")
+            .map(|directory| directory.join("app.ron")),
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Motomind · Motor Calibration / Setup")
+            .with_title("Motor Setup Tool · Motomind")
+            .with_app_id("com.motomind.MotorSetup")
+            .with_icon(eframe::egui::IconData {
+                width: icon.width(),
+                height: icon.height(),
+                rgba: icon.into_raw(),
+            })
             .with_inner_size([1320., 940.])
             .with_min_inner_size([1000., 700.]),
         ..Default::default()
     };
     eframe::run_native(
-        // Keep the existing persistence identity when changing the visible title.
-        "MotoMind · Motor Calibration",
+        "Motor Setup Tool",
         options,
         Box::new(|cc| Ok(Box::new(app::CalibrationApp::new(cc)))),
     )

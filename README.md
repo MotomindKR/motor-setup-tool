@@ -1,11 +1,13 @@
-# Motomind Motor Calibration / Setup
+# Motor Setup Tool
+
+<img src="assets/motor-setup-tool.svg" width="96" height="96" alt="Motor Setup Tool icon">
 
 [![Unit tests](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/tests.yml)
 [![Linux release](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml/badge.svg)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml)
 [![Download AppImage](https://img.shields.io/badge/Download-AppImage-E82E01)](https://github.com/MotomindKR/motor-setup-tool/releases/latest)
 
-Calibrate a bare RobStride motor, compare its motion with MuJoCo, and manage its
-ID, zero position, and firmware from one Linux desktop app.
+A Linux desktop app by Motomind. Calibrate a bare RobStride motor, compare its
+motion with MuJoCo, and manage its ID, zero position, and firmware.
 
 - Monitor live motor feedback and use hold-to-jog controls in the Test tab.
 - Discover motors on available CAN buses and identify their model from firmware.
@@ -26,8 +28,8 @@ Make the downloaded file executable in your file manager, then open it. From a
 terminal, replacing the filename with the one you downloaded:
 
 ```sh
-chmod +x Motomind-Motor-Setup-0.1.0-linux-amd64.AppImage
-./Motomind-Motor-Setup-0.1.0-linux-amd64.AppImage
+chmod +x motor-setup-tool-0.1.1-linux-amd64.AppImage
+./motor-setup-tool-0.1.1-linux-amd64.AppImage
 ```
 
 Requires **Ubuntu 22.04 or newer**, or another Linux distribution with glibc 2.35+

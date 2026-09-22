@@ -1825,7 +1825,7 @@ impl eframe::App for CalibrationApp {
                     );
                     ui.add_space(16.);
                     ui.label(
-                        RichText::new("Motor Calibration / Setup")
+                        RichText::new("Motor Setup Tool")
                             .size(20.)
                             .family(theme::semibold())
                             .color(theme::colors(ui).ink),

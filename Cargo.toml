@@ -1,8 +1,10 @@
 [package]
-name = "motomind-motor-calib"
-version = "0.1.0"
+name = "motor-setup-tool"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.95"
+description = "Motomind motor calibration and setup tool for RobStride motors"
+repository = "https://github.com/MotomindKR/motor-setup-tool"
 
 [dependencies]
 anyhow = "1"

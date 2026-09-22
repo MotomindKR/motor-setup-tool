@@ -8,4 +8,4 @@ export MUJOCO_DYNAMIC_LINK_DIR="$mujoco_sdk/lib"
 export LD_LIBRARY_PATH="$MUJOCO_DYNAMIC_LINK_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 bash scripts/check.sh
 cargo build --locked --release
-python3 packaging/package.py "$CARGO_TARGET_DIR/release/motomind-motor-calib" "$mujoco_sdk"
+python3 packaging/package.py "$CARGO_TARGET_DIR/release/motor-setup-tool" "$mujoco_sdk"

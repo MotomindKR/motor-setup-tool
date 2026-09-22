@@ -97,7 +97,7 @@ jobs:
           sha256sum -c ./*.sha256
           test "$(find . -maxdepth 1 -name '*.AppImage' | wc -l)" -eq 2
           cat > release-notes.md <<'NOTES'
-          Motor Calibration / Setup for Linux.
+          Motor Setup Tool by Motomind. Motor calibration and setup for Linux.
 
           - **amd64**: Intel/AMD 64-bit computers.
           - **arm64**: ARM 64-bit computers.
@@ -106,8 +106,8 @@ jobs:
 
           Download the matching AppImage, make it executable, and run it:
           ```sh
-          chmod +x Motomind-Motor-Setup-*.AppImage
-          ./Motomind-Motor-Setup-<version>-linux-<architecture>.AppImage
+          chmod +x motor-setup-tool-*.AppImage
+          ./motor-setup-tool-<version>-linux-<architecture>.AppImage
           ```
           If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the command.
           The host must provide the adapter driver and an already-configured SocketCAN interface.
@@ -117,7 +117,7 @@ jobs:
           # Creating a draft first keeps partially uploaded releases out of downloads.
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "Motor Calibration / Setup $RELEASE_TAG" --notes-file release-notes.md
+              --title "Motor Setup Tool $RELEASE_TAG" --notes-file release-notes.md
           fi
           gh release upload "$RELEASE_TAG" ./*.AppImage ./*.sha256 --clobber
           if [[ "$RELEASE_TAG" == *-* ]]; then

@@ -21,6 +21,11 @@ version-matched MuJoCo library into `.tools/mujoco/`; `Cargo.lock` pins Rust
 crates. Development builds include the downloaded library's path. Release
 builds use a relative library path and must be packaged with MuJoCo.
 
+The Cargo package and executable are `motor-setup-tool`. Desktop integration
+uses `com.motomind.MotorSetup`; the app embeds its own window icon. Data, cache,
+CAN locks, and window preferences keep their v0.1.0 locations for compatibility.
+Do not rename the lock directory: old and new binaries must share bus ownership.
+
 Opening the app does not start motor motion. Use a real saved run to work on
 results/UI without hardware:
 

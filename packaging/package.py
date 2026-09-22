@@ -18,7 +18,7 @@ def run(*args, **kwargs):
 binary, sdk = map(lambda p: Path(p).resolve(), sys.argv[1:])
 metadata = json.loads(run('cargo', 'metadata', '--locked', '--format-version=1',
                           '--filter-platform', ARCH + '-unknown-linux-gnu'))
-package = next(p for p in metadata['packages'] if p['name'] == 'motomind-motor-calib')
+package = next(p for p in metadata['packages'] if p['name'] == 'motor-setup-tool')
 version = package['version']
 label = {'x86_64': 'amd64', 'aarch64': 'arm64'}[ARCH]
 dist = ROOT / 'dist'
@@ -26,17 +26,30 @@ app = dist / (label + '.AppDir')
 if app.exists():
     shutil.rmtree(app)
 lib = app / 'usr/lib'
-exe = app / 'usr/bin/motomind-motor-calib'
-licenses = app / 'usr/share/licenses/motomind-motor-calib'
+exe = app / 'usr/bin/motor-setup-tool'
+licenses = app / 'usr/share/licenses/motor-setup-tool'
 lib.mkdir(parents=True)
 exe.parent.mkdir(parents=True)
 licenses.mkdir(parents=True)
 shutil.copy2(binary, exe)
 shutil.copy2(ROOT / 'packaging/AppRun', app / 'AppRun')
 icon = 'com.motomind.MotorSetup'
-shutil.copy2(ROOT / ('packaging/' + icon + '.desktop'), app)
-shutil.copy2(ROOT / 'assets/motomind-logo.svg', app / (icon + '.svg'))
-(app / '.DirIcon').symlink_to(icon + '.svg')
+desktop = ROOT / ('packaging/' + icon + '.desktop')
+shutil.copy2(desktop, app)
+applications = app / 'usr/share/applications'
+applications.mkdir(parents=True)
+shutil.copy2(desktop, applications)
+shutil.copy2(ROOT / 'assets/motor-setup-tool.svg', app / (icon + '.svg'))
+shutil.copy2(ROOT / 'assets/icons/256.png', app / (icon + '.png'))
+(app / '.DirIcon').symlink_to(icon + '.png')
+icon_theme = app / 'usr/share/icons/hicolor'
+scalable = icon_theme / 'scalable/apps'
+scalable.mkdir(parents=True)
+shutil.copy2(ROOT / 'assets/motor-setup-tool.svg', scalable / (icon + '.svg'))
+for size in (16, 24, 32, 48, 64, 128, 256, 512):
+    target = icon_theme / f'{size}x{size}/apps'
+    target.mkdir(parents=True)
+    shutil.copy2(ROOT / f'assets/icons/{size}.png', target / (icon + '.png'))
 run('desktop-file-validate', str(app / (icon + '.desktop')))
 
 triplet = run('gcc', '-dumpmachine')
@@ -122,7 +135,7 @@ for source in libraries.values():
         raise RuntimeError('Missing library license: ' + str(source))
     shutil.copy2(copyright_file, licenses / (owner.replace(':', '-') + '-copyright'))
 (licenses / 'README.txt').write_text(
-    'Third-party notices for Motomind Motor Calibration / Setup.\n'
+    'Third-party notices for Motor Setup Tool.\n'
     'Rust dependency inventory includes transitive/build dependencies.\n'
     'System library copyright files reference system-common-licenses/.\n'
     'The AppImage runtime is MIT licensed; see AppImage-runtime-LICENSE.\n')
@@ -134,7 +147,7 @@ manifest = {'version': version, 'architecture': label, 'baseline': 'Ubuntu 22.04
 # Pin runtime separately: appimagetool must never fetch a mutable latest binary.
 tool, runtime = fetch('appimagetool'), fetch('runtime')
 tool.chmod(0o755)
-output = dist / f'Motomind-Motor-Setup-{version}-linux-{label}.AppImage'
+output = dist / f'motor-setup-tool-{version}-linux-{label}.AppImage'
 env = dict(os.environ, ARCH=ARCH, APPIMAGE_EXTRACT_AND_RUN='1')
 subprocess.run([str(tool), '--runtime-file', str(runtime), str(app), str(output)], env=env, check=True)
 output.chmod(0o755)
