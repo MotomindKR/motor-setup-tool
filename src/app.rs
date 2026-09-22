@@ -568,10 +568,11 @@ impl CalibrationApp {
         });
         if let Some(update) = update
             && ui
-                .add(egui::Button::new(
-                    theme::action(ICON_SYSTEM_UPDATE_ALT, "Firmware update available")
-                        .color(theme::colors(ui).link),
-                ))
+                .add(egui::Button::new(theme::action_colored(
+                    ICON_SYSTEM_UPDATE_ALT,
+                    "Firmware update available",
+                    theme::colors(ui).link,
+                )))
                 .on_hover_text(format!(
                     "{} · firmware {}. Open Motor setup to review and install.",
                     update.model, update.version
@@ -635,21 +636,6 @@ impl CalibrationApp {
         if self.config != before {
             self.reviewed = false;
         }
-        ui.add_space(12.);
-        if !busy
-            && self.manual.is_none()
-            && self.selected_motor().is_some()
-            && ui
-                .button(theme::action(ICON_POWER_SETTINGS_NEW, "Disable motor"))
-                .clicked()
-        {
-            let c = self.config.clone();
-            self.spawn(move |tx, _| {
-                hardware::disable(&c)?;
-                let _ = tx.send(Event::Done("Motor stopped".into()));
-                Ok(())
-            });
-        }
     }
     fn progress_card(&mut self, ui: &mut egui::Ui) {
         let palette = theme::colors(ui);
@@ -676,9 +662,11 @@ impl CalibrationApp {
                     if ui
                         .add_enabled(
                             !self.firmware_updating,
-                            egui::Button::new(
-                                theme::action(ICON_STOP, "Stop").color(palette.error),
-                            ),
+                            egui::Button::new(theme::action_colored(
+                                ICON_STOP,
+                                "Stop",
+                                palette.error,
+                            )),
                         )
                         .clicked()
                     {
@@ -828,7 +816,8 @@ impl CalibrationApp {
             .on_hover_text("Motor secured; torque, speed and travel limits reviewed");
         if theme::primary(
             ui,
-            &format!("{ICON_PLAY_ARROW}  Start calibration"),
+            ICON_PLAY_ARROW,
+            "Start calibration",
             self.motor_ready() && self.reviewed,
         )
         .clicked()
@@ -839,8 +828,6 @@ impl CalibrationApp {
             "{:.0} s recording + fitting",
             self.config.train_seconds + self.config.validation_seconds
         ));
-        ui.add_space(12.);
-        ui.collapsing("Motion preview", |ui| self.motion_preview(ui, 125.));
     }
     fn motor_controls(&mut self, ui: &mut egui::Ui) {
         let open = std::mem::take(&mut self.open_firmware).then_some(true);
@@ -908,15 +895,6 @@ impl CalibrationApp {
             });
 
         ui.separator();
-        if ui
-            .button(theme::action(
-                ICON_MY_LOCATION,
-                "Set current position as zero",
-            ))
-            .clicked()
-        {
-            self.motor_action(true);
-        }
         ui.horizontal(|ui| {
             ui.label("New ID");
             ui.add(egui::DragValue::new(&mut self.new_id).range(1..=254));
@@ -956,6 +934,27 @@ impl CalibrationApp {
             ));
         });
     }
+    fn disable_motor(&mut self) {
+        if self.firmware_updating {
+            return;
+        }
+        if let Some(session) = &self.manual {
+            let mut intent = session.intent.lock().unwrap();
+            intent.enabled = false;
+            intent.direction = 0;
+            self.status = "Disabling motor…".into();
+        } else if self.busy() {
+            self.cancel.store(true, Ordering::Relaxed);
+            self.status = "Stopping…".into();
+        } else if self.selected_motor().is_some() {
+            let c = self.config.clone();
+            self.spawn(move |tx, _| {
+                hardware::disable(&c)?;
+                let _ = tx.send(Event::Done("Motor stopped".into()));
+                Ok(())
+            });
+        }
+    }
     fn stop_monitor(&mut self) {
         self.manual = None; // Joins the worker after its stop guard runs.
         self.manual_status.enabled = false;
@@ -980,6 +979,11 @@ impl CalibrationApp {
             {
                 self.manual_history.pop_front();
             }
+        }
+        if snapshot.stop_reason != self.manual_status.stop_reason
+            && let Some(reason) = &snapshot.stop_reason
+        {
+            self.status = reason.clone();
         }
         self.manual_status = snapshot;
         if session.finished() {
@@ -1020,6 +1024,19 @@ impl CalibrationApp {
         {
             self.stop_monitor();
         }
+        if ui
+            .add_enabled(
+                !self.manual_status.enabled && !self.manual_status.preparing,
+                egui::Button::new(theme::action(
+                    ICON_MY_LOCATION,
+                    "Set current position as zero",
+                )),
+            )
+            .on_hover_text("Disable the motor first. Monitoring will stop before setting zero.")
+            .clicked()
+        {
+            self.motor_action(true);
+        }
         ui.add_space(12.);
         ui.label(RichText::new("Jog motor").family(theme::semibold()));
         self.jog_speed = self.jog_speed.clamp(0.01, manual::max_speed(&self.config));
@@ -1043,29 +1060,24 @@ impl CalibrationApp {
             .feedback
             .as_ref()
             .is_some_and(|fb| fb.faults == 0 && fb.temperature < self.config.temperature_limit);
-        let mut enable = false;
-        let mut disable = false;
-        if self.manual_status.enabled || self.manual_status.preparing {
-            disable = ui
-                .button(theme::action(ICON_POWER_SETTINGS_NEW, "Disable motor"))
-                .clicked();
-        } else {
-            enable = ui
-                .add_enabled(
-                    self.manual.is_some() && fresh && healthy && self.jog_reviewed,
-                    egui::Button::new(theme::action(ICON_POWER_SETTINGS_NEW, "Enable motor")),
-                )
-                .clicked();
-        }
+        let enable = ui
+            .add_enabled(
+                self.manual.is_some()
+                    && fresh
+                    && healthy
+                    && self.jog_reviewed
+                    && !self.manual_status.enabled
+                    && !self.manual_status.preparing,
+                egui::Button::new(theme::action(ICON_POWER_SETTINGS_NEW, "Enable motor")),
+            )
+            .clicked();
         let mut direction = 0;
-        ui.add_enabled_ui(self.manual_status.enabled && fresh, |ui| {
+        ui.add_enabled_ui(self.manual_status.enabled, |ui| {
             ui.horizontal(|ui| {
-                let negative = ui.button(theme::action(ICON_ARROW_BACK, "Jog −"));
-                if negative.is_pointer_button_down_on() && negative.hovered() {
+                if theme::hold_button(ui, ICON_ARROW_BACK, "Jog −") {
                     direction -= 1;
                 }
-                let positive = ui.button(theme::action(ICON_ARROW_FORWARD, "Jog +"));
-                if positive.is_pointer_button_down_on() && positive.hovered() {
+                if theme::hold_button(ui, ICON_ARROW_FORWARD, "Jog +") {
                     direction += 1;
                 }
             });
@@ -1073,7 +1085,7 @@ impl CalibrationApp {
         ui.small(if self.manual_status.preparing {
             "Checking firmware watchdog…"
         } else {
-            "Hold to jog. Release to disable."
+            "Hold to jog. Release to stop."
         });
         ui.add_space(8.);
         ui.small(format!(
@@ -1089,10 +1101,7 @@ impl CalibrationApp {
             if enable {
                 intent.enabled = true;
             }
-            if disable
-                || !self.jog_reviewed
-                || !ui.input(|i| i.focused && !i.viewport().close_requested())
-            {
+            if !self.jog_reviewed || !ui.input(|i| i.focused && !i.viewport().close_requested()) {
                 intent.enabled = false;
                 intent.direction = 0;
             }
@@ -1101,6 +1110,11 @@ impl CalibrationApp {
     fn manual_view(&self, ui: &mut egui::Ui) {
         let palette = theme::colors(ui);
         ui.heading("Motor test");
+        if let Some(error) = &self.manual_status.error {
+            ui.colored_label(palette.error, error);
+        } else if let Some(reason) = &self.manual_status.stop_reason {
+            ui.label(reason);
+        }
         if let Some(motor) = self.selected_motor() {
             ui.label(format!(
                 "{} · ID {} · {}",
@@ -1769,6 +1783,19 @@ impl eframe::App for CalibrationApp {
                             .color(theme::colors(ui).ink),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(
+                                self.selected_motor().is_some() && !self.firmware_updating,
+                                egui::Button::new(theme::action(
+                                    ICON_POWER_SETTINGS_NEW,
+                                    "Disable motor",
+                                )),
+                            )
+                            .on_hover_text("Disable the selected motor and stop active motion")
+                            .clicked()
+                        {
+                            self.disable_motor();
+                        }
                         let (label, color) = if self.busy() {
                             ("Working", theme::colors(ui).body)
                         } else if self.motor_ready() {

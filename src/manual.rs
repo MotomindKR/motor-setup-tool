@@ -36,6 +36,7 @@ pub struct Status {
     pub enabled: bool,
     pub preparing: bool,
     pub error: Option<String>,
+    pub stop_reason: Option<String>,
 }
 
 pub struct Session {
@@ -99,8 +100,20 @@ pub fn travel_limit(c: &Config) -> f64 {
     c.travel_limit.min(std::f64::consts::TAU)
 }
 
-fn motion_requested(input: &Intent, now: Instant, was_jogging: bool) -> bool {
-    input.enabled && input.fresh(now) && !(was_jogging && input.direction == 0)
+fn motion_requested(input: &Intent, now: Instant) -> bool {
+    input.enabled && input.fresh(now)
+}
+
+fn jog_torque(c: &Config, target: f64, velocity: f64, dt: f64, integral: &mut f64) -> f64 {
+    let error = target - velocity;
+    // Clear accumulated drive on release; oppose motion without holding position.
+    *integral = if target == 0. {
+        0.
+    } else {
+        (*integral + error * dt).clamp(-0.5, 0.5)
+    };
+    let limit = torque_limit(c);
+    (limit * (error / max_speed(c) + *integral)).clamp(-limit, limit)
 }
 
 fn validate_feedback(c: &Config, fb: &Feedback, position: f64) -> Result<()> {
@@ -111,15 +124,21 @@ fn validate_feedback(c: &Config, fb: &Feedback, position: f64) -> Result<()> {
     );
     ensure!(
         fb.temperature < c.temperature_limit,
-        "Temperature limit reached; let the motor cool"
+        "Temperature {:.1} °C reached the {:.1} °C limit; let the motor cool",
+        fb.temperature,
+        c.temperature_limit
     );
     ensure!(
         fb.velocity.abs() < c.speed_limit.min(max_speed(c) * 2. + 0.5),
-        "Jog speed limit reached"
+        "Jog speed {:.3} rad/s reached the {:.3} rad/s limit",
+        fb.velocity,
+        c.speed_limit.min(max_speed(c) * 2. + 0.5)
     );
     ensure!(
         position.abs() < travel_limit(c),
-        "Jog travel limit reached; motor disabled"
+        "Jog travel {:.3} rad reached the ±{:.3} rad limit; motor disabled",
+        position,
+        travel_limit(c)
     );
     Ok(())
 }
@@ -145,9 +164,11 @@ fn run(
     let mut fb = bus.stopped()?;
     let mut enabled = false;
     let mut was_jogging = false;
+    let mut has_jogged = false;
     let mut position = 0.;
     let mut previous = fb.position;
     let mut integral = 0.;
+    let mut stop_reason = None;
     let mut last_tick = Instant::now();
     while !cancel.load(Ordering::Relaxed) {
         let now = Instant::now();
@@ -158,7 +179,7 @@ fn run(
             // Latch off: resuming rendering cannot re-enable a stalled UI.
             input.lock().unwrap().enabled = false;
         }
-        let wanted = motion_requested(&request, now, was_jogging);
+        let wanted = motion_requested(&request, now);
         if wanted && !enabled {
             validate_feedback(c, &fb, 0.)?;
             output.lock().unwrap().preparing = true;
@@ -184,10 +205,20 @@ fn run(
             previous = fb.position;
             position = 0.;
             integral = 0.;
+            has_jogged = false;
             enabled = true;
+            stop_reason = None;
             output.lock().unwrap().preparing = false;
             last_tick = Instant::now();
         } else if !wanted && enabled {
+            stop_reason = Some(
+                if !request.fresh(now) {
+                    "UI updates paused · motor disabled"
+                } else {
+                    "Motor disabled"
+                }
+                .into(),
+            );
             bus.stop()?;
             enabled = false;
             input.lock().unwrap().enabled = false;
@@ -199,19 +230,18 @@ fn run(
             let direction = request.direction.clamp(-1, 1) as f64;
             ensure!(request.speed.is_finite(), "Invalid jog speed");
             let target = direction * request.speed.clamp(0., max_speed(c));
-            // Bounded velocity PI over the same torque-only protocol as calibration.
-            // No position hold; released buttons disable the motor.
-            let limit = torque_limit(c);
-            let error = target - fb.velocity;
-            integral = if direction == 0. {
-                0.
+            if direction != 0. {
+                has_jogged = true;
+                stop_reason = None;
+            } else if was_jogging {
+                stop_reason = Some("Jog released · motor remains enabled".into());
+            }
+            // Enabling alone applies zero torque. After a jog, releasing holds
+            // zero speed with bounded braking torque, without a position hold.
+            let torque = if has_jogged {
+                jog_torque(c, target, fb.velocity, dt, &mut integral)
             } else {
-                (integral + error * dt).clamp(-0.5, 0.5)
-            };
-            let torque = if direction == 0. {
                 0.
-            } else {
-                (limit * (error / max_speed(c) + integral)).clamp(-limit, limit)
             };
             bus.send(protocol::torque(c.motor_id, torque, &c.profile).0)?;
         } else {
@@ -251,6 +281,7 @@ fn run(
             enabled,
             preparing: false,
             error: None,
+            stop_reason: stop_reason.clone(),
         };
         was_jogging = enabled && request.direction != 0;
         thread::sleep(if enabled {
@@ -266,7 +297,7 @@ fn run(
 mod tests {
     use super::*;
     #[test]
-    fn release_and_stale_ui_remove_motion_authority() {
+    fn release_keeps_enabled_but_stale_ui_removes_authority() {
         let now = Instant::now();
         let mut request = Intent {
             enabled: true,
@@ -274,13 +305,31 @@ mod tests {
             speed: 0.5,
             heartbeat: now,
         };
-        assert!(motion_requested(&request, now, false));
-        assert!(!motion_requested(&request, now + UI_DEADLINE, false));
+        assert!(motion_requested(&request, now));
+        assert!(!motion_requested(&request, now + UI_DEADLINE));
         request.direction = 0;
-        assert!(!motion_requested(&request, now, true));
+        assert!(motion_requested(&request, now));
         request.enabled = false;
         request.direction = -1;
-        assert!(!motion_requested(&request, now, false));
+        assert!(!motion_requested(&request, now));
+    }
+    #[test]
+    fn release_brakes_in_both_directions_without_residual_drive() {
+        for profile in crate::types::Profile::presets() {
+            let mut c = Config {
+                profile,
+                ..Default::default()
+            };
+            c.apply_spec_limits();
+            for velocity in [-0.5_f64, 0.5] {
+                let mut integral = velocity.signum() * 0.5;
+                let torque = jog_torque(&c, 0., velocity, 0.005, &mut integral);
+                assert!(torque * velocity < 0.);
+                assert!(torque.abs() <= torque_limit(&c));
+                assert_eq!(integral, 0.);
+            }
+            assert_eq!(jog_torque(&c, 0., 0., 0.005, &mut 0.5), 0.);
+        }
     }
     #[test]
     fn every_model_has_bounded_jog_limits_and_faults_stop_motion() {

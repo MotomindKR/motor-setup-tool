@@ -48,8 +48,8 @@ housing, leave the shaft unloaded and clear, and have a physical stop available.
 5. Review **Validation** to see how well the fitted simulation predicts a separate recording.
 
 Recording and fitting show progress. **Stop** ends acquisition or cancels fitting.
-Results are saved automatically. Use **Motor setup** for zero, ID, and firmware
-operations; use **Test** to monitor or jog a motor and **Files** to reopen or refit a saved run.
+Results are saved automatically. Use **Motor setup** for ID and firmware operations; use **Test** to monitor, jog,
+or set zero and **Files** to reopen or refit a saved run.
 
 ## Read the results
 

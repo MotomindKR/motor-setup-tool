@@ -69,7 +69,8 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 The Test tab uses the same exclusive CAN lock and verified firmware watchdog
 as calibration. It runs its control loop on a worker thread; each UI frame
-renews a 250 ms intent lease. Jog button release latches the motor disabled.
+renews a 250 ms intent lease. Jog button release commands zero speed while keeping the motor enabled.
+Lost UI authority latches the motor disabled.
 The UI never automatically enables a motor when a view is opened.
 
 ## Code map

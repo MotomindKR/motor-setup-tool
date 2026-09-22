@@ -72,14 +72,15 @@ needed. A good bare-motor result does not establish behavior under a robot load.
 
 ## Set zero or change the ID
 
-Select the motor, then open **Motor setup**:
+Select the motor. Zero setting is in **Test**; ID changes are in **Motor setup**:
 
-- **Set current position as zero** makes the current shaft position the zero
+- **Test → Set current position as zero** makes the current shaft position the zero
   reference. The app stops the motor and checks that it is stationary first.
-  Persistence across power cycles depends on the firmware.
+  Monitoring stops before the zero is written. Persistence across power cycles
+  depends on the firmware.
 - Enter **New ID**, then **Apply**. The app checks for an ID collision and verifies
   the same motor at its new address.
-- **Disable motor** requests and verifies stopped mode when the app is idle.
+- **Disable motor** in the top-right bar requests and verifies stopped mode when the app is idle.
 
 ## Monitor and jog a motor
 
@@ -89,9 +90,12 @@ show the last 30 seconds. Unavailable or stale live values display `--`.
 
 To jog, secure the motor, clear the shaft, select a speed, and check
 **Motor secured · shaft clear**. Choose **Enable motor**, wait for the watchdog
-check, then hold **Jog −** or **Jog +**. Releasing the button disables the motor;
-choose **Enable motor** again before another jog. Enabling alone applies zero
-torque and does not hold position.
+check, then hold **Jog −** or **Jog +**. The button keeps the jog active if the
+pointer drifts outside it.
+Releasing the button commands zero speed and keeps the motor enabled, so you
+can jog again immediately. **Disable motor** in the top-right bar turns torque
+off. Enabling alone applies zero torque; after a jog, the controller brakes
+toward zero speed without holding a fixed position.
 
 Jog speed is capped at 1 rad/s or 10% of the model's calibration speed limit,
 whichever is lower. Torque is capped at 10% of rated torque or the calibration
@@ -99,9 +103,12 @@ limit, whichever is lower. Travel is limited to ±one output revolution from
 each enable position, or the smaller calibration travel limit. These limits
 are intended for a secured bare motor.
 
-**Disable motor**, **Stop monitoring**, switching tabs, closing the window,
+**Disable motor** at the top right, **Stop monitoring**, switching tabs, closing
+the window,
 loss of focus, stale UI input, missing feedback, faults, and exceeded limits
-stop jogging. The firmware watchdog must pass before jogging is permitted.
+stop jogging. The status bar shows why jogging stopped, and communication or
+limit errors remain visible in the Test view. The firmware watchdog must pass
+before jogging is permitted.
 Motor selection and setup operations are locked while monitoring; stop
 monitoring to change them. Monitoring does not create a calibration recording.
 

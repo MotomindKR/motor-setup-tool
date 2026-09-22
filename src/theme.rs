@@ -83,15 +83,16 @@ pub fn semibold() -> FontFamily {
 pub fn install(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
     let mut fonts = egui::FontDefinitions::default();
-    // Merge icons into our fonts rather than replacing Pretendard at runtime.
+    // A dedicated family is essential: Pretendard uses some of the same
+    // private-use code points, including Material's play and stop symbols.
     let mut icons = FontData::from_static(egui_material_icons::FONT_DATA);
     icons.tweak.y_offset_factor = 0.05;
     fonts
         .font_data
         .insert("material-icons".into(), icons.into());
-    for family in fonts.families.values_mut() {
-        family.insert(0, "material-icons".into());
-    }
+    fonts
+        .families
+        .insert(icon_family(), vec!["material-icons".into()]);
     for (name, data) in [
         (
             "Motomind Numbers",
@@ -229,7 +230,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
             );
         });
 }
-pub fn primary(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+pub fn primary(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::Response {
     ui.scope(|ui| {
         let widgets = &mut ui.visuals_mut().widgets;
         widgets.inactive.weak_bg_fill = PRIMARY;
@@ -237,21 +238,76 @@ pub fn primary(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response 
         widgets.active.weak_bg_fill = PRIMARY_HOVER;
         ui.add_enabled(
             enabled,
-            egui::Button::new(RichText::new(label).size(19.).family(bold()).color(WHITE))
-                .stroke(Stroke::NONE)
-                .corner_radius(255)
-                .min_size(egui::vec2(ui.available_width(), 44.)),
+            egui::Button::new(action_layout(
+                icon,
+                label,
+                FontId::new(19., bold()),
+                22.,
+                WHITE,
+            ))
+            .stroke(Stroke::NONE)
+            .corner_radius(255)
+            .min_size(egui::vec2(ui.available_width(), 44.)),
         )
     })
     .inner
 }
 
-pub fn action(icon: &str, label: &str) -> RichText {
-    RichText::new(format!("{icon}  {label}"))
+fn icon_family() -> FontFamily {
+    FontFamily::Name("Material Symbols".into())
+}
+
+fn action_layout(
+    icon: &str,
+    label: &str,
+    text_font: FontId,
+    icon_size: f32,
+    color: Color32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        icon,
+        0.,
+        egui::TextFormat {
+            font_id: FontId::new(icon_size, icon_family()),
+            color,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    job.append(
+        label,
+        6.,
+        egui::TextFormat {
+            font_id: text_font,
+            color,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    job
+}
+
+pub fn action(icon: &str, label: &str) -> egui::text::LayoutJob {
+    action_colored(icon, label, Color32::PLACEHOLDER)
+}
+
+pub fn hold_button(ui: &mut egui::Ui, icon: &str, label: &str) -> bool {
+    // Capture dragging so the surrounding ScrollArea cannot steal a held jog.
+    // Moving off the button keeps the hold; releasing anywhere ends it.
+    ui.add(egui::Button::new(action(icon, label)).sense(egui::Sense::click_and_drag()))
+        .is_pointer_button_down_on()
+}
+
+pub fn action_colored(icon: &str, label: &str, color: Color32) -> egui::text::LayoutJob {
+    action_layout(icon, label, FontId::new(14., semibold()), 18., color)
 }
 
 pub fn icon_button(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response {
-    let response = ui.add_sized([36., 36.], egui::Button::new(RichText::new(icon).size(20.)));
+    let response = ui.add_sized(
+        [36., 36.],
+        egui::Button::new(RichText::new(icon).family(icon_family()).size(20.)),
+    );
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
@@ -384,6 +440,58 @@ pub fn desktop_theme() -> Option<egui::Theme> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn jog_hold_survives_pointer_drag_in_a_scroll_area_until_release() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let frame = |events| {
+            let mut held = false;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400., 200.),
+                    )),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            held = hold_button(
+                                ui,
+                                egui_material_icons::icons::ICON_ARROW_FORWARD,
+                                "Jog +",
+                            );
+                            ui.add_space(1000.);
+                        });
+                    });
+                },
+            );
+            held
+        };
+        assert!(!frame(vec![]));
+        let press = egui::pos2(30., 25.);
+        assert!(frame(vec![
+            egui::Event::PointerMoved(press),
+            egui::Event::PointerButton {
+                pos: press,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default()
+            }
+        ]));
+        let outside = egui::pos2(50., 100.);
+        assert!(frame(vec![egui::Event::PointerMoved(outside)]));
+        assert!(frame(vec![]));
+        assert!(!frame(vec![egui::Event::PointerButton {
+            pos: outside,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default()
+        }]));
+    }
     #[test]
     fn system_preference_switches_both_palettes_and_keeps_readable_text() {
         let ctx = egui::Context::default();
