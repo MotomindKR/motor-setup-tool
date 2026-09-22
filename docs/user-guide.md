@@ -72,7 +72,7 @@ needed. A good bare-motor result does not establish behavior under a robot load.
 
 ## Set zero or change the ID
 
-Select the motor. Zero setting is in **Test**; ID changes are in **Motor setup**:
+Select the motor. Zero setting is in **Test**; ID changes are in **Setup**:
 
 - **Test → Set current position as zero** makes the current shaft position the zero
   reference. The app stops the motor and checks that it is stationary first.
@@ -80,7 +80,8 @@ Select the motor. Zero setting is in **Test**; ID changes are in **Motor setup**
   depends on the firmware.
 - Enter **New ID**, then **Apply**. The app checks for an ID collision and verifies
   the same motor at its new address.
-- **Disable motor** in the top-right bar requests and verifies stopped mode when the app is idle.
+- The top bar shows **Connected · Enabled** or **Connected · Disabled**.
+  **Disable motor** is available only while the selected motor is enabled.
 
 ## Monitor and jog a motor
 
@@ -119,7 +120,7 @@ when its version is older than the verified release in the app’s catalog. Clic
 the notice to open the updater. This comparison works offline; it does not poll
 for future vendor releases or recommend downgrading newer firmware.
 
-Open **Motor setup → Firmware update** and choose **Download and verify**.
+Open **Setup → Firmware update** and choose **Download and verify**.
 Review the installed and target versions, then press the update button for the
 selected model and ID. The catalog's release is shown in the UI; it is bundled
 with the app rather than automatically following the vendor's newest release.

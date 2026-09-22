@@ -264,7 +264,11 @@ impl Bus {
             "Enable did not reach Run mode within 100 ms; last feedback mode={last:?} (0=Reset, 1=Calibration, 2=Run), faults=0x00. No calibration motion started"
         )
     }
-    pub(crate) fn watchdog_preflight(&self, cancel: &AtomicBool) -> Result<Feedback> {
+    pub(crate) fn watchdog_preflight(
+        &self,
+        cancel: &AtomicBool,
+        motor_state: impl Fn(bool),
+    ) -> Result<Feedback> {
         let bus = self;
         let c = &self.config;
         // Program raw firmware ticks and verify actual expiry below. Tick periods
@@ -279,6 +283,7 @@ impl Bus {
         ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
         bus.enable_zero_torque(cancel)
             .context("Watchdog preflight could not enable motor at zero torque")?;
+        motor_state(true);
         let watchdog_start = Instant::now();
         while watchdog_start.elapsed() < Duration::from_millis(300) {
             ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
@@ -286,7 +291,9 @@ impl Bus {
         }
         bus.flush()?;
         bus.send(protocol::torque(c.motor_id, 0., &c.profile).0)?;
-        bus.feedback(Duration::from_millis(50))
+        let expired = bus.feedback(Duration::from_millis(50))?;
+        motor_state(expired.mode == 2);
+        Ok(expired)
     }
     pub fn stop(&self) -> Result<()> {
         self.send(protocol::frame(
@@ -572,6 +579,7 @@ pub fn acquire(
     dir: &Path,
     cancel: &AtomicBool,
     progress: impl Fn(WorkProgress),
+    motor_state: impl Fn(bool),
 ) -> Result<()> {
     c.validate()?;
     progress(WorkProgress::recording(0., "Checking motor and watchdog"));
@@ -579,6 +587,7 @@ pub fn acquire(
     let bus = Bus::open(c)?;
     let _guard = StopGuard(&bus);
     let initial = bus.stopped()?;
+    motor_state(false);
     ensure!(initial.faults == 0, "Motor has active faults");
     ensure!(
         initial.temperature < c.temperature_limit,
@@ -604,7 +613,7 @@ pub fn acquire(
         }),
     )?;
     check_firmware_model(c, firmware.as_deref())?;
-    let expired = bus.watchdog_preflight(cancel)?;
+    let expired = bus.watchdog_preflight(cancel, &motor_state)?;
     bridge::write_json(
         &dir.join("watchdog_preflight.json"),
         &serde_json::json!({
@@ -668,6 +677,7 @@ pub fn acquire(
             let enabled = bus
                 .enable_zero_torque(cancel)
                 .context("Acquisition could not enable motor at zero torque")?;
+            motor_state(true);
             let start = Instant::now();
             let duration = if validation {
                 c.validation_seconds
@@ -778,6 +788,7 @@ pub fn acquire(
                 Ok(())
             })();
             bus.stop()?;
+            motor_state(false);
             session.traces.push(trace);
             bridge::write_json(&dir.join("session.json"), &session)?;
             result?;

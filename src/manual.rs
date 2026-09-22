@@ -185,7 +185,9 @@ fn run(
             bus.stopped()?;
             // Recheck on every enable: a power cycle while disabled can reset
             // the motor's volatile watchdog and operation-mode registers.
-            let expired = bus.watchdog_preflight(cancel)?;
+            let expired = bus.watchdog_preflight(cancel, |enabled| {
+                output.lock().unwrap().enabled = enabled;
+            })?;
             ensure!(
                 expired.mode == 0 && expired.faults == 0,
                 "Firmware watchdog did not stop the motor; update firmware before jogging"

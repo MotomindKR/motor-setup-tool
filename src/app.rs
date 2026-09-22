@@ -20,6 +20,7 @@ enum Event {
     FirmwareInstalled(String),
     Status(String),
     Progress(WorkProgress),
+    MotorEnabled(bool),
     Found(Vec<hardware::DiscoveredMotor>),
     Finished(PathBuf, Box<Report>),
     IdChanged(u8),
@@ -50,6 +51,7 @@ pub struct CalibrationApp {
     open_firmware: bool,
     manual: Option<manual::Session>,
     manual_status: manual::Status,
+    motor_enabled: bool,
     manual_history: std::collections::VecDeque<(Instant, crate::protocol::Feedback)>,
     jog_reviewed: bool,
     jog_speed: f64,
@@ -90,6 +92,7 @@ impl Default for CalibrationApp {
             open_firmware: false,
             manual: None,
             manual_status: manual::Status::default(),
+            motor_enabled: false,
             manual_history: Default::default(),
             jog_reviewed: false,
             jog_speed: 0.5,
@@ -263,6 +266,7 @@ impl CalibrationApp {
                     self.status = format!("Firmware {version} verified. Motor stopped.");
                 }
                 Event::Status(s) => self.status = s,
+                Event::MotorEnabled(enabled) => self.motor_enabled = enabled,
                 Event::Progress(p) => {
                     self.status = p.label.clone();
                     self.work_progress = Some(p);
@@ -308,12 +312,14 @@ impl CalibrationApp {
                 }
                 Event::Done(s) => self.status = s,
                 Event::Error(s) => {
+                    self.motor_enabled = false;
                     self.status = "Operation stopped".into();
                     self.error = Some(s);
                 }
             }
         }
         if disconnected {
+            self.motor_enabled = false;
             self.rx = None;
             self.firmware_updating = false;
             if let Some(job) = self.job.take()
@@ -358,7 +364,11 @@ impl CalibrationApp {
             let dir = bridge::new_run_dir()?;
             bridge::write_json(&dir.join("config.json"), &config)?;
             let _ = tx.send(Event::Status(format!("Recording to {}", dir.display())));
-            if let Err(e) = hardware::acquire(&config, &dir, &cancel, |p| { let _ = tx.send(Event::Progress(p)); }) {
+            let recording = hardware::acquire(&config, &dir, &cancel,
+                |p| { let _ = tx.send(Event::Progress(p)); },
+                |enabled| { let _ = tx.send(Event::MotorEnabled(enabled)); });
+            let _ = tx.send(Event::MotorEnabled(false));
+            if let Err(e) = recording {
                 let _ = bridge::write_json(&dir.join("error.json"), &serde_json::json!({"error": format!("{e:#}")}));
                 return Err(e);
             }
@@ -381,6 +391,22 @@ impl CalibrationApp {
             && self
                 .selected_motor()
                 .is_some_and(|m| m.model.as_deref() == Some(self.config.profile.model.as_str()))
+    }
+    fn can_disable_motor(&self) -> bool {
+        self.motor_ready() && self.motor_enabled && !self.firmware_updating
+    }
+    fn connection_label(&self) -> &'static str {
+        if self.motor_ready() {
+            if self.motor_enabled {
+                "Connected · Enabled"
+            } else {
+                "Connected · Disabled"
+            }
+        } else if self.busy() {
+            "Working"
+        } else {
+            "Not connected"
+        }
     }
     fn invalidate_connection(&mut self) {
         self.stop_monitor();
@@ -574,7 +600,7 @@ impl CalibrationApp {
                     theme::colors(ui).link,
                 )))
                 .on_hover_text(format!(
-                    "{} · firmware {}. Open Motor setup to review and install.",
+                    "{} · firmware {}. Open Setup to review and install.",
                     update.model, update.version
                 ))
                 .clicked()
@@ -591,12 +617,25 @@ impl CalibrationApp {
             ui.add_space(10.);
             let previous_tab = self.sidebar_tab;
             theme::segmented(ui, |ui| {
-                ui.spacing_mut().button_padding.x = 8.;
+                ui.spacing_mut().button_padding.x = 4.;
                 ui.spacing_mut().item_spacing.x = 4.;
-                ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Calibrate, "Calibrate");
-                ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Test, "Test");
-                ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Motor, "Motor setup");
-                ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Files, "Files");
+                let width = (ui.available_width() - 3. * ui.spacing().item_spacing.x) / 4.;
+                for (tab, label) in [
+                    (SidebarTab::Calibrate, "Calibrate"),
+                    (SidebarTab::Test, "Test"),
+                    (SidebarTab::Motor, "Setup"),
+                    (SidebarTab::Files, "Files"),
+                ] {
+                    if ui
+                        .add_sized(
+                            [width, 36.],
+                            egui::Button::selectable(self.sidebar_tab == tab, label).truncate(),
+                        )
+                        .clicked()
+                    {
+                        self.sidebar_tab = tab;
+                    }
+                }
             });
             if previous_tab == SidebarTab::Test && self.sidebar_tab != SidebarTab::Test {
                 self.stop_monitor();
@@ -935,7 +974,7 @@ impl CalibrationApp {
         });
     }
     fn disable_motor(&mut self) {
-        if self.firmware_updating {
+        if !self.can_disable_motor() {
             return;
         }
         if let Some(session) = &self.manual {
@@ -959,6 +998,7 @@ impl CalibrationApp {
         self.manual = None; // Joins the worker after its stop guard runs.
         self.manual_status.enabled = false;
         self.manual_status.preparing = false;
+        self.motor_enabled = false;
     }
     fn poll_monitor(&mut self, ctx: &egui::Context) {
         let Some(session) = &self.manual else {
@@ -986,6 +1026,7 @@ impl CalibrationApp {
             self.status = reason.clone();
         }
         self.manual_status = snapshot;
+        self.motor_enabled = self.manual_status.enabled;
         if session.finished() {
             self.error = self.manual_status.error.clone();
             self.stop_monitor();
@@ -1072,16 +1113,19 @@ impl CalibrationApp {
             )
             .clicked();
         let mut direction = 0;
-        ui.add_enabled_ui(self.manual_status.enabled, |ui| {
-            ui.horizontal(|ui| {
-                if theme::hold_button(ui, ICON_ARROW_BACK, "Jog −") {
-                    direction -= 1;
-                }
-                if theme::hold_button(ui, ICON_ARROW_FORWARD, "Jog +") {
-                    direction += 1;
-                }
-            });
-        });
+        ui.add_enabled_ui(
+            self.manual_status.enabled && !self.manual_status.preparing,
+            |ui| {
+                ui.horizontal(|ui| {
+                    if theme::hold_button(ui, ICON_ARROW_BACK, "Jog −") {
+                        direction -= 1;
+                    }
+                    if theme::hold_button(ui, ICON_ARROW_FORWARD, "Jog +") {
+                        direction += 1;
+                    }
+                });
+            },
+        );
         ui.small(if self.manual_status.preparing {
             "Checking firmware watchdog…"
         } else {
@@ -1785,7 +1829,7 @@ impl eframe::App for CalibrationApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
-                                self.selected_motor().is_some() && !self.firmware_updating,
+                                self.can_disable_motor(),
                                 egui::Button::new(theme::action(
                                     ICON_POWER_SETTINGS_NEW,
                                     "Disable motor",
@@ -1796,14 +1840,12 @@ impl eframe::App for CalibrationApp {
                         {
                             self.disable_motor();
                         }
-                        let (label, color) = if self.busy() {
-                            ("Working", theme::colors(ui).body)
-                        } else if self.motor_ready() {
-                            ("Connected", theme::colors(ui).success)
+                        let color = if self.motor_ready() {
+                            theme::colors(ui).success
                         } else {
-                            ("Not connected", theme::colors(ui).muted)
+                            theme::colors(ui).muted
                         };
-                        theme::badge(ui, label, color);
+                        theme::badge(ui, self.connection_label(), color);
                     });
                 });
             });
@@ -1860,6 +1902,50 @@ impl Drop for CalibrationApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn header_and_disable_action_follow_motor_state_and_clear_on_disconnect() {
+        let mut app = CalibrationApp::default();
+        assert_eq!(app.connection_label(), "Not connected");
+        assert!(!app.can_disable_motor());
+        app.interfaces.push(hardware::CanInterface {
+            name: "can0".into(),
+            up: true,
+            state: "ERROR-ACTIVE".into(),
+        });
+        app.found.push(hardware::DiscoveredMotor {
+            id: 7,
+            uuid: [0; 8],
+            model: Some("RS-00".into()),
+            firmware: Some("0.0.3.32".into()),
+            issue: None,
+        });
+        app.select_motor(7);
+        assert_eq!(app.connection_label(), "Connected · Disabled");
+        assert!(!app.can_disable_motor());
+        // Calibration uses the same confirmed state as live monitoring.
+        let (tx, rx) = mpsc::channel();
+        app.rx = Some(rx);
+        tx.send(Event::MotorEnabled(true)).unwrap();
+        app.poll();
+        assert_eq!(app.connection_label(), "Connected · Enabled");
+        assert!(app.can_disable_motor());
+        app.firmware_updating = true;
+        assert!(!app.can_disable_motor());
+        app.firmware_updating = false;
+        tx.send(Event::MotorEnabled(false)).unwrap();
+        app.poll();
+        assert_eq!(app.connection_label(), "Connected · Disabled");
+        assert!(!app.can_disable_motor());
+        tx.send(Event::MotorEnabled(true)).unwrap();
+        app.poll();
+        drop(tx);
+        app.poll();
+        assert!(!app.can_disable_motor());
+        app.motor_enabled = true;
+        app.invalidate_connection();
+        assert_eq!(app.connection_label(), "Not connected");
+        assert!(!app.motor_enabled && !app.can_disable_motor());
+    }
     #[test]
     fn detected_model_selects_its_preset_and_invalidated_identity_blocks_motion() {
         let mut app = CalibrationApp::default();
