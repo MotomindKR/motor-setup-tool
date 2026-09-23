@@ -40,6 +40,19 @@ print('Desktop executable, application ID, and scalable/raster icons: OK')
 PY
 cd /
 "$work/relocated app/motor.AppImage" --version
+env -u DISPLAY -u WAYLAND_DISPLAY "$work/relocated app/motor.AppImage" --help > "$work/help.txt"
+env -u DISPLAY -u WAYLAND_DISPLAY "$work/relocated app/motor.AppImage" can list > "$work/can.json"
+env -u DISPLAY -u WAYLAND_DISPLAY "$work/relocated app/motor.AppImage" plan --model RS-00 > "$work/plan.json"
+python3 - "$work" <<'PY'
+import json, pathlib, subprocess, sys
+work = pathlib.Path(sys.argv[1])
+assert isinstance(json.loads((work / 'can.json').read_text()), list)
+assert json.loads((work / 'plan.json').read_text())['profile']['model'] == 'RS-00'
+for args in [('calibrate', '--id', '127'), ('jog', '--id', '127', '--speed', '0.5', '--seconds', '2'), ('--misspelled',)]:
+    r = subprocess.run([str(work / 'relocated app/motor.AppImage'), *args], capture_output=True, timeout=5)
+    assert r.returncode == 2, r.stderr
+print('Headless CLI and explicit motion confirmation: OK')
+PY
 "$work/relocated app/motor.AppImage" --self-check > "$work/check.json"
 python3 - "$work/check.json" <<'PY'
 import json, os, sys

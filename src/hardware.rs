@@ -18,25 +18,30 @@ pub struct Bus {
     socket: CanSocket,
     config: Config,
 }
+pub(crate) fn lock_interface(interface: &str) -> Result<std::fs::File> {
+    ensure!(
+        !interface.is_empty()
+            && interface.len() < 16
+            && interface
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+            && interface != "."
+            && interface != "..",
+        "Invalid CAN interface name"
+    );
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(crate::paths::lock_dir()?.join(format!("{interface}.lock")))?;
+    lock.try_lock()
+        .context("Another motor operation owns this CAN interface")?;
+    Ok(lock)
+}
 impl Bus {
     pub fn open(config: &Config) -> Result<Self> {
-        ensure!(
-            config
-                .interface
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "_- .".contains(c))
-                && !config.interface.is_empty(),
-            "Invalid CAN interface name"
-        );
-        let locks = crate::paths::lock_dir()?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(locks.join(format!("{}.lock", config.interface)))?;
-        lock.try_lock()
-            .context("Another calibration/update operation owns this CAN interface")?;
+        let lock = lock_interface(&config.interface)?;
         let socket = CanSocket::open(&config.interface)
             .context("Open SocketCAN interface (configure bitrate and bring it up first)")?;
         socket.set_nonblocking(true)?;
@@ -348,6 +353,7 @@ pub struct CanInterface {
     pub name: String,
     pub up: bool,
     pub state: String,
+    pub bitrate: Option<u32>,
 }
 impl CanInterface {
     pub fn ready(&self) -> bool {
@@ -433,6 +439,7 @@ fn controller_interface(
         name,
         up: details.is_up,
         state: state.into(),
+        bitrate: details.can.bit_timing.map(|timing| timing.bitrate),
     })
 }
 
@@ -443,6 +450,21 @@ pub struct DiscoveredMotor {
     pub firmware: Option<String>,
     pub model: Option<String>,
     pub issue: Option<String>,
+}
+pub fn inspect(c: &Config) -> Result<DiscoveredMotor> {
+    let bus = Bus::open(c)?;
+    let _guard = StopGuard(&bus);
+    bus.stopped()?;
+    let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
+    let firmware = bus.firmware_version()?;
+    let model = protocol::firmware_model(&firmware);
+    Ok(DiscoveredMotor {
+        id: c.motor_id,
+        uuid,
+        firmware: Some(firmware),
+        issue: model.is_none().then(|| "Unknown firmware family".into()),
+        model,
+    })
 }
 pub fn scan(
     c: &Config,
@@ -845,6 +867,21 @@ mod diagnostics_tests {
                     .ready(),
                 ready
             );
+        }
+    }
+    #[test]
+    fn interface_lock_rejects_paths_and_command_fragments() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../can0",
+            "can0;id",
+            "can0\nup",
+            "a b",
+            "0123456789abcdef",
+        ] {
+            assert!(lock_interface(name).is_err());
         }
     }
     #[test]

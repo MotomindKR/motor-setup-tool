@@ -101,7 +101,7 @@ jobs:
 
           - **amd64**: Intel/AMD 64-bit computers.
           - **arm64**: ARM 64-bit computers.
-          - Ubuntu 22.04 / glibc 2.35 or newer; a desktop OpenGL driver is required.
+          - Ubuntu 22.04 / glibc 2.35 or newer; the GUI requires a desktop OpenGL driver.
           - MuJoCo and app libraries are bundled. Rust and Python are not required.
 
           Download the matching AppImage, make it executable, and run it:
@@ -112,7 +112,9 @@ jobs:
           If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the command.
           Opening the app registers its launcher and icon in your applications menu.
           After moving or replacing the AppImage, open it once to refresh that launcher.
-          The host must provide the adapter driver and an already-configured SocketCAN interface.
+          Run with `--help` for headless CLI commands, including calibration and monitoring.
+          The CAN up button uses the host's iproute2 and PolicyKit authentication agent.
+          The host must provide the adapter driver; CAN setup supports 1 Mbps.
           Recordings are stored under `$XDG_DATA_HOME/motomind-motor-calib/runs`
           (default: `~/.local/share/motomind-motor-calib/runs`).
           NOTES

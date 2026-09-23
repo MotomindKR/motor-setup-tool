@@ -10,8 +10,13 @@ adapter and motor documentation for grounding and CAN termination. Close other
 motor-control applications before operating this tool.
 
 The app uses Linux SocketCAN. The adapter must have a working kernel driver and
-appear as a CAN interface, such as `can0`. The app lists interfaces but does not
-configure bitrate or bring them up. For a stopped, idle bench bus using 1 Mbps:
+appear as a CAN interface, such as `can0`. Select a down interface and click
+**CAN up** to configure **1 Mbps**. Linux opens its administrator authentication
+dialog; the app never handles your password. An interface that is already up
+offers **Restart CAN** instead. Setup is disabled while this app is controlling a motor.
+
+The button requires the host's `iproute2`, `pkexec`, and desktop authentication
+agent. If these are unavailable, configure an idle bus in a terminal:
 
 ```sh
 ip -details link show type can

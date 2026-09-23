@@ -1,5 +1,7 @@
 mod app;
 mod bridge;
+mod can_admin;
+mod cli;
 mod desktop;
 mod engine;
 mod experiment;
@@ -14,6 +16,9 @@ mod theme;
 mod types;
 
 fn main() -> anyhow::Result<()> {
+    if cli::dispatch()? {
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--install-desktop") {
         let launcher = desktop::install_appimage()?
             .ok_or_else(|| anyhow::anyhow!("Run --install-desktop from the AppImage"))?;

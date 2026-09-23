@@ -28,9 +28,21 @@ keyfile.set_string('Desktop Entry', 'Exec', installed.get_commandline()
                    + f' "--screenshot={capture}" --screenshot-theme=light')
 probe = Gio.DesktopAppInfo.new_from_keyfile(keyfile)
 assert probe is not None
-assert probe.launch([], None)
+pids = []
+assert probe.launch_uris_as_manager(
+    [], None, GLib.SpawnFlags.DO_NOT_REAP_CHILD, None, None,
+    lambda _app, pid, _data: pids.append(pid), None,
+)
+assert len(pids) == 1, 'Expected one desktop process'
 deadline = time.monotonic() + 35
-while not capture.is_file() and time.monotonic() < deadline:
+status = None
+while time.monotonic() < deadline:
+    pid, child_status = os.waitpid(pids[0], os.WNOHANG)
+    if pid:
+        status = child_status
+        break
     time.sleep(0.1)
+assert status is not None, 'Registered desktop process did not exit after capture'
+assert os.waitstatus_to_exitcode(status) == 0, f'Desktop process failed: {status}'
 assert capture.is_file() and capture.stat().st_size > 0, 'Registered desktop launch failed'
 print('Desktop application ID, resolved icon, and launch through GLib: OK')

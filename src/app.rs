@@ -15,6 +15,7 @@ use std::{
 };
 
 enum Event {
+    CanReady(String),
     FirmwarePrepared(firmware::Prepared),
     FirmwareProgress(f32, String),
     FirmwareInstalled(String),
@@ -244,6 +245,10 @@ impl CalibrationApp {
         }
         for event in events {
             match event {
+                Event::CanReady(interface) => {
+                    self.refresh_interfaces();
+                    self.status = format!("{interface} is up · 1 Mbps. Scan to find motors.");
+                }
                 Event::FirmwarePrepared(prepared) => {
                     self.status = format!(
                         "Firmware verified · {} -> {} · ready to update ID {}",
@@ -480,6 +485,27 @@ impl CalibrationApp {
             Ok(())
         });
     }
+    fn bring_can_up(&mut self) {
+        if self.busy() || self.manual.is_some() {
+            return;
+        }
+        let Some(bus) = self
+            .interfaces
+            .iter()
+            .find(|b| b.name == self.config.interface)
+        else {
+            return;
+        };
+        let restart = bus.up;
+        let interface = bus.name.clone();
+        self.invalidate_connection();
+        self.status = "Waiting for system authentication…".into();
+        self.spawn(move |tx, cancel| {
+            crate::can_admin::up(&interface, restart, crate::can_admin::Auth::Polkit, &cancel)?;
+            let _ = tx.send(Event::CanReady(interface));
+            Ok(())
+        });
+    }
     fn motor_action(&mut self, zero: bool) {
         if !self.motor_ready() {
             return;
@@ -538,12 +564,24 @@ impl CalibrationApp {
         });
         if self.interfaces.is_empty() {
             ui.small("Connect a USB-CAN adapter to begin.");
-        } else if !self.bus_ready() {
-            ui.colored_label(
-                theme::colors(ui).warning,
-                "Bring the CAN bus up before scanning.",
-            )
-            .on_hover_text("Bring the selected CAN interface up before scanning.");
+        } else {
+            ui.horizontal(|ui| {
+                let restart = self
+                    .interfaces
+                    .iter()
+                    .any(|b| b.name == self.config.interface && b.up);
+                let label = if restart { "Restart CAN" } else { "CAN up" };
+                if ui
+                    .button(theme::action(ICON_POWER_SETTINGS_NEW, label))
+                    .on_hover_text(
+                        "Configure 1 Mbps using the system administrator password dialog",
+                    )
+                    .clicked()
+                {
+                    self.bring_can_up();
+                }
+                ui.small("1 Mbps");
+            });
         }
         ui.horizontal(|ui| {
             let mut id = self.config.motor_id;
@@ -1915,6 +1953,7 @@ mod tests {
             name: "can0".into(),
             up: true,
             state: "ERROR-ACTIVE".into(),
+            bitrate: Some(1_000_000),
         });
         app.found.push(hardware::DiscoveredMotor {
             id: 7,
@@ -1957,6 +1996,7 @@ mod tests {
             name: "can0".into(),
             up: true,
             state: "ERROR-ACTIVE".into(),
+            bitrate: Some(1_000_000),
         });
         for profile in Profile::presets() {
             app.found = vec![hardware::DiscoveredMotor {
@@ -2016,6 +2056,7 @@ mod tests {
                 name: "can0".into(),
                 up: true,
                 state: "ERROR-ACTIVE".into(),
+                bitrate: Some(1_000_000),
             });
             app.found.push(hardware::DiscoveredMotor {
                 id: 7,

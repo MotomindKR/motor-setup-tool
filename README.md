@@ -10,6 +10,7 @@ A Linux desktop app by Motomind. Calibrate a bare RobStride motor, compare its
 motion with MuJoCo, and manage its ID, zero position, and firmware.
 
 - Monitor live motor feedback and use hold-to-jog controls in the Test tab.
+- Bring CAN up with the system password dialog, or operate from the command line.
 - Discover motors on available CAN buses and identify their model from firmware.
 - Measure armature inertia, damping, friction, and effective delay with one preset per model.
 - Compare measured motion with simulation before and after calibration.
@@ -28,8 +29,8 @@ Make the downloaded file executable in your file manager, then open it. From a
 terminal, replacing the filename with the one you downloaded:
 
 ```sh
-chmod +x motor-setup-tool-0.1.2-linux-amd64.AppImage
-./motor-setup-tool-0.1.2-linux-amd64.AppImage
+chmod +x motor-setup-tool-0.1.3-linux-amd64.AppImage
+./motor-setup-tool-0.1.3-linux-amd64.AppImage
 ```
 
 Requires **Ubuntu 22.04 or newer**, or another Linux distribution with glibc 2.35+
@@ -76,6 +77,7 @@ Recordings are stored in `~/.local/share/motomind-motor-calib/runs/` by default.
 | I want to… | Read |
 |---|---|
 | Connect, calibrate, or configure a motor | [User guide](docs/user-guide.md) |
+| Operate from a terminal or over SSH | [CLI guide](docs/cli.md) |
 | Use a result in MuJoCo | [Simulation and exports](docs/simulation.md) |
 | Build, test, or change the app | [Developer guide](docs/development.md) |
 | Understand the fitting method | [Identification](docs/identification.md) |

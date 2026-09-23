@@ -102,8 +102,10 @@ Only `dist/` is mounted: source code and the
 developer's toolchain are inaccessible. It does not operate a motor.
 
 Real adapter/firmware behavior and GPU/Wayland integration require separate
-hardware checks. The host must supply the CAN driver and configured interface;
-packaging does not install a driver or grant network-administration privileges.
+hardware checks. The host must supply the CAN driver. CAN setup uses the host's
+`iproute2` and `pkexec` with a desktop authentication agent, or sudo in the CLI.
+These privileged host tools are not bundled; the app itself stays unprivileged.
+All CLI subcommands also run without a display server; see the [CLI guide](../docs/cli.md).
 
 ## Update bundled dependencies
 

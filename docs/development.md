@@ -83,6 +83,7 @@ The UI never automatically enables a motor when a view is opened.
 | Module | Responsibility |
 |---|---|
 | `app.rs`, `theme.rs` | UI, worker events, plots, shared appearance tokens |
+| `cli.rs`, `can_admin.rs` | Headless commands, signal cancellation, system authentication for CAN setup |
 | `manual.rs` | Live feedback, manual enable/jog, UI heartbeat and jog limits |
 | `hardware.rs` | SocketCAN discovery, acquisition, stop conditions, bus ownership |
 | `protocol.rs`, `firmware.rs` | Frame encoding/decoding and firmware transfer |
@@ -141,6 +142,13 @@ fallback when unavailable. Fonts and branding are embedded; see
 [asset provenance and licenses](../assets/README.md).
 
 ## Command-line reference
+
+See the [CLI guide](cli.md) for subcommands, scripting, calibration, and bounded
+jogging. They share the GUI's hardware and fitting implementations. The CAN
+setup worker holds the same interface lock and elevates only the host's `ip`
+command through PolicyKit (GUI) or sudo (terminal); the main app stays unprivileged.
+
+The older option-based commands remain available for compatibility.
 
 Run these options with `./scripts/run.sh` or the packaged AppImage:
 
