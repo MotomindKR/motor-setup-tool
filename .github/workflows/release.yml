@@ -45,11 +45,14 @@ jobs:
             .tools/packaging
             target/appimage
           key: appimage-22.04-rust1.98.1-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
+          restore-keys: appimage-22.04-rust1.98.1-${{ matrix.arch }}-
       - name: Build on Ubuntu 22.04 baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           docker build -f packaging/Dockerfile -t motomind-packager .
           docker run --rm --user "$(id -u):$(id -g)" \
-            -e CARGO_HOME=/work/.tools/ci-cargo -e GITHUB_SHA \
+            -e CARGO_HOME=/work/.tools/ci-cargo -e GITHUB_SHA -e GH_TOKEN \
             -v "$PWD:/work" motomind-packager bash scripts/build-appimage.sh
       - name: Verify in clean Ubuntu 22.04 and 24.04 runtimes
         run: |

@@ -24,6 +24,12 @@ artifacts without publishing; dispatch on a matching version tag can publish.
 The workflow uses the built-in GitHub token with `contents: write` only in the
 publication job. It requires available Actions runners and billing capacity.
 
+Build jobs use a read-only GitHub token for pinned API asset downloads, avoiding
+shared runner IP rate limits. Downloads retry transient failures and verify the
+locked SHA-256 before caching. Tokens are never forwarded to redirected download
+hosts. All packaging tools are fetched before compilation; Cargo caches can be
+restored across dependency updates for the same architecture and build baseline.
+
 Release assets:
 
 - `motor-setup-tool-VERSION-linux-amd64.AppImage`
