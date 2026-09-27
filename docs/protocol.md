@@ -74,6 +74,14 @@ speed, travel, temperature, encoder continuity, CAN errors, missing feedback
 firmware watchdog expiry covers loss of host commands. The desktop command
 loop is not a hard real-time scheduler.
 
+Encoder continuity uses unwrapped position and a 50 ms history, allowing up to
+5 ms of USB/host arrival jitter plus 0.02 rad position tolerance. The same speed
+envelope must hold against every recent sample, so the jitter allowance does
+not accumulate for each received packet. This avoids treating a delayed reply
+followed by a closely spaced reply as a shaft jump. Speed, travel, feedback
+timeout, and command-deadline limits remain separate checks. Rejected encoder
+feedback is saved with its raw CAN frame and timing in `encoder_error.json`.
+
 Mode/watchdog settings remain in place after capture; the app does not save
 them to flash. Scanning and calibration do not change IDs, zero position, or
 firmware. Those are separate user-triggered operations.

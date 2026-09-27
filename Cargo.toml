@@ -1,6 +1,6 @@
 [package]
 name = "motor-setup-tool"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.95"
 description = "Motomind motor calibration and setup tool for RobStride motors"

@@ -1,5 +1,6 @@
 //! Exclusive, bounded manual control. The UI must renew its intent every frame.
 use crate::{
+    encoder::EncoderTracker,
     hardware::{Bus, StopGuard},
     protocol::{self, Feedback},
     types::Config,
@@ -164,8 +165,8 @@ fn run(
     let mut fb = bus.stopped()?;
     let mut enabled = false;
     let mut has_jogged = false;
-    let mut position = 0.;
-    let mut previous = fb.position;
+    let mut encoder = EncoderTracker::new(fb.position, c.profile.position_range, c.speed_limit);
+    let mut encoder_start = Instant::now();
     let mut integral = 0.;
     let mut stop_reason = None;
     let mut last_tick = Instant::now();
@@ -203,8 +204,8 @@ fn run(
                 continue;
             }
             fb = bus.enable_zero_torque(cancel)?;
-            previous = fb.position;
-            position = 0.;
+            encoder = EncoderTracker::new(fb.position, c.profile.position_range, c.speed_limit);
+            encoder_start = Instant::now();
             integral = 0.;
             has_jogged = false;
             enabled = true;
@@ -253,20 +254,7 @@ fn run(
                 fb.mode == 2,
                 "Motor left Run mode; enable again after checking its status"
             );
-            let mut delta = fb.position - previous;
-            let span = c.profile.position_range * 2.;
-            if delta > span / 2. {
-                delta -= span;
-            }
-            if delta < -span / 2. {
-                delta += span;
-            }
-            ensure!(
-                delta.abs() < c.speed_limit * dt.max(0.01) + 0.02,
-                "Implausible encoder jump; motor disabled"
-            );
-            position += delta;
-            previous = fb.position;
+            let position = encoder.update(fb.position, encoder_start.elapsed())?;
             validate_feedback(c, &fb, position)?;
         } else {
             ensure!(

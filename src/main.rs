@@ -3,6 +3,7 @@ mod bridge;
 mod can_admin;
 mod cli;
 mod desktop;
+mod encoder;
 mod engine;
 mod experiment;
 mod firmware;

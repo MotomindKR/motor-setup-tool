@@ -1,6 +1,7 @@
 //! Linux SocketCAN transport for the RobStride extended-frame private protocol.
 use crate::{
     bridge,
+    encoder::EncoderTracker,
     protocol::{self, Feedback, WireFrame},
     types::*,
 };
@@ -717,12 +718,14 @@ pub fn acquire(
                     temperature: enabled.temperature,
                 }],
             };
-            let mut last_raw = enabled.position;
+            let mut encoder =
+                EncoderTracker::new(enabled.position, c.profile.position_range, c.speed_limit);
             let mut position = 0.;
             let mut velocity = enabled.velocity;
             let mut next = start;
             let mut last_feedback = start;
             let mut last_progress = start;
+            let mut rejected_feedback = None;
             let mut exciter = crate::experiment::Exciter::new(c, validation);
             let result = (|| -> Result<()> {
                 while start.elapsed().as_secs_f64() < duration {
@@ -751,6 +754,8 @@ pub fn acquire(
                         };
                         if let Some(fb) = protocol::feedback(&f, c.motor_id, c.host_id, &c.profile)
                         {
+                            let received_at = Instant::now();
+                            let elapsed = received_at.duration_since(start);
                             ensure!(
                                 fb.faults == 0 && fb.mode == 2,
                                 "Motor fault / mode changed: faults=0x{:02x}, mode={}",
@@ -762,25 +767,24 @@ pub fn acquire(
                                 "Temperature limit reached"
                             );
                             ensure!(fb.velocity.abs() < c.speed_limit, "Speed limit reached");
-                            let mut delta = fb.position - last_raw;
-                            let span = c.profile.position_range * 2.;
-                            if delta > span / 2. {
-                                delta -= span;
-                            } else if delta < -span / 2. {
-                                delta += span;
-                            }
-                            ensure!(
-                                delta.abs()
-                                    < c.speed_limit * last_feedback.elapsed().as_secs_f64() + 0.02,
-                                "Implausible encoder jump; check wire profile/wrapping"
-                            );
-                            position += delta;
-                            last_raw = fb.position;
+                            position = encoder.update(fb.position, elapsed).inspect_err(|error| {
+                                // Include the rejected frame: accepted samples alone
+                                // cannot distinguish a jump from a delivery-time burst.
+                                // Defer disk I/O until after the motor is stopped.
+                                rejected_feedback = Some(serde_json::json!({
+                                        "phase": name, "t": elapsed.as_secs_f64(),
+                                        "interval_s": received_at.duration_since(last_feedback).as_secs_f64(),
+                                        "can_id": f.id, "payload": f.data,
+                                        "raw_position_rad": fb.position,
+                                        "velocity_rad_s": fb.velocity,
+                                        "profile": c.profile, "error": error.to_string(),
+                                    }));
+                            })?;
                             velocity = fb.velocity;
                             ensure!(position.abs() < c.travel_limit, "Travel limit reached");
-                            last_feedback = Instant::now();
+                            last_feedback = received_at;
                             trace.samples.push(Sample {
-                                t: start.elapsed().as_secs_f64(),
+                                t: elapsed.as_secs_f64(),
                                 position,
                                 velocity,
                                 reported_torque: fb.torque,
@@ -811,6 +815,9 @@ pub fn acquire(
             })();
             bus.stop()?;
             motor_state(false);
+            if let Some(feedback) = rejected_feedback {
+                let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
+            }
             session.traces.push(trace);
             bridge::write_json(&dir.join("session.json"), &session)?;
             result?;

@@ -29,8 +29,8 @@ Make the downloaded file executable in your file manager, then open it. From a
 terminal, replacing the filename with the one you downloaded:
 
 ```sh
-chmod +x motor-setup-tool-0.1.4-linux-amd64.AppImage
-./motor-setup-tool-0.1.4-linux-amd64.AppImage
+chmod +x motor-setup-tool-0.1.5-linux-amd64.AppImage
+./motor-setup-tool-0.1.5-linux-amd64.AppImage
 ```
 
 Requires **Ubuntu 22.04 or newer**, or another Linux distribution with glibc 2.35+

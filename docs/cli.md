@@ -4,7 +4,7 @@ The same AppImage works in a terminal or over SSH. Subcommands never open a
 window and do not need a display server. Run without arguments for the GUI.
 
 ```sh
-tool=./motor-setup-tool-0.1.4-linux-amd64.AppImage
+tool=./motor-setup-tool-0.1.5-linux-amd64.AppImage
 "$tool" --help
 "$tool" calibrate --help
 ```
