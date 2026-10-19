@@ -27,6 +27,8 @@ jobs:
           run-id: ${{ inputs.installer_run }}
           github-token: ${{ github.token }}
           path: dist-electron
+      - name: Check PowerShell bootstrap modes
+        run: node electron/test-windows-bootstrap.js
       - name: Test update handoff, install scopes, and failure recovery
         shell: pwsh
         env:
