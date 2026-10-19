@@ -42,9 +42,9 @@ function Get-InstallScope([string]$Directory) {
   return '/currentuser'
 }
 
-function Get-AppProcesses {
-  Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
-    $_.ExecutablePath -and $_.ExecutablePath -ieq $AppExe
+function Get-InstallProcesses {
+  Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe' OR Name = 'motor-setup-tool.exe'" | Where-Object {
+    $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$installDirectory\", [System.StringComparison]::OrdinalIgnoreCase)
   }
 }
 
@@ -64,17 +64,17 @@ try {
   # Chromium children can outlive the main process. A separate app instance
   # must close normally so any motor operation can stop through its backend.
   $deadline = (Get-Date).AddSeconds(10)
-  while (@(Get-AppProcesses).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
-  $remainingProcesses = @(Get-AppProcesses)
+  while (@(Get-InstallProcesses).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+  $remainingProcesses = @(Get-InstallProcesses)
   if (@($remainingProcesses | Where-Object { $_.CommandLine -notmatch '\s--type=' }).Count -gt 0) {
-    throw 'Another Motor Setup Tool instance is still running. Close it before updating.'
+    throw 'Another app instance or motor backend is still running. Stop its operation and close it before updating.'
   }
   foreach ($remaining in $remainingProcesses) {
-    Write-UpdateLog "Stopping remaining app process $($remaining.ProcessId)"
+    Write-UpdateLog "Stopping remaining Chromium process $($remaining.ProcessId)"
     Stop-Process -Id $remaining.ProcessId -Force -ErrorAction SilentlyContinue
   }
   $deadline = (Get-Date).AddSeconds(10)
-  while (@(Get-AppProcesses).Count -gt 0) {
+  while (@(Get-InstallProcesses).Count -gt 0) {
     if ((Get-Date) -ge $deadline) { throw 'App processes are still running; close other Motor Setup Tool windows and retry.' }
     Start-Sleep -Milliseconds 200
   }
