@@ -39,7 +39,7 @@ with a `.sha256` file. Set `MUJOCO_DYNAMIC_LINK_DIR` if MuJoCo is outside
 |---|---|
 | Calibrate | Review limits and motion preview, record a run, fit, and inspect results |
 | Test | Monitor feedback and use bounded hold-to-jog controls |
-| Setup | Set zero/reference angle, change ID, read persistent registers, save gains and filters, update firmware |
+| Setup | Set zero/reference angle, change ID, search and edit persistent registers in the main area, update firmware |
 | Files | Open saved runs, compare traces, or refit |
 
 Only one backend operation runs at a time. Stop signals the CLI, whose worker

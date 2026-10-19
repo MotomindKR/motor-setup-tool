@@ -39,7 +39,7 @@ function target(params) {
 
 function registerIndex(value, writable = false) {
   const index = Number(value);
-  if (!Number.isInteger(index) || index < 0x2011 || index > (writable ? 0x2017 : 0x2019)) {
+  if (!Number.isInteger(index) || !((index >= 0x2011 && index <= (writable ? 0x2017 : 0x2019)) || [0x7029, 0x702B].includes(index))) {
     throw new Error('Select a documented persistent register');
   }
   return `0x${index.toString(16)}`;
@@ -110,7 +110,7 @@ function argsFor(operation, params = {}) {
     case 'registerWrite': {
       if (params.confirmed !== true) throw new Error('Confirm the persistent register change first');
       const index = registerIndex(params.index, true);
-      const value = number(params.value, 'Register value', 0, 200);
+      const value = number(params.value, 'Register value', -7, 200);
       if (typeof params.uuid !== 'string' || !/^[a-fA-F0-9]{16}$/.test(params.uuid)) throw new Error('Read the motor identity again');
       if (typeof params.expectedRaw !== 'string' || !/^[a-fA-F0-9]{8}$/.test(params.expectedRaw)) throw new Error('Read the register again');
       return ['register', 'write', ...target(params), '--index', index, '--value', value, '--uuid', params.uuid, '--expected-raw', params.expectedRaw, '--yes'];

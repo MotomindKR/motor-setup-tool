@@ -158,14 +158,14 @@ enum RegisterCommand {
         #[arg(long, value_parser = register_index)]
         index: u16,
     },
-    /// Write a documented gain/filter and save it to motor storage.
+    /// Write a documented persistent setting and save it to motor storage.
     Write {
         #[command(flatten)]
         target: Target,
         #[arg(long, value_parser = register_index)]
         index: u16,
-        #[arg(long)]
-        value: f32,
+        #[arg(long, allow_negative_numbers = true)]
+        value: f64,
         #[arg(long)]
         uuid: String,
         #[arg(long)]
@@ -822,6 +822,31 @@ mod tests {
                 .iter()
                 .any(|v| v.as_f64().unwrap() != 0.)
         );
+    }
+
+    #[test]
+    fn register_cli_accepts_negative_offsets_and_integer_flags() {
+        for (index, value) in [("0x702B", "-1.25"), ("0x7029", "1")] {
+            assert!(
+                Cli::try_parse_from([
+                    "tool",
+                    "register",
+                    "write",
+                    "--id",
+                    "127",
+                    "--index",
+                    index,
+                    "--value",
+                    value,
+                    "--uuid",
+                    "0000000000000000",
+                    "--expected-raw",
+                    "00000000",
+                    "--yes"
+                ])
+                .is_ok()
+            );
+        }
     }
 
     #[test]

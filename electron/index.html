@@ -119,10 +119,6 @@
           <div class="row setup-id-row"><input id="new-id" type="number" min="1" max="254" placeholder="New ID" aria-label="New motor ID"><button id="set-id" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-hash"/></svg>Change ID</button></div>
           <details><summary>Motor specifications</summary><div id="motor-spec" class="muted small"></div></details>
           <details><summary>CAN protocol</summary><div id="protocol-spec" class="muted small"></div></details>
-          <hr><h3>Persistent registers</h3>
-          <select id="register-select" aria-label="Motor register"><option value="">Select a register</option></select>
-          <div id="register-status" class="muted small" role="status">Read a register before editing it.</div>
-          <div class="row register-actions"><button id="register-read" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Read</button><input id="register-value" type="number" step="any" placeholder="Value" aria-label="Register value" disabled><button id="register-write" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>Save</button></div>
           <hr><div class="section-head"><h3>Firmware update</h3><a href="https://github.com/RobStride/Product_Information/releases/tag/V26.05.19" id="firmware-release" class="small">Release notes</a></div>
           <button id="firmware-check" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download and verify</button>
           <div id="firmware-result" class="muted small"></div>
@@ -144,6 +140,25 @@
       <div class="topbar"><h1 id="page-title">Connect your motor</h1><div class="row top-actions"><div id="top-actions" class="row"><span id="status-badge" class="badge">Not connected</span><button id="global-stop" class="secondary compact" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Disable motor</button></div><button id="open-settings" class="icon-button" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button></div></div>
       <div id="notice" class="notice hidden" role="status"></div>
       <section id="work" class="work card hidden"><div class="section-head"><div><strong id="work-title">Working</strong><p id="work-message" class="muted small"></p></div><div class="row work-actions"><span id="work-percent" class="muted small"></span><button id="cancel" class="secondary compact"><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop</button></div></div><div class="progress-track"><div id="progress-bar"></div></div></section>
+      <section id="setup-view" class="hidden" aria-labelledby="registers-title">
+        <div class="section-head register-heading"><h2 id="registers-title">Persistent registers</h2><span id="register-count" class="muted small" role="status"></span></div>
+        <div class="register-search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="register-search" type="search" placeholder="Search name, symbol or address" aria-label="Search registers" autocomplete="off"></div>
+        <div class="register-workspace card">
+          <div id="register-list" class="register-list" aria-label="Registers"></div>
+          <section id="register-editor" class="register-editor" aria-labelledby="register-name">
+            <h3 id="register-name">Select a register</h3>
+            <p id="register-meta" class="muted small"></p>
+            <p id="register-description" class="muted small"></p>
+            <div class="register-current"><span class="muted small">Current value</span><strong id="register-current">—</strong><button id="register-read" class="secondary compact" disabled><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Read</button></div>
+            <label id="register-value-label" for="register-value">New value</label>
+            <input id="register-value" type="number" step="any" placeholder="Read first" disabled>
+            <select id="register-choice" class="hidden" aria-label="New register value" disabled></select>
+            <div id="register-range" class="muted small"></div>
+            <button id="register-write" class="primary" disabled><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>Save to motor</button>
+            <div id="register-status" class="muted small" role="status">Read a register before editing it.</div>
+          </section>
+        </div>
+      </section>
       <section id="empty-state" class="empty-state card"><p>Select a CAN bus and scan for a motor to begin.</p></section>
       <section id="preview-view" class="hidden"><div class="report-head"><h2 id="preview-title">Preview your next test</h2></div><section class="chart-card card"><h3>Target speed · rad/s</h3><canvas id="preview-chart"></canvas></section><section id="preview-torque-card" class="chart-card card hidden"><h3>Torque bursts · Nm</h3><canvas id="preview-torque-chart"></canvas></section><div id="preview-segments" class="segment-list"></div><p class="muted small">Requested motion; actual response depends on the motor.</p></section>
       <section id="manual-view" class="hidden"><div class="report-head"><div><h2>Motor test</h2><p id="manual-identity" class="muted"></p></div><span id="manual-badge" class="badge">No live feedback</span></div><p id="manual-reason" class="muted small"></p><div class="metrics live-metrics"><div class="metric card"><span>Position</span><strong id="feedback-position">—</strong><small>rad</small></div><div class="metric card"><span>Speed</span><strong id="feedback-velocity">—</strong><small>rad/s</small></div><div class="metric card"><span>Torque</span><strong id="feedback-torque">—</strong><small>Nm</small></div><div class="metric card"><span>Temperature</span><strong id="feedback-temp">—</strong><small>°C</small></div></div><div id="live-charts"></div></section>

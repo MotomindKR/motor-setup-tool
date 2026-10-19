@@ -84,12 +84,25 @@ Mode/watchdog settings remain in place after capture; the app does not save
 them to flash. Scanning and calibration do not change IDs, zero position, or
 firmware. Those are separate user-triggered operations.
 
-The Setup register editor reads documented persistent `0x20xx` parameters
-using CAN type 17. It writes only gains and filters `0x2011`–`0x2017` using type
-18, verifies the readback, then sends the documented type 22 save frame. It
-checks motor UUID and the prior raw value before writing. The `0x2018` and
-`0x2019` protection limits are read only; volatile `0x70xx` control parameters
-cannot be edited. A power cycle is needed to verify nonvolatile storage.
+### Persistent register editor
+
+- CAN type 17 reads; type 18 writes; type 22 saves persistent settings.
+- Gains and filters `0x2011`–`0x2017` use float32. Protection limits
+  `0x2018` and `0x2019` are read only in this editor.
+- `zero_sta` uses CAN alias `0x7029` and uint8, with values 0 or 1.
+  `add_offset` uses CAN alias `0x702B` and float32 radians (−7 to 7).
+- The host-computer `0x20xx` aliases for these newer settings differ by model;
+  the editor uses their documented CAN aliases. An address beginning `0x70`
+  does not by itself mean a parameter is volatile.
+- Writes require a stopped motor, the UUID and previous raw value from a recent
+  read, verified readback, and an acknowledgment to the save request. Integer
+  comparisons ignore unused payload padding. Power cycle and read again to
+  verify nonvolatile storage.
+- Motion targets, run mode, watchdog settings, protocol switching, and internal
+  calibration controls are excluded from this editor.
+
+Types and persistence follow the [RS00–RS06 vendor manuals, July 2026](https://github.com/RobStride/Product_Information/tree/0f4ad74fdb67023e75bbcbeebecd6f1a003ce000/Product%20Literature)
+and the vendor's [parameter definitions](https://github.com/RobStride/Python_Sample/blob/main/robstride_dynamics/protocol.py).
 
 ## Firmware transfer
 

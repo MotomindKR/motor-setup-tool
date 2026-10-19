@@ -128,13 +128,25 @@ Select the motor, then use **Test** or **Setup**:
 
 ### Persistent registers
 
-Open **Setup → Persistent registers** after selecting a motor. Choose a register
-and click **Read**. Gains and filters `0x2011`–`0x2017` can be edited within their
-documented ranges; the speed and current limit registers are read only. Enter a
-value and click **Save** to confirm the change. The app disables the motor,
-checks its UUID and current value, writes the new value, and sends the motor's
-save command. Power cycle and read again to verify the value persisted. Volatile
-`0x70xx` control registers are absent from this editor.
+Open **Setup**. The main area contains the register list and editor.
+
+1. Search by name, symbol (such as `zero_sta`), or hex address.
+2. Select a motor and register, then click **Read**.
+3. Choose or enter a new value and click **Save to motor**. Confirm the change.
+4. Power cycle and read again to verify persistence.
+
+| Registers | Editing |
+| --- | --- |
+| Gains and filters · `0x2011`–`0x2017` | Numeric input within documented ranges |
+| Speed and current limits · `0x2018`–`0x2019` | Read only |
+| Power-on position range · `zero_sta`, `0x7029` | Choose `0` (0 to 2π) or `1` (−π to π) |
+| Position offset · `add_offset`, `0x702B` | Radians, −7 to 7 |
+
+The app disables the motor, verifies its UUID and previous value, writes the
+correct parameter type, verifies readback, and sends the save command. Changes
+to the power-on range and offset apply after a power cycle. Motion targets and
+other volatile controls are excluded. Older firmware may reject newer settings;
+update the motor firmware if a documented setting is unavailable.
 
 ## Monitor and jog a motor
 

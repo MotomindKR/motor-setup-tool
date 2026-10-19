@@ -24,7 +24,7 @@ const state = {
   wantEnabled: false, manualEverEnabled: false, direction: 0, lastStatusAt: 0,
   manualIntentPending: false, lastLiveDraw: 0, outputDirectory: null,
   updateCandidate: null, installingUpdate: false, referenceAngle: 0,
-  registers: null, registersLoading: false, registersFailed: false, registerRead: null,
+  registers: null, registersLoading: false, registersFailed: false, registerRead: null, registerIndex: null,
 };
 let referenceAngleUnit = 'rad';
 function angleForInput(radians) {
@@ -95,23 +95,83 @@ function motorUuid() {
   return Array.isArray(state.motor?.uuid) ? state.motor.uuid.map(value => Number(value).toString(16).padStart(2, '0')).join('').toUpperCase() : '';
 }
 function selectedRegister() {
-  return state.registers?.find(item => String(item.index) === $('register-select').value);
+  return state.registers?.find(item => item.index === state.registerIndex);
+}
+function registerInput() {
+  return selectedRegister()?.choices?.length ? $('register-choice') : $('register-value');
+}
+function registerValueText(value, item = selectedRegister()) {
+  if (item?.value_type === 'float32') {
+    // Show a short decimal that still represents the exact same float32.
+    for (let digits = 1; digits <= 9; digits++) {
+      const text = String(Number(value.toPrecision(digits)));
+      if (Math.fround(Number(text)) === Math.fround(value)) return text;
+    }
+  }
+  return String(value);
 }
 function clearRegisterRead() {
   state.registerRead = null;
   $('register-value').value = '';
+  $('register-choice').value = '';
+  $('register-current').textContent = '—';
   $('register-status').textContent = 'Read a register before editing it.';
   updateControls();
+}
+function selectRegister(index) {
+  state.registerIndex = index;
+  const item = selectedRegister();
+  $('register-name').textContent = item?.name || 'Select a register';
+  $('register-meta').textContent = item ? `0x${item.index.toString(16).toUpperCase()} · ${item.symbol} · ${item.value_type}${item.writable ? '' : ' · read only'}` : '';
+  $('register-description').textContent = item?.description || '';
+  const choices = item?.choices || [];
+  $('register-choice').replaceChildren(new Option('Read first', ''), ...choices.map(choice => new Option(choice.label, String(choice.value))));
+  $('register-choice').classList.toggle('hidden', !choices.length);
+  $('register-value').classList.toggle('hidden', Boolean(choices.length));
+  $('register-value-label').htmlFor = choices.length ? 'register-choice' : 'register-value';
+  $('register-range').textContent = item?.writable && !choices.length ? `${item.min} to ${item.max}` : '';
+  clearRegisterRead();
+  renderRegisterList();
+}
+function renderRegisterList() {
+  const query = $('register-search').value.trim().toLowerCase();
+  const items = (state.registers || []).filter(item => `${item.name} ${item.symbol} 0x${item.index.toString(16)}`.toLowerCase().includes(query));
+  $('register-count').textContent = state.registers ? `${items.length} of ${state.registers.length}` : state.registersFailed ? 'Catalog unavailable' : 'Loading…';
+  $('register-list').replaceChildren(...items.map(item => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'register-row';
+    button.setAttribute('aria-pressed', String(item.index === state.registerIndex));
+    button.disabled = Boolean(state.busy) || state.installingUpdate;
+    const address = document.createElement('span');
+    address.className = 'register-address muted';
+    address.textContent = `0x${item.index.toString(16).toUpperCase()}`;
+    const label = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = item.name;
+    const symbol = document.createElement('small');
+    symbol.textContent = `${item.symbol}${item.writable ? '' : ' · read only'}`;
+    label.append(name, symbol);
+    button.append(address, label);
+    button.onclick = () => selectRegister(item.index);
+    return button;
+  }));
+  if (state.registers && !items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted small register-no-results';
+    empty.textContent = 'No matching registers';
+    $('register-list').append(empty);
+  }
 }
 async function loadRegisters() {
   if (state.registers || state.registersLoading || state.registersFailed || state.busy) return;
   state.registersLoading = true;
+  renderRegisterList();
   try {
-    const registers = await run('registerList');
-    state.registers = registers;
-    $('register-select').replaceChildren(new Option('Select a register', ''), ...registers.map(item => new Option(`0x${item.index.toString(16).toUpperCase()} · ${item.name}${item.writable ? '' : ' · read only'}`, String(item.index))));
+    state.registers = await run('registerList');
+    selectRegister(state.registers[0]?.index ?? null);
   } catch { state.registersFailed = true; }
-  finally { state.registersLoading = false; updateControls(); }
+  finally { state.registersLoading = false; renderRegisterList(); updateControls(); }
 }
 function buildConfig() {
   if (!state.preset || !state.motor) throw new Error('Scan and select a motor first');
@@ -130,7 +190,8 @@ function buildConfig() {
 
 function renderSurface() {
   const test = state.tab === 'test';
-  $('page-title').textContent = test ? (state.motor ? `${state.motor.model || 'Motor'} · ID ${state.motor.id}` : 'Motor test')
+  const setup = state.tab === 'setup';
+  $('page-title').textContent = setup ? 'Motor setup' : test ? (state.motor ? `${state.motor.model || 'Motor'} · ID ${state.motor.id}` : 'Motor test')
     : state.report ? 'Results'
       : state.tab === 'files' ? 'Saved recordings'
         : state.motor ? `${state.motor.model || 'Motor'} · ID ${state.motor.id}` : 'Connect your motor';
@@ -139,12 +200,13 @@ function renderSurface() {
     : slcanSelected() ? 'Select a serial port and scan for a motor.'
       : gsusbSelected() ? 'Select a USB adapter and scan for a motor.'
       : 'Select a CAN bus and scan for a motor.';
+  $('setup-view').classList.toggle('hidden', !setup);
   $('manual-view').classList.toggle('hidden', !test);
-  $('report-view').classList.toggle('hidden', test || !state.report);
-  $('preview-view').classList.toggle('hidden', test || Boolean(state.report) || !state.preset);
-  $('empty-state').classList.toggle('hidden', test || Boolean(state.report) || Boolean(state.preset));
+  $('report-view').classList.toggle('hidden', setup || test || !state.report);
+  $('preview-view').classList.toggle('hidden', setup || test || Boolean(state.report) || !state.preset);
+  $('empty-state').classList.toggle('hidden', setup || test || Boolean(state.report) || Boolean(state.preset));
   if (test) renderLive();
-  else if (!state.report && state.preset) renderPreview();
+  else if (!setup && !state.report && state.preset) renderPreview();
 }
 
 function updateControls() {
@@ -188,14 +250,14 @@ function updateControls() {
   for (const id of ['zero', 'set-id', 'firmware-check']) $(id).disabled = busy || !selectedMotor;
   const register = selectedRegister();
   const registerRead = state.registerRead?.index === register?.index && state.registerRead?.uuid === motorUuid();
-  const registerValue = $('register-value').value.trim();
+  const registerValue = registerInput().value.trim();
   const parsedValue = Number(registerValue);
-  $('register-select').disabled = busy || !selectedMotor || !state.registers;
+  for (const button of $('register-list').querySelectorAll('button')) button.disabled = busy;
   $('register-read').disabled = busy || !selectedMotor || !register;
-  $('register-value').disabled = busy || !selectedMotor || !register?.writable || !registerRead;
+  for (const id of ['register-value', 'register-choice']) $(id).disabled = busy || !selectedMotor || !register?.writable || !registerRead;
   $('register-value').min = register ? String(register.min) : '';
   $('register-value').max = register ? String(register.max) : '';
-  $('register-write').disabled = busy || !selectedMotor || !register?.writable || !registerRead || !registerValue || !Number.isFinite(parsedValue) || parsedValue < register.min || parsedValue > register.max || parsedValue === state.registerRead.value;
+  $('register-write').disabled = busy || !selectedMotor || !register?.writable || !registerRead || !registerValue || !Number.isFinite(parsedValue) || parsedValue < register.min || parsedValue > register.max || (register.value_type === 'uint8' && !Number.isInteger(parsedValue)) || (register.value_type === 'float32' ? Math.fround(parsedValue) === Math.fround(state.registerRead.value) : parsedValue === state.registerRead.value);
   $('firmware-update').disabled = busy || !selectedMotor || !state.firmware || state.firmware.id !== state.motor?.id;
   $('refit').disabled = busy || !state.directory;
   $('show-run').disabled = !state.directory;
@@ -764,13 +826,9 @@ function wire() {
   };
   $('scan').onclick = scan;
   $('motor-select').onchange = selectMotor;
-  $('register-select').onchange = () => {
-    clearRegisterRead();
-    const register = selectedRegister();
-    if (register) $('register-status').textContent = `0x${register.index.toString(16).toUpperCase()} · ${register.writable ? `editable · ${register.min}–${register.max}` : 'read only'}`;
-    updateControls();
-  };
+  $('register-search').oninput = renderRegisterList;
   $('register-value').oninput = updateControls;
+  $('register-choice').onchange = updateControls;
   $('register-read').onclick = async () => {
     const register = selectedRegister();
     if (!register) return;
@@ -780,24 +838,26 @@ function wire() {
       const result = await run('registerRead', { ...target(), index: register.index });
       if (state.motor !== motor || selectedRegister()?.index !== register.index || result.uuid !== motorUuid()) return;
       state.registerRead = result;
-      $('register-value').value = String(result.value);
-      $('register-status').textContent = `Current ${result.value}${register.writable ? ` · range ${register.min}–${register.max}` : ' · read only'}`;
+      registerInput().value = registerValueText(result.value);
+      $('register-current').textContent = registerValueText(result.value);
+      $('register-status').textContent = `Current ${registerValueText(result.value)}${register.writable ? ` · range ${register.min}–${register.max}` : ' · read only'}`;
       updateControls();
     } catch { /* notice already shown */ }
   };
   $('register-write').onclick = async () => {
     const register = selectedRegister();
     const prior = state.registerRead;
-    const value = Number($('register-value').value);
+    const value = Number(registerInput().value);
     if (!register?.writable || !prior || prior.index !== register.index || prior.uuid !== motorUuid() || $('register-write').disabled) return;
-    if (!window.confirm(`Save ${register.name} (0x${register.index.toString(16).toUpperCase()}) from ${prior.value} to ${value} on motor ID ${state.motor.id}?`)) return;
+    if (!window.confirm(`Save ${register.name} (0x${register.index.toString(16).toUpperCase()}) from ${registerValueText(prior.value)} to ${registerValueText(value)} on motor ID ${state.motor.id}?`)) return;
     const motor = state.motor;
     try {
       const result = await run('registerWrite', { ...target(), index: register.index, value, uuid: prior.uuid, expectedRaw: prior.raw, confirmed: true });
       if (state.motor !== motor || selectedRegister()?.index !== register.index) return;
       state.registerRead = result;
-      $('register-value').value = String(result.value);
-      $('register-status').textContent = `Saved ${result.value} · power cycle to verify persistence`;
+      registerInput().value = registerValueText(result.value);
+      $('register-current').textContent = registerValueText(result.value);
+      $('register-status').textContent = `Saved ${registerValueText(result.value)} · power cycle to verify persistence`;
       notice(`${register.name} saved. Power cycle the motor to verify persistence.`);
     } catch { clearRegisterRead(); }
     updateControls();

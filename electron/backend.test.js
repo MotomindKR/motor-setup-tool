@@ -40,6 +40,20 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, reviewed: true, config: {}, output: path.join(os.tmpdir(), 'new-calibration') }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--output', path.join(os.tmpdir(), 'new-calibration'), '--config-stdin', '--yes']);
 });
 
+test('persistent CAN aliases pass through the bridge while motion targets stay blocked', () => {
+  const params = { can: 'can0', id: 1, confirmed: true, uuid: '0102030405060708', expectedRaw: '00000000' };
+  for (const [index, value] of [[0x7029, 1], [0x702B, -1.25]]) {
+    const args = argsFor('registerWrite', { ...params, index, value });
+    assert.equal(args[args.indexOf('--index') + 1], `0x${index.toString(16)}`);
+    assert.equal(args[args.indexOf('--value') + 1], String(value));
+    assert.equal(argsFor('registerRead', { ...params, index }).at(-1), `0x${index.toString(16)}`);
+  }
+  for (const index of [0x7005, 0x7006, 0x700A, 0x7016, 0x7028, 0x702D, 0xFFFF]) {
+    assert.throws(() => argsFor('registerWrite', { ...params, index, value: 1 }), /documented persistent/);
+  }
+  assert.throws(() => argsFor('registerWrite', { ...params, index: 0x702B, value: NaN }), /Register value/);
+});
+
 test('manual intent sends the live reviewed direction and rejects invalid speed', () => {
   const sent = [];
   const backend = new Backend(process.execPath, () => {});

@@ -619,13 +619,22 @@ impl Bus {
         Ok(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]))
     }
     pub(crate) fn write_parameter(&self, index: u16, value: [u8; 4]) -> Result<()> {
+        self.write_parameter_sized(index, value, 4)
+    }
+    pub(crate) fn write_parameter_sized(
+        &self,
+        index: u16,
+        value: [u8; 4],
+        width: usize,
+    ) -> Result<()> {
+        ensure!((1..=4).contains(&width), "Invalid parameter width");
         let mut f = protocol::frame(18, self.config.host_id as u16, self.config.motor_id);
         f.data[..2].copy_from_slice(&index.to_le_bytes());
         f.data[4..].copy_from_slice(&value);
         self.send(f)?;
         thread::sleep(Duration::from_millis(5));
         ensure!(
-            self.read_parameter(index)? == value,
+            self.read_parameter(index)?[..width] == value[..width],
             "Parameter 0x{index:04x} readback mismatch"
         );
         Ok(())

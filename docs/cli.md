@@ -105,6 +105,7 @@ Its duration starts after the enable handshake finishes.
 "$tool" firmware check --can can0 --id 7
 "$tool" firmware update --can can0 --id 7 --yes
 "$tool" register list
+"$tool" register read --can can0 --id 7 --index 0x7029
 "$tool" register read --can can0 --id 7 --index 0x2012
 "$tool" register write --can can0 --id 7 --index 0x2012 --value 0.025 --uuid UUID_FROM_READ --expected-raw RAW_FROM_READ --yes
 ```
@@ -115,7 +116,9 @@ update downloads and verifies the matching image. Keep power connected until
 the update finishes. Once firmware transfer starts, termination requests wait
 for it to finish rather than interrupting a flash write.
 
-Register writes accept only documented persistent gains and filters. Use the
+Register writes accept documented persistent gains, filters, `zero_sta`
+(`0x7029`, uint8, 0 or 1), and `add_offset` (`0x702B`, float32 radians, −7 to 7).
+Use the
 `uuid` and `raw` fields returned by a recent `register read`; the motor is
 stopped and both are checked again before a write. A successful save means the
 motor acknowledged the save command and readback matched. Power cycle and read
