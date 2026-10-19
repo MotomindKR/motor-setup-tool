@@ -61,10 +61,15 @@ try {
   if ($parent) { $parent | Wait-Process -Timeout 60 }
   $restart = $true
 
-  # Chromium children and duplicate windows can outlive the main process.
+  # Chromium children can outlive the main process. A separate app instance
+  # must close normally so any motor operation can stop through its backend.
   $deadline = (Get-Date).AddSeconds(10)
   while (@(Get-AppProcesses).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
-  foreach ($remaining in @(Get-AppProcesses)) {
+  $remainingProcesses = @(Get-AppProcesses)
+  if (@($remainingProcesses | Where-Object { $_.CommandLine -notmatch '\s--type=' }).Count -gt 0) {
+    throw 'Another Motor Setup Tool instance is still running. Close it before updating.'
+  }
+  foreach ($remaining in $remainingProcesses) {
     Write-UpdateLog "Stopping remaining app process $($remaining.ProcessId)"
     Stop-Process -Id $remaining.ProcessId -Force -ErrorAction SilentlyContinue
   }

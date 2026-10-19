@@ -12,13 +12,20 @@ const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.MOTOMIND_SMOKE_PATH;
 const runningApp = spawn(executable, [], { cwd: path.dirname(executable), env, detached: true, stdio: 'ignore' });
+runningApp.once('error', error => { console.error(error); process.exit(1); });
 runningApp.unref();
 process.env.MOTOMIND_SMOKE_PATH = screenshot;
 process.env.MOTOMIND_SMOKE_TAB = 'setup';
 const app = {
   getVersion: () => previousVersion,
   getPath: name => name === 'exe' ? executable : directory,
-  quit: () => process.exit(0),
+  quit: () => {
+    const closing = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `$running = Get-Process -Id ${runningApp.pid} -ErrorAction SilentlyContinue; if ($running) { $null = $running.CloseMainWindow() }`],
+    { windowsHide: true, stdio: 'ignore' });
+    closing.once('error', error => { console.error(error); process.exit(1); });
+    closing.once('exit', code => process.exit(code || 0));
+  },
 };
 setTimeout(() => installWindows(app, installer, version, () => {}).catch(error => {
   console.error(error);
