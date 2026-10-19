@@ -79,6 +79,8 @@ enum Command {
     Scan(BusArgs),
     /// Read a motor's identity and firmware; disables the selected motor.
     Info(Target),
+    /// Measure disabled-motor command-to-feedback timing at 200 Hz.
+    Latency(Target),
     /// Show a model's single calibration preset without connecting hardware.
     Plan {
         #[arg(long)]
@@ -500,6 +502,10 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             output(&hardware::scan(&c, cancel, |p| progress.show(p))?)
         }
         Command::Info(target) => output(&hardware::inspect(&target.config()?)?),
+        Command::Latency(target) => {
+            let (config, _) = detected(&target)?;
+            output(&hardware::measure_feedback_latency(&config, cancel)?)
+        }
         Command::Plan { model } => output(&preset(&model)?),
         Command::Preview => {
             let mut input = String::new();

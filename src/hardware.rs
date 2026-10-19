@@ -983,6 +983,103 @@ pub fn inspect(c: &Config) -> Result<DiscoveredMotor> {
         model,
     })
 }
+
+#[derive(Serialize)]
+pub struct LatencyStats {
+    pub median_us: u64,
+    pub p99_us: u64,
+    pub max_us: u64,
+}
+
+impl LatencyStats {
+    fn from_samples(mut samples: Vec<u64>) -> Self {
+        samples.sort_unstable();
+        let last = samples.len() - 1;
+        Self {
+            median_us: samples[last / 2],
+            p99_us: samples[(samples.len() * 99).div_ceil(100) - 1],
+            max_us: samples[last],
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct FeedbackLatency {
+    pub interface: String,
+    pub motor_id: u8,
+    pub sample_hz: u32,
+    pub samples: usize,
+    pub motor_enabled: bool,
+    pub round_trip: LatencyStats,
+    pub send_call: LatencyStats,
+    pub command_interval: LatencyStats,
+}
+
+/// One zero-torque request is outstanding at a time. The motor stays in Reset.
+pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<FeedbackLatency> {
+    const SAMPLE_HZ: u32 = 200;
+    const SAMPLES: usize = 400;
+    const FEEDBACK_DEADLINE: Duration = Duration::from_millis(20);
+    c.validate()?;
+    let period = Duration::from_secs(1) / SAMPLE_HZ;
+    let bus = Bus::open(c)?;
+    let _guard = StopGuard(&bus);
+    let initial = bus.stopped()?;
+    ensure!(
+        initial.faults == 0,
+        "Motor reported faults before timing check"
+    );
+
+    let mut round_trip = Vec::with_capacity(SAMPLES);
+    let mut send_call = Vec::with_capacity(SAMPLES);
+    let mut command_interval = Vec::with_capacity(SAMPLES - 1);
+    let mut previous_start: Option<Instant> = None;
+    let mut next = Instant::now();
+    for _ in 0..SAMPLES {
+        ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+        while Instant::now() < next {
+            thread::sleep(Duration::from_micros(50));
+        }
+        let started = Instant::now();
+        if let Some(previous) = previous_start {
+            command_interval.push(started.duration_since(previous).as_micros() as u64);
+        }
+        previous_start = Some(started);
+        bus.send(protocol::torque(c.motor_id, 0., &c.profile).0)?;
+        send_call.push(started.elapsed().as_micros() as u64);
+        let deadline = started + FEEDBACK_DEADLINE;
+        loop {
+            ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+            if let Some(frame) = bus.receive()?
+                && let Some(status) = protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile)
+            {
+                ensure!(
+                    status.mode == 0 && status.faults == 0 && status.velocity.abs() < 0.15,
+                    "Motor left stopped mode, moved, or reported a fault during timing check"
+                );
+                round_trip.push(started.elapsed().as_micros() as u64);
+                break;
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "No motor feedback within 20 ms during timing check"
+            );
+            thread::sleep(Duration::from_micros(50));
+        }
+        next += period;
+    }
+
+    Ok(FeedbackLatency {
+        interface: c.interface.clone(),
+        motor_id: c.motor_id,
+        sample_hz: SAMPLE_HZ,
+        samples: SAMPLES,
+        motor_enabled: false,
+        round_trip: LatencyStats::from_samples(round_trip),
+        send_call: LatencyStats::from_samples(send_call),
+        command_interval: LatencyStats::from_samples(command_interval),
+    })
+}
 pub fn scan(
     c: &Config,
     cancel: &AtomicBool,

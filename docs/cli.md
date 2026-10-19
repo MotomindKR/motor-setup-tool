@@ -41,6 +41,20 @@ operations share a lock. Scans and identity queries can disable responding
 motors, so use an idle bench bus. Use the ID returned by scan; host ID defaults
 to 253 and can be changed with `--host-id`.
 
+## Measure feedback timing
+
+```sh
+"$tool" latency --can can0 --id 127
+"$tool" latency --can gsusb:303033:79 --id 127
+```
+
+The command disables the motor, then sends 400 zero-torque requests at 200 Hz.
+It reports median, 99th percentile, and maximum times in microseconds for the
+command-to-feedback round trip, transport send call, and actual command interval.
+Run both transports with the same motor and adapter to compare them. Round-trip
+time includes motor processing and host polling; send-call time has different
+meaning for SocketCAN (kernel queue) and direct GS USB (USB transfer).
+
 ## Calibrate and analyze
 
 ```sh
