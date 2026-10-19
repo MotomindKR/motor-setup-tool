@@ -82,14 +82,14 @@ async function readUpdateError(app) {
   try { pending = JSON.parse(await fs.readFile(pendingFile, 'utf8')); }
   catch (failure) { if (failure.code !== 'ENOENT') error ||= 'The previous update could not be verified. Please install the latest release again.'; }
   if (pending?.version) {
-    if (pending.version === app.getVersion()) {
-      if (!error) await fs.rm(errorFile, { force: true });
-    } else {
+    if (pending.version !== app.getVersion()) {
       error ||= `Update to ${pending.version} did not complete. This app is still ${app.getVersion()}. Please run the downloaded installer again. Details: ${path.join(directory, 'update.log')}`;
-      await fs.writeFile(errorFile, error);
     }
     await fs.rm(pendingFile, { force: true });
   }
+  // Keep the result in Settings for this session; do not reopen a stale
+  // failure after a later manual installation or on every app launch.
+  await fs.rm(errorFile, { force: true });
   return error;
 }
 

@@ -17,8 +17,7 @@ test('a helper failure cannot silently restart the previous version', async () =
   try {
     await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
     assert.match(await readUpdateError(app), /Update to 0\.1\.15 did not complete.*still 0\.1\.14/);
-    assert.match(await readUpdateError(app), /Update to 0\.1\.15 did not complete/);
-    await fs.rm(result);
+    assert.equal(await readUpdateError(app), null);
     await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
     assert.equal(await readUpdateError({ ...app, getVersion: () => '0.1.15' }), null);
     await assert.rejects(fs.access(pending), { code: 'ENOENT' });
