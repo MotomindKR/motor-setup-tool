@@ -450,6 +450,7 @@ fn portal_theme(value: u32) -> Option<egui::Theme> {
         _ => None,
     }
 }
+#[cfg(target_os = "linux")]
 pub fn desktop_theme() -> Option<egui::Theme> {
     let connection = zbus::blocking::connection::Builder::session()
         .ok()?
@@ -478,6 +479,10 @@ pub fn desktop_theme() -> Option<egui::Theme> {
         }
     }
     // No portal: let winit supply the native preference, or egui's fallback.
+    None
+}
+#[cfg(not(target_os = "linux"))]
+pub fn desktop_theme() -> Option<egui::Theme> {
     None
 }
 

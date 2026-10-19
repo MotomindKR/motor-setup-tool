@@ -65,7 +65,10 @@ operations; it cannot exclude unrelated CAN tools.
 Before excitation, the app writes and reads back operation mode `0x7005 = 0`
 and a nonzero command watchdog `0x7028 = 2000` raw ticks. It verifies watchdog
 expiry using a zero-torque enable and requires fault-free Reset within 300 ms
-without commands. It does not rely solely on a presumed tick duration.
+without commands. When supported, the app observes the motor's periodic Type-24
+status frames, which do not send a new command during the quiet interval. Older
+firmware falls back to a zero-torque status request after the interval. It does
+not rely solely on a presumed tick duration.
 
 Enable allows intermediate Reset feedback while requesting fresh status, then
 requires Run feedback within 100 ms. Acquisition checks motor state/faults,

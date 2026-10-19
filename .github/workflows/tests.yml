@@ -26,9 +26,9 @@ jobs:
           path: |
             .tools/ci-cargo
             .tools/packaging
-            target/appimage
-          key: appimage-22.04-rust1.98.1-amd64-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
-          restore-keys: appimage-22.04-rust1.98.1-amd64-
+            target/ci
+          key: ci-22.04-rust1.98.1-amd64-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
+          restore-keys: ci-22.04-rust1.98.1-amd64-
       - name: Build test environment
         run: docker build -f packaging/Dockerfile -t motomind-tests .
       - name: Check formatting, Clippy, and unit tests

@@ -3,10 +3,10 @@
 <img src="assets/motor-setup-tool.svg" width="96" height="96" alt="Motor Setup Tool icon">
 
 [![Unit tests](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/tests.yml)
-[![Linux release](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml/badge.svg)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml)
-[![Download AppImage](https://img.shields.io/badge/Download-AppImage-E82E01)](https://github.com/MotomindKR/motor-setup-tool/releases/latest)
+[![Desktop release](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml/badge.svg)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml)
+[![Download Electron app](https://img.shields.io/badge/Download-Electron_app-E82E01)](https://github.com/MotomindKR/motor-setup-tool/releases/latest)
 
-A Linux desktop app by Motomind. Calibrate a bare RobStride motor, compare its
+A desktop app by Motomind. Calibrate a bare RobStride motor, compare its
 motion with MuJoCo, and manage its ID, zero position, and firmware.
 
 - Monitor live motor feedback and use hold-to-jog controls in the Test tab.
@@ -18,44 +18,42 @@ motion with MuJoCo, and manage its ID, zero position, and firmware.
 
 ## Download and run
 
-Get the latest AppImage from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
+Get the Electron bundle for your computer from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
 
 | Your computer | Download |
 |---|---|
-| Intel or AMD, 64-bit | `linux-amd64.AppImage` |
-| ARM, 64-bit | `linux-arm64.AppImage` |
+| Linux Intel/AMD | `motor-setup-tool-electron-linux-x64.tar.gz` |
+| Linux ARM64 | `motor-setup-tool-electron-linux-arm64.tar.gz` |
+| macOS Intel/ARM | `motor-setup-tool-electron-darwin-x64.tar.gz` / `motor-setup-tool-electron-darwin-arm64.tar.gz` |
+| Windows Intel/AMD | `motor-setup-tool-electron-win32-x64.tar.gz` |
 
-Make the downloaded file executable in your file manager, then open it. From a
-terminal, replacing the filename with the one you downloaded:
+Extract the archive and open the app inside it. On Linux x64:
 
 ```sh
-chmod +x motor-setup-tool-0.1.5-linux-amd64.AppImage
-./motor-setup-tool-0.1.5-linux-amd64.AppImage
+mkdir motor-setup-tool
+tar -xzf motor-setup-tool-electron-linux-x64.tar.gz -C motor-setup-tool
+./motor-setup-tool/motor-setup-tool
 ```
 
-Requires **Ubuntu 22.04 or newer**, or another Linux distribution with glibc 2.35+
-and a working desktop OpenGL driver. MuJoCo is included; Rust and Python are not
-needed. If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1` before the
-command. Checksums are included with each release.
-
-Opening the AppImage adds **Motor Setup Tool** to your applications menu with its
-icon. Keep the AppImage file; the launcher points to it. After moving or replacing
-the file, open it once to refresh the launcher.
+MuJoCo is bundled. Keep the extracted directory together. Settings shows the
+current version and can install a newer Electron bundle from GitHub. Each archive
+has a `.sha256` checksum file.
 
 ## Your first calibration
 
 You need a RobStride **RS-00 through RS-06**, its power supply, and a supported
-USB-CAN adapter configured as a Linux SocketCAN interface. Secure the motor
+USB-CAN adapter. Linux supports SocketCAN, direct GS USB, and SLCAN; macOS and
+Windows support direct GS USB and SLCAN serial adapters. Secure the motor
 housing, leave the shaft unloaded and clear, and have a physical stop available.
 
 1. Power the motor and connect CAN. [Configure the CAN interface](docs/user-guide.md#connect-a-motor) if needed.
-2. Select the bus under **Connection**, click **Scan**, and select your motor.
+2. Select the adapter under **Connection**, click **Scan**, and select your motor.
 3. Open **Calibrate** and review the model's torque, speed, and travel limits.
-4. Check **Motor secured · limits reviewed**, then **Start calibration**.
+4. Optionally choose a save location, check **Motor secured · limits reviewed**, then **Start calibration**.
 5. Review **Validation** to see how well the fitted simulation predicts a separate recording.
 
 Recording and fitting show progress. **Stop** ends acquisition or cancels fitting.
-Results are saved automatically. Use **Setup** for ID and firmware operations; use **Test** to monitor, jog,
+Results include the motor UUID. Use **Setup** for ID and firmware operations; use **Test** to monitor, jog,
 or set zero and **Files** to reopen or refit a saved run.
 
 ## Read the results
@@ -82,4 +80,10 @@ Recordings are stored in `~/.local/share/motomind-motor-calib/runs/` by default.
 | Build, test, or change the app | [Developer guide](docs/development.md) |
 | Understand the fitting method | [Identification](docs/identification.md) |
 | Work on CAN or firmware support | [Protocol reference](docs/protocol.md) |
-| Build or publish Linux releases | [Release guide](packaging/README.md) |
+| Build or publish desktop releases | [Release guide](packaging/README.md) |
+
+## Electron UI
+
+The Electron interface is in [electron/](electron/README.md). It starts the
+Rust backend for motor control and calibration. Build and run it with
+`cargo build --locked`, then `cd electron && npm ci && npm start`.

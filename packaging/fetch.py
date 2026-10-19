@@ -3,14 +3,12 @@
 import hashlib
 import http.client
 import json
-import os
 import pathlib
 import platform
 import sys
 import tarfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -20,13 +18,7 @@ CACHE = ROOT / '.tools/packaging' / ARCH
 
 
 def download_request(url):
-    request = urllib.request.Request(url, headers={'Accept': 'application/octet-stream'})
-    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
-    if token and urllib.parse.urlsplit(url).netloc == 'api.github.com' and request.type == 'https':
-        # GitHub redirects assets to a signed CDN URL. Keep the token on the
-        # initial API request only; never forward it to the download host.
-        request.add_unredirected_header('Authorization', 'Bearer ' + token)
-    return request
+    return urllib.request.Request(url, headers={'Accept': 'application/octet-stream'})
 
 
 def download(url, name):
@@ -66,10 +58,6 @@ def fetch(name):
 
 
 if __name__ == '__main__':
-    # Fetch every packaging dependency before spending time compiling Rust.
-    if sys.argv[1:] == ['--all']:
-        fetch('appimagetool')
-        fetch('runtime')
     archive = fetch('mujoco')
     destination = CACHE / 'sdk'
     # Only unpack this checksum-verified upstream archive into our cache.

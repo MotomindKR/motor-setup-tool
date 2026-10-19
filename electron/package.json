@@ -1,0 +1,16 @@
+{
+  "name": "motomind-motor-calib-electron",
+  "version": "0.1.6",
+  "private": true,
+  "description": "Electron desktop UI for the Motomind motor calibration tool",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check updater.js && node --check package-desktop.js && node --test backend.test.js updater.test.js",
+    "package:linux": "node package-linux.js",
+    "package:desktop": "node package-desktop.js"
+  },
+  "devDependencies": {
+    "electron": "44.9.0"
+  }
+}

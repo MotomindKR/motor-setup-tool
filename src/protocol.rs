@@ -40,6 +40,19 @@ pub fn write_u8(host: u8, motor: u8, index: u16, value: u8) -> WireFrame {
     f.data[4] = value;
     f
 }
+pub fn active_reporting(host: u8, motor: u8, enabled: bool) -> WireFrame {
+    let mut f = frame(24, host as u16, motor);
+    f.data = [1, 2, 3, 4, 5, 6, u8::from(enabled), 0];
+    f
+}
+pub fn active_feedback(f: &WireFrame, motor: u8, host: u8, p: &Profile) -> Option<Feedback> {
+    if f.id >> 24 != 24 {
+        return None;
+    }
+    let mut feedback_frame = f.clone();
+    feedback_frame.id = (f.id & 0x00ff_ffff) | (2 << 24);
+    feedback(&feedback_frame, motor, host, p)
+}
 pub fn version_request(host: u8, motor: u8) -> WireFrame {
     let mut f = frame(4, host as u16, motor);
     f.data[1] = 0xc4;
@@ -162,5 +175,25 @@ mod tests {
         assert_eq!(result.temperature, 42.1);
         assert!(feedback(&f, 8, 253, &p).is_none());
         assert!(feedback(&f, 7, 254, &p).is_none());
+    }
+    #[test]
+    fn active_reporting_uses_documented_switch_byte_and_decodes_status() {
+        assert_eq!(
+            active_reporting(253, 7, true).data,
+            [1, 2, 3, 4, 5, 6, 1, 0]
+        );
+        assert_eq!(
+            active_reporting(253, 7, false).data,
+            [1, 2, 3, 4, 5, 6, 0, 0]
+        );
+        let mut report = frame(24, (2 << 14) | 7, 253);
+        report.data[6..].copy_from_slice(&320_u16.to_be_bytes());
+        assert_eq!(
+            active_feedback(&report, 7, 253, &Profile::presets()[0])
+                .unwrap()
+                .mode,
+            2
+        );
+        assert!(active_feedback(&report, 8, 253, &Profile::presets()[0]).is_none());
     }
 }

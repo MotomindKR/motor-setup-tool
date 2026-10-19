@@ -163,6 +163,10 @@ fn finish(
     let report = Report {
         source: session.source.clone(),
         motor_id: session.config.motor_id,
+        motor_uuid: bridge::read_json::<serde_json::Value>(&dir.join("hardware.json"))
+            .ok()
+            .and_then(|hardware| serde_json::from_value(hardware.get("uuid")?.clone()).ok()),
+        reference_angle_rad: session.config.reference_angle_rad,
         model: session.config.profile.model.clone(),
         fitted: fitted.clone(),
         baseline: session.config.baseline.clone(),
@@ -182,6 +186,8 @@ fn finish(
     fs::write(dir.join("candidate.xml"), engine::xml(&fitted))?;
     let artifact = serde_json::json!({
         "schema_version":1,"source":session.source,"motor_id":session.config.motor_id,
+        "motor_uuid":report.motor_uuid,
+        "reference_angle_rad":report.reference_angle_rad,
         "profile":session.config.profile,"parameters":fitted,"torque_gain_assumption":1.,
         "hardware":hardware,
         "uses_documented_wire_ranges":session.config.profile.uses_documented_ranges(),

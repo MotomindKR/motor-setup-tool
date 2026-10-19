@@ -20,12 +20,6 @@ fn main() -> anyhow::Result<()> {
     if cli::dispatch()? {
         return Ok(());
     }
-    if std::env::args().any(|a| a == "--install-desktop") {
-        let launcher = desktop::install_appimage()?
-            .ok_or_else(|| anyhow::anyhow!("Run --install-desktop from the AppImage"))?;
-        println!("Installed {}", launcher.display());
-        return Ok(());
-    }
     if std::env::args().any(|a| a == "--version") {
         println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -132,11 +126,6 @@ fn main() -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&report.fitted)?);
         println!("Accepted: {}", report.accepted);
         return Ok(());
-    }
-    // Development builds and passive CLI commands do not modify desktop entries.
-    // Screenshot launches use isolated data in CI and also exercise registration.
-    if let Err(error) = desktop::install_appimage() {
-        eprintln!("Could not register the desktop launcher: {error:#}");
     }
     let icon = image::load_from_memory(desktop::WINDOW_ICON)?.into_rgba8();
     let options = eframe::NativeOptions {

@@ -1,4 +1,4 @@
-name: Linux AppImage release
+name: Electron desktop release
 
 on:
   push:
@@ -14,71 +14,86 @@ concurrency:
 
 jobs:
   build:
-    name: Build and verify ${{ matrix.arch }}
+    name: Build ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
+          - platform: linux-x64
             runner: ubuntu-22.04
-          - arch: arm64
+          - platform: linux-arm64
             runner: ubuntu-22.04-arm
+          - platform: darwin-x64
+            runner: macos-15-intel
+          - platform: darwin-arm64
+            runner: macos-15
+          - platform: win32-x64
+            runner: windows-2022
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
     steps:
       - uses: actions/checkout@v4
-      - name: Verify version tag
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+      - name: Verify release version
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          python3 - <<'PY'
-          import os, re
-          text = open('Cargo.toml').read()
-          version = re.search(r'^version = "([^"]+)"', text, re.M).group(1)
-          assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match Cargo.toml version'
-          PY
-      - uses: actions/cache@v4
-        with:
-          path: |
-            .tools/ci-cargo
-            .tools/packaging
-            target/appimage
-          key: appimage-22.04-rust1.98.1-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
-          restore-keys: appimage-22.04-rust1.98.1-${{ matrix.arch }}-
-      - name: Build on Ubuntu 22.04 baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
+          node -e 'const fs=require("fs"); const cargo=fs.readFileSync("Cargo.toml","utf8").match(/^version = "([^"]+)"/m)[1]; const electron=require("./electron/package.json").version; if (cargo!==electron || process.env.RELEASE_TAG!==`v${cargo}`) process.exit(1)'
+      - name: Install Linux build libraries
+        if: runner.os == 'Linux'
         run: |
-          docker build -f packaging/Dockerfile -t motomind-packager .
-          docker run --rm --user "$(id -u):$(id -g)" \
-            -e CARGO_HOME=/work/.tools/ci-cargo -e GITHUB_SHA -e GH_TOKEN \
-            -v "$PWD:/work" motomind-packager bash scripts/build-appimage.sh
-      - name: Verify in clean Ubuntu 22.04 and 24.04 runtimes
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev
+      - name: Install macOS MuJoCo SDK
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          artifact=$(find dist -maxdepth 1 -name '*.AppImage' -printf '%f\n')
-          for baseline in 22.04 24.04; do
-            docker build --build-arg BASE=ubuntu:$baseline -f packaging/Dockerfile.smoke -t motomind-smoke:$baseline .
-            mkdir -p "dist/smoke-$baseline"
-            docker run --rm --user "$(id -u):$(id -g)" \
-              -e SMOKE_OUTPUT=/results -v "$PWD/dist:/input:ro" \
-              -v "$PWD/dist/smoke-$baseline:/results" motomind-smoke:$baseline \
-              "/input/$artifact"
-          done
+          set -euo pipefail
+          sdk="$MUJOCO_DOWNLOAD_DIR/mujoco-3.12.0/lib"
+          mkdir -p "$sdk" "$RUNNER_TEMP/mujoco-mount"
+          asset=mujoco-3.12.0-macos-universal2.dmg
+          base=https://github.com/google-deepmind/mujoco/releases/download/3.12.0
+          curl -fL --retry 3 -o "$RUNNER_TEMP/$asset" "$base/$asset"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$base/$asset.sha256"
+          (cd "$RUNNER_TEMP" && shasum -a 256 -c "$asset.sha256")
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/mujoco-mount" "$RUNNER_TEMP/$asset"
+          source_lib="$(find "$RUNNER_TEMP/mujoco-mount" -name libmujoco.3.12.0.dylib -type f -print -quit)"
+          test -n "$source_lib"
+          cp "$source_lib" "$sdk/libmujoco.3.12.0.dylib"
+          ln -s libmujoco.3.12.0.dylib "$sdk/libmujoco.dylib"
+          install_name_tool -id @rpath/libmujoco.3.12.0.dylib "$sdk/libmujoco.3.12.0.dylib"
+          hdiutil detach "$RUNNER_TEMP/mujoco-mount"
+          echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
+      - name: Build Rust backend
+        run: cargo build --locked --release
+      - name: Install Electron dependencies
+        working-directory: electron
+        run: npm ci
+      - name: Check Electron code
+        working-directory: electron
+        run: npm run check
+      - name: Package Electron bundle
+        working-directory: electron
+        run: npm run package:desktop
       - uses: actions/upload-artifact@v4
         with:
-          name: appimage-${{ matrix.arch }}
+          name: electron-${{ matrix.platform }}
           if-no-files-found: error
           path: |
-            dist/*.AppImage
-            dist/*.sha256
-      - uses: actions/upload-artifact@v4
-        with:
-          name: smoke-screenshots-${{ matrix.arch }}
-          path: dist/smoke-*
+            dist-electron/*.tar.gz
+            dist-electron/*.tar.gz.sha256
 
   publish:
-    name: Publish both architectures
+    name: Publish Electron bundles
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
@@ -87,48 +102,20 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: appimage-*
+          pattern: electron-*
           merge-multiple: true
-          path: dist
-      - name: Create release with verified AppImages
+          path: dist-electron
+      - name: Verify and publish
+        working-directory: dist-electron
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          cd dist
           sha256sum -c ./*.sha256
-          test "$(find . -maxdepth 1 -name '*.AppImage' | wc -l)" -eq 2
-          cat > release-notes.md <<'NOTES'
-          Motor Setup Tool by Motomind. Motor calibration and setup for Linux.
-
-          - **amd64**: Intel/AMD 64-bit computers.
-          - **arm64**: ARM 64-bit computers.
-          - Ubuntu 22.04 / glibc 2.35 or newer; the GUI requires a desktop OpenGL driver.
-          - MuJoCo and app libraries are bundled. Rust and Python are not required.
-
-          Download the matching AppImage, make it executable, and run it:
-          ```sh
-          chmod +x motor-setup-tool-*.AppImage
-          ./motor-setup-tool-<version>-linux-<architecture>.AppImage
-          ```
-          If FUSE is unavailable, use `APPIMAGE_EXTRACT_AND_RUN=1` before the command.
-          Opening the app registers its launcher and icon in your applications menu.
-          After moving or replacing the AppImage, open it once to refresh that launcher.
-          Run with `--help` for headless CLI commands, including calibration and monitoring.
-          The CAN up button uses the host's iproute2 and PolicyKit authentication agent.
-          The host must provide the adapter driver; CAN setup supports 1 Mbps.
-          Recordings are stored under `$XDG_DATA_HOME/motomind-motor-calib/runs`
-          (default: `~/.local/share/motomind-motor-calib/runs`).
-          NOTES
-          # Creating a draft first keeps partially uploaded releases out of downloads.
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 5
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft \
-              --title "Motor Setup Tool $RELEASE_TAG" --notes-file release-notes.md
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes 'Electron bundles for Linux, macOS, and Windows. Use Settings → Check for update in an installed app for future releases.'
           fi
-          gh release upload "$RELEASE_TAG" ./*.AppImage ./*.sha256 --clobber
-          if [[ "$RELEASE_TAG" == *-* ]]; then
-            gh release edit "$RELEASE_TAG" --draft=false --prerelease
-          else
-            gh release edit "$RELEASE_TAG" --draft=false
-          fi
+          gh release upload "$RELEASE_TAG" ./*.tar.gz ./*.sha256 --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

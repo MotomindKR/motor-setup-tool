@@ -9,7 +9,7 @@ supply appropriate for the motor, CAN-H to CAN-H, and CAN-L to CAN-L. Follow the
 adapter and motor documentation for grounding and CAN termination. Close other
 motor-control applications before operating this tool.
 
-The app uses Linux SocketCAN. The adapter must have a working kernel driver and
+For Linux SocketCAN, the adapter must have a working kernel driver and
 appear as a CAN interface, such as `can0`. Select a down interface and click
 **CAN up** to configure **1 Mbps**. Linux opens its administrator authentication
 dialog; the app never handles your password. An interface that is already up
@@ -26,6 +26,28 @@ sudo ip link set can0 up type can bitrate 1000000
 
 Replace `can0` with your adapter's interface and use the bitrate configured on
 your motor. Run the app as your normal user.
+
+### Direct GS USB adapters
+
+Select **GS USB** under **Connection** to use a compatible USB-CAN adapter
+directly on Linux, macOS, or Windows. This uses the adapter's GS USB protocol;
+it does not require SLCAN firmware or a serial port. Choose the USB adapter,
+then scan. On Linux, direct USB mode detaches the `gs_usb` kernel driver while
+the operation owns the adapter and reattaches it when the operation ends. If
+you return to SocketCAN, click **CAN up** to bring the recreated interface
+back to 1 Mbps.
+
+On Linux, grant your desktop user USB access once, then reconnect the adapter:
+
+```sh
+sudo install -m 0644 packaging/99-motomind-gsusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+```
+
+The rule covers the GS USB IDs supported by this app. The desktop connection
+panel shows **USB access denied** until access is available. A USB bus/address
+can change after reconnecting; click the refresh icon to update the list.
+SocketCAN remains available when you want to keep using `can0`.
 
 In **Connection**, choose the bus, click **Scan**, then choose the discovered
 motor. The app reads its firmware to select the model and calibration preset.
@@ -60,10 +82,11 @@ parameters. **Training** shows the recording used for fitting.
 | Residuals | Simulation minus measurement; zero means agreement |
 | Torque | Commanded torque and motor-reported torque |
 
-Each graph has a legend. Hover an entry to highlight its trace; click it to
-hide or restore that trace in the graph. The controls above the graphs select
-which measured/before/after series are available across the comparison plots.
-Zoom or drag a plot to inspect a section of the recording.
+The controls above the graphs show or hide the measured and simulated traces.
+When a reference angle is set, the position plot uses that displayed angle;
+residuals and fit calculations retain the motor's raw position coordinates.
+`report.json` records the motor UUID and reference angle for every completed
+calibration. Accepted fits also include both fields in `calibration.json`.
 
 The error cards show the fitted model's RMSE and the change from the baseline.
 The baseline is an editable starting model, not manufacturer inertia/friction
@@ -77,13 +100,18 @@ needed. A good bare-motor result does not establish behavior under a robot load.
 
 ## Set zero or change the ID
 
-Select the motor. Zero setting is in **Test**; ID changes are in **Setup**:
+Select the motor, then use **Test** or **Setup**:
 
 - **Test → Set current position as zero** makes the current shaft position the zero
   reference. The app stops the motor and checks that it is stationary first.
   Monitoring stops before the zero is written. Persistence across power cycles
   depends on the firmware.
-- Enter **New ID**, then **Apply**. The app checks for an ID collision and verifies
+- To show a chosen angle at the present shaft position, enter it under
+  **Setup → Display angle at this position**, then select **Set current position**.
+  The motor's firmware zero is set to 0; the app saves the displayed offset by
+  the motor's eight-byte UUID. Live position and calibration reports carry this
+  reference angle. The motor does not report this app offset to other software.
+- Enter **New ID**, then **Change ID**. The app checks for an ID collision and verifies
   the same motor at its new address.
 - The top bar shows **Connected · Enabled** or **Connected · Disabled**.
   **Disable motor** is available only while the selected motor is enabled.
@@ -165,7 +193,6 @@ for the files to use in your robot model.
 | Watchdog preflight fails | Check the firmware and communication state; calibration requires the watchdog check to pass |
 | Another operation owns the bus | Finish or close the other app instance; do not delete its lock file |
 | Fit rejected or residuals remain large | Read Diagnostics, verify a bare unloaded shaft and correct model, and inspect the measured motion |
-| AppImage reports a FUSE error | Launch with `APPIMAGE_EXTRACT_AND_RUN=1` |
 
 The interface follows system light/dark appearance. There is no separate theme
 switch in the app.

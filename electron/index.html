@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Motor Setup Tool · Motomind</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="renderer.js" defer></script>
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.5-4.7L3 9m0-5v5h5M4 13a8 8 0 0 0 14.5 4.7L21 15m0 5v-5h-5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h6m4 0h6M4 12h2m4 0h10M4 18h11m4 0h1"/><circle cx="12" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h4l3-6 5 12 3-6h5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M10 2h4l.5 2.2 1.9.8 1.9-1.2 2.8 2.8-1.2 1.9.8 1.9L23 11v2l-2.3.5-.8 1.9 1.2 1.9-2.8 2.8-1.9-1.2-1.9.8L14 22h-4l-.5-2.3-1.9-.8-1.9 1.2-2.8-2.8 1.2-1.9-.8-1.9L1 13v-2l2.3-.5.8-1.9-1.2-1.9 2.8-2.8 1.9 1.2 1.9-.8z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3zM12 10v7m-3-3 3 3 3-3"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 13 8-13 8z"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6.2 5.6a9 9 0 1 0 11.6 0"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M9 3 7 21M17 3l-2 18M4 9h16M3 16h16"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 19h16"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 17V5m-5 5 5-5 5 5M4 20h16"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M20 12H4m7-7-7 7 7 7"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M4 12h16m-7-7 7 7-7 7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M5 5 19 19M19 5 5 19"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  </svg>
+  <div class="app">
+    <aside class="sidebar">
+      <header class="brand"><img src="../assets/motomind-logo.svg" alt="Motomind"><strong>Motor Setup Tool</strong></header>
+      <div class="sidebar-scroll">
+        <details id="connection-panel" class="card connection" open>
+          <summary class="connection-summary"><span>Connection</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <div class="connection-body">
+          <div class="section-head"><label for="transport-select">Adapter</label><button id="refresh-interfaces" class="icon-button" title="Refresh CAN buses and serial ports" aria-label="Refresh CAN buses and serial ports"><svg class="icon"><use href="#i-refresh"/></svg></button></div>
+          <select id="transport-select"><option value="socketcan">SocketCAN</option><option value="gsusb">GS USB</option><option value="slcan">SLCAN serial</option></select>
+          <div id="socketcan-fields">
+            <label for="can-select">CAN bus</label>
+            <div class="row"><select id="can-select" aria-label="CAN bus"></select><button id="can-up" class="secondary compact"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span class="button-label">CAN up</span></button></div>
+          </div>
+          <div id="gsusb-fields" class="hidden">
+            <label for="gsusb-select">USB adapter</label><select id="gsusb-select"><option value="">Select an adapter</option></select>
+          </div>
+          <div id="slcan-fields" class="hidden">
+            <label for="slcan-port-select">Serial port</label><select id="slcan-port-select"><option value="">Select a port</option><option value="manual">Enter manually…</option></select>
+            <input id="slcan-port" class="hidden" type="text" placeholder="/dev/ttyUSB0" spellcheck="false" autocomplete="off" aria-label="Serial port path">
+            <div class="row slcan-options"><label for="slcan-profile">Adapter profile<select id="slcan-profile"><option value="lawicel">LAWICEL Classic</option><option value="canable">CANable</option></select></label><label for="slcan-baud">UART speed<select id="slcan-baud"><option value="921600">921600</option><option value="115200">115200</option><option value="460800">460800</option><option value="1000000">1000000</option><option value="2000000">2000000</option></select></label></div>
+          </div>
+          <div id="can-state" class="muted small">Checking interfaces…</div>
+          <label for="host-id">Host ID</label><input id="host-id" type="number" min="1" max="254" value="253">
+          <button id="scan" class="secondary full" title="Scanning may stop motors on this bus"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Scan motors</button>
+          <label for="motor-select">Motor</label><select id="motor-select" aria-label="Motor"><option value="">Scan to discover</option></select>
+          <div id="motor-details" class="muted small">No motor selected</div>
+          </div>
+        </details>
+
+        <nav class="tabs" aria-label="Tool sections">
+          <button data-tab="calibrate" class="selected"><svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg>Calibrate</button>
+          <button data-tab="test"><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg>Test</button>
+          <button data-tab="setup"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Setup</button>
+          <button data-tab="files"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Files</button>
+        </nav>
+
+        <section id="panel-calibrate" class="tab-panel">
+          <h2>Calibration</h2>
+          <div id="preset" class="subtle-card hidden"></div>
+          <div id="calibration-summary" class="muted small"></div>
+          <details><summary>Advanced</summary>
+            <div class="field-grid">
+              <label>Torque · Nm<input id="torque-limit" type="number" min="0.001" step="0.01"></label>
+              <label>Speed · rad/s<input id="speed-limit" type="number" min="0.001" step="0.1"></label>
+              <label>Travel · ±rad<input id="travel-limit" type="number" min="0.001" step="0.5"></label>
+              <label>Train · s<input id="train-seconds" type="number" min="20" max="60" step="1" value="40"></label>
+              <label>Validate · s<input id="validation-seconds" type="number" min="10" max="60" step="1" value="20"></label>
+              <label>Temperature · °C<input id="temperature-limit" type="number" min="20" max="70" step="1"></label>
+              <label>Sample rate · Hz<input id="sample-hz" type="number" min="50" max="500" step="10"></label>
+              <label>Sweep from · Hz<input id="sweep-start-hz" type="number" min="0.05" max="20" step="0.05"></label>
+              <label>Sweep to · Hz<input id="sweep-end-hz" type="number" min="0.1" max="20" step="0.1"></label>
+            </div>
+            <details><summary>Baseline model</summary><div class="field-grid">
+              <label>Armature · kg m²<input id="baseline-armature" type="number" min="0.000001" max="5" step="0.001"></label>
+              <label>Damping · Nm s/rad<input id="baseline-damping" type="number" min="0" max="10" step="0.001"></label>
+              <label>Friction · Nm<input id="baseline-friction" type="number" min="0" max="100" step="0.001"></label>
+              <label>Delay · s<input id="baseline-delay" type="number" min="0" max="0.1" step="0.001"></label>
+            </div></details>
+            <button id="restore-preset" class="text-button">Restore motor preset</button>
+          </details>
+          <div class="row output-row"><button id="pick-calibration-output" class="secondary compact" type="button"><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>Save location…</button><span id="calibration-output" class="muted small" title="Automatic run folder">Automatic run folder</span></div>
+          <label class="check"><input id="reviewed" type="checkbox">Motor secured · limits reviewed</label>
+          <button id="calibrate" class="primary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>Start calibration</button>
+        </section>
+
+        <section id="panel-test" class="tab-panel hidden">
+          <h2>Motor test</h2><p class="muted">Monitoring starts with the motor disabled.</p>
+          <button id="monitor" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-play"/></svg><span class="button-label">Start monitoring</span></button>
+          <button id="test-zero" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Set current position as zero</button>
+          <h3>Jog motor</h3>
+          <label for="jog-speed" class="jog-speed-label">Speed <span><output id="jog-speed-value">0.50</output> rad/s</span></label>
+          <input id="jog-speed" type="range" min="0.01" max="1" step="0.01" value="0.5" aria-label="Jog speed">
+          <label class="check"><input id="jog-reviewed" type="checkbox">Motor secured · shaft clear</label>
+          <button id="enable-motor" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-power"/></svg>Enable motor</button>
+          <div class="row hold-row"><button id="jog-reverse" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg>Hold · Jog −</button><button id="jog-forward" class="secondary" disabled>Hold · Jog +<svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button></div>
+          <p id="jog-hint" class="small muted">Hold to jog. Release to stop.</p>
+          <p id="jog-limits" class="small muted"></p>
+          <button id="stop-motor" class="danger full" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Disable motor</button>
+        </section>
+
+        <section id="panel-setup" class="tab-panel hidden">
+          <h2>Motor setup</h2>
+          <label for="reference-angle">Display angle at this position</label>
+          <div class="reference-angle-row"><div class="reference-angle-input"><input id="reference-angle" type="number" min="-100" max="100" step="any" value="0" placeholder="Enter angle" aria-label="Display angle at current position"><span id="reference-angle-hint" aria-hidden="true">rad</span></div><select id="reference-angle-unit" aria-label="Angle unit"><option value="rad">Radians</option><option value="deg">Degrees</option></select></div>
+          <button id="zero" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Set current position</button>
+          <div class="muted small">Motor zero becomes 0; the app displays this angle.</div>
+          <div class="row setup-id-row"><input id="new-id" type="number" min="1" max="254" placeholder="New ID" aria-label="New motor ID"><button id="set-id" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-hash"/></svg>Change ID</button></div>
+          <details><summary>Motor specifications</summary><div id="motor-spec" class="muted small"></div></details>
+          <details><summary>CAN protocol</summary><div id="protocol-spec" class="muted small"></div></details>
+          <hr><div class="section-head"><h3>Firmware update</h3><a href="https://github.com/RobStride/Product_Information/releases/tag/V26.05.19" id="firmware-release" class="small">Release notes</a></div>
+          <button id="firmware-check" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download and verify</button>
+          <div id="firmware-result" class="muted small"></div>
+          <button id="firmware-update" class="danger full" disabled><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>Update firmware</button>
+        </section>
+
+        <section id="panel-files" class="tab-panel hidden">
+          <h2>Saved recordings</h2>
+          <button id="pick-run" class="secondary full"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Open folder…</button>
+          <div id="run-actions" class="hidden"><div id="current-run" class="muted small"></div><div class="row"><button id="show-run" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Show folder</button><button id="copy-run" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy path</button></div><button id="refit" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Refit recording</button></div>
+          <div class="section-head recent-head"><h3>Recent runs</h3><button id="refresh-runs" class="icon-button" title="Refresh recent runs" aria-label="Refresh recent runs"><svg class="icon"><use href="#i-refresh"/></svg></button></div>
+          <div id="run-list" class="run-list"></div>
+          <div id="run-empty" class="muted small hidden">No saved runs</div>
+        </section>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar"><h1 id="page-title">Connect your motor</h1><div class="row top-actions"><div id="top-actions" class="row"><span id="status-badge" class="badge">Not connected</span><button id="global-stop" class="secondary compact" disabled><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Disable motor</button></div><button id="open-settings" class="icon-button" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></button></div></div>
+      <div id="notice" class="notice hidden" role="status"></div>
+      <section id="work" class="work card hidden"><div class="section-head"><div><strong id="work-title">Working</strong><p id="work-message" class="muted small"></p></div><div class="row work-actions"><span id="work-percent" class="muted small"></span><button id="cancel" class="secondary compact"><svg class="icon" aria-hidden="true"><use href="#i-stop"/></svg>Stop</button></div></div><div class="progress-track"><div id="progress-bar"></div></div></section>
+      <section id="empty-state" class="empty-state card"><p>Select a CAN bus and scan for a motor to begin.</p></section>
+      <section id="preview-view" class="hidden"><div class="report-head"><h2 id="preview-title">Preview your next test</h2></div><section class="chart-card card"><h3>Target speed · rad/s</h3><canvas id="preview-chart"></canvas></section><section id="preview-torque-card" class="chart-card card hidden"><h3>Torque bursts · Nm</h3><canvas id="preview-torque-chart"></canvas></section><div id="preview-segments" class="segment-list"></div><p class="muted small">Requested motion; actual response depends on the motor.</p></section>
+      <section id="manual-view" class="hidden"><div class="report-head"><div><h2>Motor test</h2><p id="manual-identity" class="muted"></p></div><span id="manual-badge" class="badge">No live feedback</span></div><p id="manual-reason" class="muted small"></p><div class="metrics live-metrics"><div class="metric card"><span>Position</span><strong id="feedback-position">—</strong><small>rad</small></div><div class="metric card"><span>Speed</span><strong id="feedback-velocity">—</strong><small>rad/s</small></div><div class="metric card"><span>Torque</span><strong id="feedback-torque">—</strong><small>Nm</small></div><div class="metric card"><span>Temperature</span><strong id="feedback-temp">—</strong><small>°C</small></div></div><div id="live-charts"></div></section>
+      <section id="report-view" class="hidden">
+        <div class="report-head"><div><h2 id="report-title"></h2><div id="report-identity" class="muted small"></div></div><span id="result-badge" class="badge"></span></div>
+        <div class="report-toolbar"><div class="segmented"><button data-trace="validation" class="selected">Validation</button><button data-trace="training">Training</button></div><div class="legend"><label><input id="show-measured" type="checkbox" checked><i class="swatch measured"></i>Measured</label><label><input id="show-before" type="checkbox" checked><i class="swatch before"></i>Before</label><label><input id="show-after" type="checkbox" checked><i class="swatch after"></i>After</label></div></div>
+        <div class="metrics"><div class="metric card"><span>Velocity error · RMSE</span><strong id="velocity-rmse">—</strong><small id="velocity-before"></small></div><div class="metric card"><span>Position error · RMSE</span><strong id="position-rmse">—</strong><small id="position-before"></small></div></div>
+        <div class="segmented chart-tabs"><button data-chart="motion" class="selected">Motion</button><button data-chart="residuals">Residuals</button><button data-chart="torque">Torque</button></div>
+        <div id="charts"></div>
+        <details class="card result-details"><summary>Fitted parameters and diagnostics</summary><div id="parameters"></div><div id="diagnostics" class="muted small"></div></details>
+      </section>
+    </main>
+  </div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title"><div class="section-head"><h2 id="settings-title">Settings</h2><button id="close-settings" class="icon-button" aria-label="Close settings"><svg class="icon"><use href="#i-close"/></svg></button></div><label class="settings-field" for="theme-select">Appearance<select id="theme-select"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><p>Version <strong id="app-version">—</strong></p><p id="update-status" class="muted small">Check GitHub for a new version.</p><div class="row"><button id="check-update" class="secondary"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>Check for update</button><button id="install-update" class="primary hidden"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span class="button-label">Install update</span></button></div></dialog>
+</body>
+</html>

@@ -2,8 +2,7 @@
 FROM ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config curl ca-certificates git python3 python3-pyelftools \
-    file pax-utils patchelf desktop-file-utils squashfs-tools xvfb xauth dbus-x11 \
+    build-essential pkg-config curl ca-certificates git python3 \
     libx11-dev libxcursor-dev libxrandr-dev libxi-dev libxinerama-dev \
     libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
     libgl1-mesa-dev libegl1-mesa-dev libgl1-mesa-dri \

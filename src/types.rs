@@ -144,6 +144,8 @@ pub struct Config {
     pub interface: String,
     pub motor_id: u8,
     pub host_id: u8,
+    #[serde(default)]
+    pub reference_angle_rad: f64,
     pub profile: Profile,
     pub torque_limit: f64,
     pub speed_limit: f64,
@@ -167,6 +169,7 @@ impl Default for Config {
             interface: "can0".into(),
             motor_id: 1,
             host_id: 253,
+            reference_angle_rad: 0.,
             profile: Profile::presets()[1].clone(),
             torque_limit: 1.7,
             speed_limit: 14.844025288211773,
@@ -206,6 +209,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.reference_angle_rad.is_finite() && self.reference_angle_rad.abs() <= 100.,
+            "Reference angle must be within ±100 rad"
+        );
         if self.experiment != crate::experiment::Experiment::Legacy {
             ensure!(
                 self.train_seconds >= 20. && self.validation_seconds >= 10.,
@@ -324,6 +331,10 @@ pub struct Report {
     pub baseline: Parameters,
     #[serde(default)]
     pub motor_id: u8,
+    #[serde(default)]
+    pub motor_uuid: Option<[u8; 8]>,
+    #[serde(default)]
+    pub reference_angle_rad: f64,
     #[serde(default)]
     pub model: String,
     pub accepted: bool,

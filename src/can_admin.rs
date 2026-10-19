@@ -90,7 +90,7 @@ fn invoke(ip: &str, arguments: &[&str], auth: Auth, cancel: &AtomicBool) -> Resu
         }
         Auth::Direct => Command::new(ip),
     };
-    // Do not pass development/AppImage library overrides to system programs.
+    // Do not pass development or packaged library overrides to system programs.
     command
         .args(arguments)
         .env_remove("LD_LIBRARY_PATH")

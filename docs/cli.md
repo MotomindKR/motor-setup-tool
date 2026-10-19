@@ -1,16 +1,16 @@
 # Command-line guide
 
-The same AppImage works in a terminal or over SSH. Subcommands never open a
-window and do not need a display server. Run without arguments for the GUI.
+The Rust backend included in the Electron bundle works in a terminal or over
+SSH. Subcommands never open a window and do not need a display server.
 
 ```sh
-tool=./motor-setup-tool-0.1.5-linux-amd64.AppImage
+tool=./motor-setup-tool/resources/backend/motor-setup-tool
 "$tool" --help
 "$tool" calibrate --help
 ```
 
-Use your architecture's filename. If FUSE is unavailable, set
-`APPIMAGE_EXTRACT_AND_RUN=1`. A source build also supports these commands through
+Use the extracted Linux bundle from the release archive. A source build also
+supports these commands through
 `./scripts/run.sh` or `target/release/motor-setup-tool`.
 
 ## Connect
@@ -28,6 +28,17 @@ already privileged shell. Without a terminal, sudo fails unless authorization
 is already available; passwords are never read or stored by this tool.
 `can restart can0` resets an idle bus. Motor operations share a lock with the
 GUI, so close its active monitor or calibration before using the CLI.
+For SLCAN, pass an adapter string such as
+`--can slcan:canable:921600:/dev/ttyUSB0`. Choose `lawicel` for a LAWICEL
+adapter. On Windows, use a COM port such as `slcan:canable:921600:COM3`.
+`can serial-list` lists suggested serial ports. The serial transport sets
+Classic CAN to 1 Mbps when it opens.
+For a GS USB adapter, use `can usb-list`, then pass its bus and address as
+`--can gsusb:3:79` (substitute the listed numbers). Direct USB mode configures
+1 Mbps and takes ownership of the adapter when an operation starts. Its USB
+address can change after unplugging, so list again after reconnecting.
+On Linux, see the [USB access instructions](user-guide.md#direct-gs-usb-adapters)
+if the app reports a permission error.
 
 Use the ID returned by scan. The host ID defaults to 253; `--host-id` changes it.
 Identity queries and scans disable responding motors. Use an idle bench bus.

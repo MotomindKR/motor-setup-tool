@@ -60,8 +60,8 @@ not enable it.
 [Unit tests](../.github/workflows/tests.yml) run on every push to `main`, pull
 requests targeting `main`, and manual dispatch. The workflow uses the Ubuntu
 22.04 build container and a verified MuJoCo SDK. It does not publish a release.
-[Release CI](../.github/workflows/release.yml) additionally builds and tests
-native amd64/arm64 AppImages when a matching version tag is pushed.
+[Release CI](../.github/workflows/release.yml) builds Electron archives for
+Linux, macOS, and Windows when a matching version tag is pushed.
 
 For the same environment locally:
 
@@ -150,12 +150,11 @@ command through PolicyKit (GUI) or sudo (terminal); the main app stays unprivile
 
 The older option-based commands remain available for compatibility.
 
-Run these options with `./scripts/run.sh` or the packaged AppImage:
+Run these options with `./scripts/run.sh` or the bundled Rust backend:
 
 | Option | Effect |
 |---|---|
 | `--version` | Print the app version |
-| `--install-desktop` | Register the current AppImage's launcher and icons without opening a window |
 | `--list-can` | List CAN interfaces without sending motor commands |
 | `--self-check` | Check MuJoCo, writable data paths, theme lookup, and passive CAN discovery |
 | `--open=/path/to/run` | Open saved graphs |

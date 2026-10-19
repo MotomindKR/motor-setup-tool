@@ -10,3 +10,6 @@ __pycache__/
 /.can-locks/
 /dist/
 /diagnostics/
+/electron/node_modules/
+/electron/.npm-cache/
+/dist-electron/

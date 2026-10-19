@@ -137,7 +137,7 @@ fn validate_feedback(c: &Config, fb: &Feedback, position: f64) -> Result<()> {
     );
     ensure!(
         position.abs() < travel_limit(c),
-        "Jog travel {:.3} rad reached the ±{:.3} rad limit; motor disabled",
+        "Jog moved {:.3} rad from enable (limit ±{:.3} rad); motor disabled",
         position,
         travel_limit(c)
     );
@@ -191,7 +191,7 @@ fn run(
             })?;
             ensure!(
                 expired.mode == 0 && expired.faults == 0,
-                "Firmware watchdog did not stop the motor; update firmware before jogging"
+                "Firmware watchdog did not stop the motor; check firmware watchdog support and other CAN senders before jogging"
             );
             // Re-check intent after the blocking handshake and quiet interval.
             let latest = input.lock().unwrap().clone();

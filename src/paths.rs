@@ -1,4 +1,4 @@
-//! One identity across development builds, AppImages and future packages.
+//! Keep one on-disk identity across development and desktop packages.
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 

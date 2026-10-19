@@ -1,15 +1,16 @@
 //! Headless commands share the GUI's acquisition, manual control, and fitting code.
-use crate::{bridge, can_admin, firmware, hardware, manual, pipeline, types::*};
+use crate::{bridge, can_admin, experiment, firmware, hardware, manual, pipeline, types::*};
 use anyhow::{Context, Result, ensure};
 use clap::{Args, Parser, Subcommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    io::{self, IsTerminal, Write},
+    io::{self, BufRead, IsTerminal, Read, Write},
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -30,12 +31,10 @@ struct Cli {
     legacy: Legacy,
 }
 
-// Keep existing AppImage scripts and screenshot commands working, while making
-// unknown arguments an error instead of accidentally opening a GUI.
+// Keep compatibility with earlier CLI and screenshot commands while rejecting
+// unknown arguments instead of accidentally opening the native UI.
 #[derive(Args)]
 struct Legacy {
-    #[arg(long, hide = true, group = "legacy_action")]
-    install_desktop: bool,
     #[arg(long, hide = true, group = "legacy_action")]
     list_can: bool,
     #[arg(long, hide = true, group = "legacy_action")]
@@ -85,6 +84,9 @@ enum Command {
         #[arg(long)]
         model: String,
     },
+    /// Return the current calibration preview without opening hardware.
+    #[command(hide = true)]
+    Preview,
     /// Record and fit a real motor; writes the same artifacts as the GUI.
     Calibrate(Calibrate),
     /// Refit a saved real recording; replaces analysis artifacts.
@@ -96,6 +98,9 @@ enum Command {
         #[arg(long, value_parser = seconds)]
         seconds: Option<f64>,
     },
+    /// Stream a monitored manual session controlled by JSON intent lines on stdin.
+    #[command(hide = true)]
+    ManualSession(Target),
     /// Run a bounded jog, then disable. Ctrl+C also disables the motor.
     Jog {
         #[command(flatten)]
@@ -137,6 +142,10 @@ enum Command {
 enum CanCommand {
     /// List physical SocketCAN interfaces without sending frames.
     List,
+    /// List serial ports that can be used by SLCAN adapters.
+    SerialList,
+    /// List GS-USB adapters available for direct USB access.
+    UsbList,
     /// Bring a down interface up at 1 Mbps.
     Up(CanUp),
     /// Take an idle interface down, then bring it up at 1 Mbps.
@@ -191,6 +200,9 @@ struct Calibrate {
     speed_limit: Option<f64>,
     #[arg(long)]
     travel_limit: Option<f64>,
+    /// Read a complete, validated GUI configuration from stdin.
+    #[arg(long, hide = true)]
+    config_stdin: bool,
     /// Confirm the motor is secured, shaft clear, and preset limits reviewed.
     #[arg(long, required = true)]
     yes: bool,
@@ -199,6 +211,8 @@ struct Calibrate {
 enum FirmwareCommand {
     /// Compare installed firmware with the bundled verified release catalog.
     Check(Target),
+    /// Download and verify the selected official image before an update.
+    Prepare(Target),
     /// Update firmware. Once transfer starts, keep power on until it finishes.
     Update {
         #[command(flatten)]
@@ -224,6 +238,14 @@ fn output(value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+fn output_line(value: &impl Serialize) -> Result<()> {
+    let mut out = io::stdout().lock();
+    serde_json::to_writer(&mut out, value)?;
+    writeln!(out)?;
+    out.flush()?;
+    Ok(())
+}
+
 #[derive(Default)]
 struct Progress(Mutex<Option<(WorkPhase, i32)>>);
 impl Progress {
@@ -235,8 +257,12 @@ impl Progress {
             return;
         }
         *last = Some(current);
-        let width = (percent.clamp(0, 100) / 5) as usize;
-        eprintln!("[{}{}] {p}", "=".repeat(width), " ".repeat(20 - width));
+        if io::stderr().is_terminal() {
+            let width = (percent.clamp(0, 100) / 5) as usize;
+            eprintln!("[{}{}] {p}", "=".repeat(width), " ".repeat(20 - width));
+        } else {
+            eprintln!("{p}");
+        }
     }
 }
 
@@ -252,6 +278,153 @@ fn preset(model: &str) -> Result<Config> {
     config.apply_spec_limits();
     config.validate()?;
     Ok(config)
+}
+
+fn requested_config(detected: Config, requested: Config) -> Result<Config> {
+    ensure!(
+        requested.interface == detected.interface
+            && requested.motor_id == detected.motor_id
+            && requested.host_id == detected.host_id
+            && requested.profile == detected.profile,
+        "Motor identity or wire profile changed; scan again"
+    );
+    ensure!(
+        requested.experiment == experiment::Experiment::Mixed
+            && requested.excitation_revision == 1
+            && requested.baseline.static_friction == 0.,
+        "New recordings use the current mixed calibration suite and constant friction baseline"
+    );
+    requested.validate()?;
+    Ok(requested)
+}
+
+fn preview_config(c: &Config) -> Result<serde_json::Value> {
+    ensure!(
+        c.profile.uses_documented_ranges(),
+        "Use a supported motor profile"
+    );
+    ensure!(
+        c.experiment == experiment::Experiment::Mixed,
+        "Use the mixed calibration suite"
+    );
+    c.validate()?;
+    let samples = 1200;
+    let mut t = Vec::with_capacity(samples + 1);
+    let mut velocity = Vec::with_capacity(samples + 1);
+    let mut torque = Vec::with_capacity(samples + 1);
+    for index in 0..=samples {
+        let time = index as f64 * c.train_seconds / samples as f64;
+        let (v, q) = experiment::preview(c, time, false);
+        t.push(time);
+        velocity.push(v);
+        torque.push(q);
+    }
+    Ok(
+        json!({"spec":c.profile.spec(),"segments":experiment::plan(c, false),
+        "t":t,"velocity":velocity,"torque":torque}),
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ManualInput {
+    Intent {
+        enabled: bool,
+        direction: i8,
+        speed: f64,
+        reviewed: bool,
+    },
+    Stop,
+}
+
+fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
+    let mut first = String::new();
+    ensure!(
+        io::stdin().read_line(&mut first)? > 0,
+        "Manual session needs a configuration"
+    );
+    let requested: Config = serde_json::from_str(&first).context("Invalid manual configuration")?;
+    let (detected, motor) = detected(&target)?;
+    let config = requested_config(detected, requested)?;
+    let session = manual::Session::start(config.clone(), motor.uuid);
+    let (tx, rx) = mpsc::channel::<Result<ManualInput>>();
+    thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            let message = line
+                .context("Read manual intent")
+                .and_then(|line| serde_json::from_str(&line).context("Invalid manual intent"));
+            if tx.send(message).is_err() {
+                return;
+            }
+        }
+        let _ = tx.send(Ok(ManualInput::Stop));
+    });
+    let started = Instant::now();
+    let mut last_received = None;
+    let mut last_enabled = false;
+    let mut last_preparing = false;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        while let Ok(message) = rx.try_recv() {
+            match message? {
+                ManualInput::Intent {
+                    enabled,
+                    direction,
+                    speed,
+                    reviewed,
+                } => {
+                    ensure!(
+                        (-1..=1).contains(&direction)
+                            && speed.is_finite()
+                            && (0.01..=manual::max_speed(&config)).contains(&speed),
+                        "Invalid manual speed or direction"
+                    );
+                    let mut intent = session.intent.lock().unwrap();
+                    intent.enabled = enabled && reviewed;
+                    intent.direction = if intent.enabled { direction } else { 0 };
+                    intent.speed = speed;
+                    intent.heartbeat = Instant::now();
+                }
+                ManualInput::Stop => {
+                    drop(session);
+                    return Ok(());
+                }
+            }
+        }
+        let state = session.snapshot();
+        let fresh = state
+            .received
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(200));
+        if state.received != last_received
+            || state.enabled != last_enabled
+            || state.preparing != last_preparing
+            || session.finished()
+        {
+            let fb = state.feedback.as_ref();
+            output_line(&json!({"t":started.elapsed().as_secs_f64(),"id":target.id,
+                "sample_t":state.received.map(|at|at.saturating_duration_since(started).as_secs_f64()),
+                "enabled":state.enabled,"preparing":state.preparing,"fresh":fresh,
+                "position_rad":fb.map(|f|f.position),"velocity_rad_s":fb.map(|f|f.velocity),
+                "torque_nm":fb.map(|f|f.torque),"temperature_c":fb.map(|f|f.temperature),
+                "mode":fb.map(|f|f.mode),"faults":fb.map(|f|f.faults),
+                "stop_reason":state.stop_reason.as_deref(),"error":state.error.as_deref()}))?;
+            last_received = state.received;
+            last_enabled = state.enabled;
+            last_preparing = state.preparing;
+        }
+        if session.finished() {
+            let error = state
+                .error
+                .unwrap_or_else(|| "Manual session stopped".into());
+            drop(session);
+            anyhow::bail!(error);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(session);
+    Ok(())
 }
 
 fn detected(target: &Target) -> Result<(Config, hardware::DiscoveredMotor)> {
@@ -292,6 +465,25 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
         Command::Can { command } => {
             match command {
                 CanCommand::List => {}
+                CanCommand::SerialList => {
+                    let mut ports = serialport::available_ports()?
+                        .into_iter()
+                        .map(|port| port.port_name)
+                        .filter(|name| {
+                            #[cfg(target_os = "linux")]
+                            if name
+                                .strip_prefix("/dev/ttyS")
+                                .is_some_and(|suffix| suffix.parse::<u32>().is_ok())
+                            {
+                                return false;
+                            }
+                            true
+                        })
+                        .collect::<Vec<_>>();
+                    ports.sort();
+                    return output(&ports);
+                }
+                CanCommand::UsbList => return output(&hardware::available_usb_adapters()?),
                 CanCommand::Up(args) => can_admin::up(&args.interface, false, args.auth, cancel)?,
                 CanCommand::Restart(args) => {
                     can_admin::up(&args.interface, true, args.auth, cancel)?
@@ -309,18 +501,33 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
         }
         Command::Info(target) => output(&hardware::inspect(&target.config()?)?),
         Command::Plan { model } => output(&preset(&model)?),
+        Command::Preview => {
+            let mut input = String::new();
+            io::stdin().read_to_string(&mut input)?;
+            let config: Config =
+                serde_json::from_str(&input).context("Invalid preview configuration")?;
+            output(&preview_config(&config)?)
+        }
         Command::Calibrate(args) => {
             let (mut config, motor) = detected(&args.target)?;
-            config.train_seconds = args.train_seconds;
-            config.validation_seconds = args.validation_seconds;
-            if let Some(v) = args.torque_limit {
-                config.torque_limit = v;
-            }
-            if let Some(v) = args.speed_limit {
-                config.speed_limit = v;
-            }
-            if let Some(v) = args.travel_limit {
-                config.travel_limit = v;
+            if args.config_stdin {
+                let mut input = String::new();
+                io::stdin().read_to_string(&mut input)?;
+                let requested: Config =
+                    serde_json::from_str(&input).context("Invalid calibration configuration")?;
+                config = requested_config(config, requested)?;
+            } else {
+                config.train_seconds = args.train_seconds;
+                config.validation_seconds = args.validation_seconds;
+                if let Some(v) = args.torque_limit {
+                    config.torque_limit = v;
+                }
+                if let Some(v) = args.speed_limit {
+                    config.speed_limit = v;
+                }
+                if let Some(v) = args.travel_limit {
+                    config.travel_limit = v;
+                }
             }
             config.validate()?;
             ensure!(
@@ -358,6 +565,7 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             progress.show(p)
         })?),
         Command::Monitor { target, seconds } => monitor(target, seconds, None, cancel),
+        Command::ManualSession(target) => manual_session(target, cancel),
         Command::Jog {
             target,
             speed,
@@ -392,6 +600,17 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             let update =
                 firmware::available_update(&c.profile.model, motor.firmware.as_deref().unwrap());
             output(&json!({"motor":motor,"update_available":update.is_some(),"release":update}))
+        }
+        Command::Firmware {
+            command: FirmwareCommand::Prepare(target),
+        } => {
+            let (c, _) = detected(&target)?;
+            let prepared = firmware::prepare(&c, |s| eprintln!("{s}"))?;
+            output(
+                &json!({"model":prepared.release.model,"version":prepared.release.version,
+                "current_version":prepared.current_version,"id":prepared.motor_id,
+                "uuid":prepared.uuid}),
+            )
         }
         Command::Firmware {
             command: FirmwareCommand::Update { target, .. },
@@ -503,6 +722,37 @@ fn monitor(
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn requested_gui_config_keeps_advanced_fields_but_checks_motor_identity() {
+        let detected = preset("RS-06").unwrap();
+        let mut requested = detected.clone();
+        requested.train_seconds = 42.;
+        requested.validation_seconds = 21.;
+        requested.baseline.damping = 0.1;
+        let accepted = requested_config(detected.clone(), requested.clone()).unwrap();
+        assert_eq!(accepted.train_seconds, 42.);
+        assert_eq!(accepted.validation_seconds, 21.);
+        assert_eq!(accepted.baseline.damping, 0.1);
+        requested.motor_id = 2;
+        assert!(requested_config(detected, requested).is_err());
+    }
+
+    #[test]
+    fn preview_uses_the_same_mixed_trajectory_as_calibration() {
+        let config = preset("RS-06").unwrap();
+        let preview = preview_config(&config).unwrap();
+        assert_eq!(preview["t"].as_array().unwrap().len(), 1201);
+        assert_eq!(preview["segments"].as_array().unwrap().len(), 5);
+        assert!(
+            preview["torque"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v.as_f64().unwrap() != 0.)
+        );
+    }
+
     #[test]
     fn motion_requires_explicit_confirmation_and_invalid_commands_never_open_gui() {
         Cli::command().debug_assert();
