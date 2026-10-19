@@ -6,7 +6,10 @@ use crate::{
     types::*,
 };
 use anyhow::{Context, Result, ensure};
-use gs_usb::{CAN_EFF_FLAG, DeviceCapability, GS_CAN_MODE_NORMAL, GsUsb, GsUsbError, GsUsbFrame};
+use gsusbio::{
+    Bitrate as UsbBitrate, CanFrame as UsbCanFrame, CanId as UsbCanId, Error as UsbError,
+    ReceiveEvent as UsbReceiveEvent, blocking::CanSocket as UsbCanSocket,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use slcanio::{
@@ -43,82 +46,18 @@ pub(crate) struct WatchdogPreflight {
     pub(crate) addressed_frames: usize,
     pub(crate) quiet_frames: Vec<QuietCanFrame>,
     pub(crate) quiet_frames_omitted: usize,
-    pub(crate) gsusb_tx_echoes: Option<u64>,
 }
 enum BusSocket {
     #[cfg(target_os = "linux")]
     SocketCan(CanSocket),
-    Slcan(Mutex<Option<SerialCanSocket>>),
-    GsUsb(Mutex<UsbSocket>),
-}
-
-struct UsbSocket {
-    device: Option<GsUsb>,
-    tx_echoes: u64,
-    #[cfg(target_os = "linux")]
-    bus: u8,
-    #[cfg(target_os = "linux")]
-    address: u8,
-    #[cfg(target_os = "linux")]
-    restore_kernel: bool,
-}
-impl UsbSocket {
-    fn new(device: GsUsb, bus: u8, address: u8) -> Self {
-        #[cfg(target_os = "linux")]
-        let restore_kernel = rusb::devices().ok().is_some_and(|devices| {
-            devices.iter().any(|item| {
-                item.bus_number() == bus
-                    && item.address() == address
-                    && item
-                        .open()
-                        .ok()
-                        .is_some_and(|handle| handle.kernel_driver_active(0).unwrap_or(false))
-            })
-        });
-        #[cfg(not(target_os = "linux"))]
-        let _ = (bus, address);
-        Self {
-            device: Some(device),
-            tx_echoes: 0,
-            #[cfg(target_os = "linux")]
-            bus,
-            #[cfg(target_os = "linux")]
-            address,
-            #[cfg(target_os = "linux")]
-            restore_kernel,
-        }
-    }
-    fn device(&mut self) -> &mut GsUsb {
-        self.device.as_mut().expect("GS-USB device already closed")
-    }
-    fn tx_echoes(&self) -> u64 {
-        self.tx_echoes
-    }
-}
-impl Drop for UsbSocket {
-    fn drop(&mut self) {
-        // gs_usb stops the adapter on drop. Release its USB handle before reattaching Linux.
-        drop(self.device.take());
-        #[cfg(target_os = "linux")]
-        if self.restore_kernel
-            && let Ok(devices) = rusb::devices()
-        {
-            for item in devices.iter() {
-                if item.bus_number() == self.bus
-                    && item.address() == self.address
-                    && let Ok(handle) = item.open()
-                    && !handle.kernel_driver_active(0).unwrap_or(false)
-                {
-                    let _ = handle.attach_kernel_driver(0);
-                }
-            }
-        }
-    }
+    Slcan(Box<Mutex<Option<SerialCanSocket>>>),
+    GsUsb(Box<Mutex<UsbCanSocket>>),
 }
 
 #[derive(Serialize)]
 pub struct UsbAdapter {
-    pub bus: u8,
+    pub id: String,
+    pub bus_id: String,
     pub address: u8,
     pub vendor_id: u16,
     pub product_id: u16,
@@ -127,97 +66,86 @@ pub struct UsbAdapter {
 
 pub fn available_usb_adapters() -> Result<Vec<UsbAdapter>> {
     let mut adapters = Vec::new();
-    for device in rusb::devices()?.iter() {
-        let Ok(desc) = device.device_descriptor() else {
-            continue;
-        };
-        let id = (desc.vendor_id(), desc.product_id());
-        if matches!(
-            id,
-            (0x1d50, 0x606f) | (0x1209, 0x2323) | (0x1cd2, 0x606f) | (0x16d0, 0x10b8)
-        ) {
-            adapters.push(UsbAdapter {
-                bus: device.bus_number(),
-                address: device.address(),
-                vendor_id: id.0,
-                product_id: id.1,
-                accessible: device.open().is_ok(),
-            });
-        }
+    for device in UsbCanSocket::scan()? {
+        let bus_id = device.bus_id().to_owned();
+        let address = device.address();
+        adapters.push(UsbAdapter {
+            id: gsusb_id(&bus_id, address),
+            bus_id,
+            address,
+            vendor_id: device.vendor_id(),
+            product_id: device.product_id(),
+            accessible: device.serial_number_blocking().is_ok(),
+        });
     }
-    adapters.sort_by_key(|adapter| (adapter.bus, adapter.address));
+    adapters.sort_by(|a, b| (&a.bus_id, a.address).cmp(&(&b.bus_id, b.address)));
     Ok(adapters)
 }
 
-fn gsusb_address(interface: &str) -> Result<Option<(u8, u8)>> {
+fn gsusb_id(bus_id: &str, address: u8) -> String {
+    let bus_hex: String = if bus_id.is_empty() {
+        "00".into()
+    } else {
+        bus_id
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    format!("gsusb:{bus_hex}:{address}")
+}
+
+fn gsusb_address(interface: &str) -> Result<Option<(String, u8)>> {
     let Some(rest) = interface.strip_prefix("gsusb:") else {
         return Ok(None);
     };
-    let (bus, address) = rest
-        .split_once(':')
-        .context("GS-USB address must be gsusb:bus:device")?;
-    let bus = bus.parse::<u8>().context("Invalid GS-USB bus number")?;
+    let (bus_hex, address) = rest
+        .rsplit_once(':')
+        .context("GS-USB address must be gsusb:<hex bus ID>:<device address>")?;
+    ensure!(
+        !bus_hex.is_empty() && bus_hex.len() <= 512 && bus_hex.len() % 2 == 0,
+        "Invalid GS-USB bus identifier"
+    );
+    let bus = if bus_hex == "00" {
+        String::new()
+    } else {
+        String::from_utf8(
+            bus_hex
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| {
+                    u8::from_str_radix(
+                        std::str::from_utf8(pair).context("Invalid GS-USB bus identifier")?,
+                        16,
+                    )
+                    .context("Invalid GS-USB bus identifier")
+                })
+                .collect::<Result<Vec<_>>>()?,
+        )
+        .context("Invalid GS-USB bus identifier")?
+    };
+    ensure!(!bus.contains('\0'), "Invalid GS-USB bus identifier");
     let address = address
         .parse::<u8>()
         .context("Invalid GS-USB device address")?;
-    ensure!(bus > 0 && address > 0, "Invalid GS-USB device address");
+    ensure!(address > 0, "Invalid GS-USB device address");
     Ok(Some((bus, address)))
 }
 
-fn gsusb_wire_frame(frame: &GsUsbFrame) -> Result<Option<WireFrame>> {
-    if frame.is_error_frame() {
-        anyhow::bail!("GS-USB CAN bus error; check wiring, termination, motor power and bitrate");
-    }
-    if frame.is_rx_frame()
-        && frame.is_extended_id()
-        && !frame.is_remote_frame()
+fn gsusb_wire_frame(frame: &UsbCanFrame) -> Option<WireFrame> {
+    if let UsbCanId::Extended(id) = frame.id()
+        && !frame.is_remote()
         && !frame.is_fd()
-        && frame.data_length() == 8
+        && frame.data().len() == 8
     {
         let mut data = [0; 8];
         data.copy_from_slice(frame.data());
-        Ok(Some(WireFrame {
-            id: frame.arbitration_id(),
-            data,
-        }))
+        Some(WireFrame { id, data })
     } else {
-        Ok(None)
+        None
     }
-}
-
-fn gsusb_timing(cap: &DeviceCapability) -> Result<(u32, u32, u32, u32, u32)> {
-    const BITRATE: u64 = 1_000_000;
-    ensure!(
-        cap.brp_inc > 0,
-        "GS-USB adapter reports invalid bitrate limits"
-    );
-    let max_brp = cap.brp_max.min(cap.fclk_can / BITRATE as u32);
-    for brp in (cap.brp_min..=max_brp).step_by(cap.brp_inc as usize) {
-        let clock = u64::from(cap.fclk_can);
-        let divisor = BITRATE * u64::from(brp);
-        if divisor == 0 || clock % divisor != 0 {
-            continue;
-        }
-        let total = clock / divisor;
-        if total < 4 {
-            continue;
-        }
-        let tseg1 = (total * 3 / 4).saturating_sub(1) as u32;
-        let tseg2 = (total - 1) as u32 - tseg1;
-        if !(cap.tseg1_min..=cap.tseg1_max).contains(&tseg1)
-            || !(cap.tseg2_min..=cap.tseg2_max).contains(&tseg2)
-            || cap.sjw_max == 0
-        {
-            continue;
-        }
-        let sjw = (tseg2 / 2).max(1).min(tseg2).min(cap.sjw_max);
-        let prop_seg = tseg1 / 2;
-        let phase_seg1 = tseg1 - prop_seg;
-        return Ok((prop_seg, phase_seg1, tseg2, sjw, brp));
-    }
-    anyhow::bail!(
-        "GS-USB adapter cannot represent 1 Mbps with its reported CAN clock and timing limits"
-    )
 }
 
 struct SlcanConnection {
@@ -288,47 +216,29 @@ pub(crate) fn lock_interface(interface: &str) -> Result<std::fs::File> {
     Ok(lock)
 }
 impl Bus {
-    fn gsusb_tx_echoes(&self) -> Option<u64> {
-        if let BusSocket::GsUsb(device) = &self.socket {
-            Some(
-                device
-                    .lock()
-                    .expect("GS-USB device lock poisoned")
-                    .tx_echoes(),
-            )
-        } else {
-            None
-        }
-    }
-
     pub fn open(config: &Config) -> Result<Self> {
-        let (lock, socket) = if let Some((usb_bus, usb_address)) = gsusb_address(&config.interface)?
-        {
-            let lock = lock_interface(&format!("gsusb-{usb_bus:03}-{usb_address:03}"))?;
-            let device = GsUsb::find(usb_bus, usb_address)
-                .context("Open GS-USB adapter; check USB device access")?
-                .context(
-                    "GS-USB adapter was unplugged or its USB address changed; refresh adapters",
-                )?;
-            let mut device = UsbSocket::new(device, usb_bus, usb_address);
-            device.device().claim().context("Claim GS-USB interface")?;
-            device
-                .device()
-                .stop()
-                .context("Reset GS-USB CAN channel before timing")?;
-            let capability = device
-                .device()
-                .device_capability()
-                .context("Read GS-USB timing limits")?;
-            let (prop_seg, phase_seg1, phase_seg2, sjw, brp) = gsusb_timing(&capability)?;
-            device
-                .device()
-                .set_timing(prop_seg, phase_seg1, phase_seg2, sjw, brp)
-                .context("Set GS-USB bitrate to 1 Mbps")?;
-            device.device().start(GS_CAN_MODE_NORMAL).context(
-                "Start GS-USB adapter; check USB access and whether another application owns it",
+        let (lock, socket) = if let Some((bus_id, address)) = gsusb_address(&config.interface)? {
+            let key = Sha256::digest(config.interface.as_bytes());
+            let lock = lock_interface(&format!(
+                "gsusb-{:02x}{:02x}{:02x}{:02x}",
+                key[0], key[1], key[2], key[3]
+            ))?;
+            let mut devices = UsbCanSocket::scan()?
+                .into_iter()
+                .filter(|device| device.bus_id() == bus_id && device.address() == address);
+            let device = devices.next().context(
+                "GS-USB adapter was unplugged or its USB address changed; refresh adapters",
             )?;
-            (lock, BusSocket::GsUsb(Mutex::new(device)))
+            ensure!(
+                devices.next().is_none(),
+                "Multiple GS-USB adapters share this USB bus ID and address; disconnect one adapter"
+            );
+            let socket = UsbCanSocket::builder(device)
+                .nominal_bitrate(UsbBitrate::Mbps1)
+                .timeout(Duration::from_millis(2))
+                .connect()
+                .context("Start GS-USB adapter at 1 Mbps; check USB access and whether another application owns it")?;
+            (lock, BusSocket::GsUsb(Box::new(Mutex::new(socket))))
         } else if let Some(serial) = SlcanConnection::parse(&config.interface)? {
             #[cfg(unix)]
             let port = std::fs::canonicalize(&serial.port)
@@ -351,7 +261,7 @@ impl Bus {
                 .timeout(Duration::from_millis(2))
                 .connect()
                 .with_context(|| format!("Open SLCAN adapter on {} at {} baud; check port access, adapter profile and CAN wiring", serial.port, serial.baud))?;
-            (lock, BusSocket::Slcan(Mutex::new(Some(socket))))
+            (lock, BusSocket::Slcan(Box::new(Mutex::new(Some(socket)))))
         } else {
             #[cfg(not(target_os = "linux"))]
             anyhow::bail!("SocketCAN is only available on Linux; select an SLCAN serial port");
@@ -396,20 +306,14 @@ impl Bus {
                     )
             }
             BusSocket::GsUsb(device) => {
-                ensure!(f.id <= 0x1fff_ffff, "Invalid extended CAN ID");
-                let frame = GsUsbFrame::with_data(f.id | CAN_EFF_FLAG, &f.data);
+                let frame = UsbCanFrame::classic(UsbCanId::extended(f.id)?, &f.data)?;
                 if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
-                    eprintln!(
-                        "GS-USB TX id={:08x} data={:02x?}",
-                        frame.can_id,
-                        frame.data()
-                    );
+                    eprintln!("GS-USB TX id={:08x} data={:02x?}", f.id, frame.data());
                 }
                 device
                     .lock()
                     .expect("GS-USB device lock poisoned")
-                    .device()
-                    .send(&frame)
+                    .send(frame)
                     .context("GS-USB transmit failed; check USB connection and CAN wiring")
             }
         }
@@ -467,24 +371,35 @@ impl Bus {
             }
             BusSocket::GsUsb(device) => {
                 let mut device = device.lock().expect("GS-USB device lock poisoned");
-                let frame = match device.device().read(Duration::from_millis(2)) {
-                    Ok(frame) => frame,
-                    Err(GsUsbError::ReadTimeout) => return Ok(None),
+                let event = match device.recv_event() {
+                    Ok(event) => event,
+                    Err(UsbError::Timeout) => return Ok(None),
                     Err(error) => return Err(error).context("GS-USB receive failed"),
                 };
-                if frame.is_echo_frame() {
-                    device.tx_echoes += 1;
+                match event {
+                    UsbReceiveEvent::Frame(received) => {
+                        let frame = received.frame;
+                        if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
+                            eprintln!(
+                                "GS-USB RX id={:08x} dlc={} data={:02x?}",
+                                frame.id().value(),
+                                frame.dlc(),
+                                frame.data()
+                            );
+                        }
+                        gsusb_wire_frame(&frame)
+                    }
+                    UsbReceiveEvent::ErrorFrame { can_id, data, .. } => {
+                        anyhow::bail!(
+                            "GS-USB CAN bus error 0x{can_id:08x} {data:02x?}; check wiring, termination, motor power and bitrate"
+                        )
+                    }
+                    UsbReceiveEvent::Overflow { .. } => {
+                        anyhow::bail!(
+                            "GS-USB adapter receive overflow; check CAN bus traffic and wiring"
+                        )
+                    }
                 }
-                if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
-                    eprintln!(
-                        "GS-USB RX echo={:08x} id={:08x} dlc={} data={:02x?}",
-                        frame.echo_id,
-                        frame.can_id,
-                        frame.can_dlc,
-                        frame.data()
-                    );
-                }
-                gsusb_wire_frame(&frame)?
             }
         };
         if let Some(wire) = &received
@@ -692,7 +607,6 @@ impl Bus {
             .context("Watchdog preflight could not enable motor at zero torque")?;
         motor_state(true);
         let watchdog_start = Instant::now();
-        let echoes_before = bus.gsusb_tx_echoes();
         let mut active_reports = 0;
         let mut latest_report = None;
         let mut addressed_frames = 0;
@@ -728,9 +642,6 @@ impl Bus {
                 }
             }
         }
-        let gsusb_tx_echoes = echoes_before
-            .zip(bus.gsusb_tx_echoes())
-            .map(|(before, after)| after - before);
         // Type-24 reports reflect status without sending a new motor command.
         // Require a recent report; older firmware may not support this feature.
         if active_reports >= 3
@@ -746,7 +657,6 @@ impl Bus {
                 addressed_frames,
                 quiet_frames,
                 quiet_frames_omitted,
-                gsusb_tx_echoes,
             });
         }
         // Legacy fallback: a zero-torque command requests status after the quiet
@@ -763,7 +673,6 @@ impl Bus {
             addressed_frames,
             quiet_frames,
             quiet_frames_omitted,
-            gsusb_tx_echoes,
         })
     }
     pub fn stop(&self) -> Result<()> {
@@ -992,19 +901,6 @@ pub fn scan(
         if id % 8 == 0 || id == 254 {
             progress(WorkProgress::scanning(id));
         }
-        if id == 16
-            && found.is_empty()
-            && let BusSocket::GsUsb(device) = &bus.socket
-            && device
-                .lock()
-                .expect("GS-USB device lock poisoned")
-                .tx_echoes()
-                == 0
-        {
-            anyhow::bail!(
-                "GS-USB sent 1 Mbps CAN probes, but none were acknowledged. Check motor power, CAN-H/CAN-L wiring, termination and bitrate before scanning again"
-            );
-        }
     }
     Ok(found)
 }
@@ -1158,10 +1054,9 @@ pub fn acquire(
             "passive_reports": preflight.passive_reports,
             "last_passive_report_ms": preflight.last_passive_report_ms,
             "addressed_frames_during_quiet": preflight.addressed_frames,
-            "gsusb_tx_echoes_during_quiet": preflight.gsusb_tx_echoes,
             "quiet_frames": preflight.quiet_frames,
             "quiet_frames_omitted": preflight.quiet_frames_omitted,
-            "trace_note": "Accepted extended eight-byte CAN frames received during the 300 ms quiet interval. The app sends no frames in this interval. Standard, remote, and short frames are not included. GS-USB transmit echoes are counted separately."
+            "trace_note": "Accepted extended eight-byte CAN frames received during the 300 ms quiet interval. The app sends no frames in this interval. Standard, remote, and short frames are not included."
         }),
     )?;
     ensure!(
@@ -1355,61 +1250,62 @@ mod diagnostics_tests {
     use super::*;
     #[test]
     fn gsusb_address_and_frame_filter() {
-        assert_eq!(gsusb_address("gsusb:3:79").unwrap(), Some((3, 79)));
+        assert_eq!(gsusb_id("003", 79), "gsusb:303033:79");
+        assert_eq!(gsusb_id("", 79), "gsusb:00:79");
+        assert_eq!(
+            gsusb_address("gsusb:00:79").unwrap(),
+            Some((String::new(), 79))
+        );
+        assert_eq!(
+            gsusb_address("gsusb:303033:79").unwrap(),
+            Some(("003".into(), 79))
+        );
         assert_eq!(gsusb_address("can0").unwrap(), None);
-        for value in ["gsusb:0:79", "gsusb:3:0", "gsusb:3:999", "gsusb:3:79:1"] {
+        for value in [
+            "gsusb:3:79",
+            "gsusb:303033:0",
+            "gsusb:303033:999",
+            "gsusb:303033:79:1",
+            "gsusb:0000:79",
+        ] {
             assert!(gsusb_address(value).is_err());
         }
-        let mut frame = GsUsbFrame::with_data(CAN_EFF_FLAG | 0x1234, &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert!(gsusb_wire_frame(&frame).unwrap().is_none()); // TX echo
-        frame.echo_id = u32::MAX;
-        let wire = gsusb_wire_frame(&frame).unwrap().unwrap();
+        let frame = UsbCanFrame::classic(
+            UsbCanId::extended(0x1234).unwrap(),
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+        )
+        .unwrap();
+        let wire = gsusb_wire_frame(&frame).unwrap();
         assert_eq!(wire.id, 0x1234);
         assert_eq!(wire.data, [1, 2, 3, 4, 5, 6, 7, 8]);
-        frame.can_id = 0x1234;
-        assert!(gsusb_wire_frame(&frame).unwrap().is_none()); // Standard ID
-        frame.can_id = gs_usb::CAN_ERR_FLAG | 0x40;
-        assert!(gsusb_wire_frame(&frame).is_err());
-    }
-    #[test]
-    fn gsusb_160mhz_adapter_uses_observed_one_megabit_timing() {
-        let mut bytes = Vec::new();
-        for value in [0, 160_000_000_u32, 1, 256, 1, 128, 128, 1, 512, 1] {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        let capability = DeviceCapability::unpack(&bytes);
-        assert_eq!(gsusb_timing(&capability).unwrap(), (59, 60, 40, 20, 1));
+        let standard = UsbCanFrame::classic(UsbCanId::standard(0x123).unwrap(), &[0; 8]).unwrap();
+        assert!(gsusb_wire_frame(&standard).is_none());
+        let short = UsbCanFrame::classic(UsbCanId::extended(0x1234).unwrap(), &[0; 7]).unwrap();
+        assert!(gsusb_wire_frame(&short).is_none());
     }
     #[cfg(target_os = "linux")]
     #[test]
-    #[ignore = "requires a connected GS-USB adapter; set MOTOMIND_GSUSB_TEST=gsusb:bus:address"]
-    fn direct_usb_open_restores_kernel_driver() {
+    #[ignore = "requires a connected GS-USB adapter; set MOTOMIND_GSUSB_TEST to its listed id"]
+    fn direct_usb_open_close_keeps_adapter_discoverable() {
         let interface = std::env::var("MOTOMIND_GSUSB_TEST").unwrap();
-        let (usb_bus, usb_address) = gsusb_address(&interface).unwrap().unwrap();
-        let before = rusb::devices()
-            .unwrap()
-            .iter()
-            .find(|item| item.bus_number() == usb_bus && item.address() == usb_address)
-            .unwrap()
-            .open()
-            .unwrap()
-            .kernel_driver_active(0)
-            .unwrap();
+        let (bus_id, address) = gsusb_address(&interface).unwrap().unwrap();
+        assert!(
+            UsbCanSocket::scan()
+                .unwrap()
+                .iter()
+                .any(|item| item.bus_id() == bus_id && item.address() == address)
+        );
         let config = Config {
             interface,
             ..Default::default()
         };
         drop(Bus::open(&config).unwrap());
-        let after = rusb::devices()
-            .unwrap()
-            .iter()
-            .find(|item| item.bus_number() == usb_bus && item.address() == usb_address)
-            .unwrap()
-            .open()
-            .unwrap()
-            .kernel_driver_active(0)
-            .unwrap();
-        assert_eq!(after, before);
+        assert!(
+            UsbCanSocket::scan()
+                .unwrap()
+                .iter()
+                .any(|item| item.bus_id() == bus_id && item.address() == address)
+        );
     }
     #[test]
     fn firmware_family_mismatch_blocks_before_calibration() {

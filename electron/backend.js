@@ -19,9 +19,8 @@ function number(value, name, min, max) {
 function validCan(value) {
   if (typeof value !== 'string') return false;
   if (/^[a-zA-Z0-9_.-]{1,15}$/.test(value)) return true;
-  if (/^gsusb:(?:[1-9]|[1-9][0-9]{1,2}):(?:[1-9]|[1-9][0-9]{1,2})$/.test(value)) {
-    const [, bus, address] = value.split(':');
-    return Number(bus) <= 255 && Number(address) <= 255;
+  if (/^gsusb:(?:[0-9a-f]{2}){1,256}:(?:[1-9]|[1-9][0-9]{1,2})$/.test(value)) {
+    return Number(value.slice(value.lastIndexOf(':') + 1)) <= 255;
   }
   const match = /^slcan:(lawicel|canable):(115200|460800|921600|1000000|2000000):(.{1,256})$/.exec(value);
   if (!match) return false;

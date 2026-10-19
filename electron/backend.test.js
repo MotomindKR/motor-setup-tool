@@ -22,9 +22,10 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.deepEqual(argsFor('canRestart', { can: 'can0' }), ['can', 'restart', 'can0', '--auth', 'polkit']);
   assert.deepEqual(argsFor('serialPorts'), ['can', 'serial-list']);
   assert.deepEqual(argsFor('usbAdapters'), ['can', 'usb-list']);
-  assert.deepEqual(argsFor('scan', { can: 'gsusb:3:79', hostId: 253 }), ['scan', '--can', 'gsusb:3:79', '--host-id', '253']);
+  assert.deepEqual(argsFor('scan', { can: 'gsusb:303033:79', hostId: 253 }), ['scan', '--can', 'gsusb:303033:79', '--host-id', '253']);
+  assert.deepEqual(argsFor('scan', { can: 'gsusb:00:79', hostId: 253 }), ['scan', '--can', 'gsusb:00:79', '--host-id', '253']);
   assert.throws(() => argsFor('scan', { can: 'gsusb:0:79' }), /CAN interface/);
-  assert.throws(() => argsFor('scan', { can: 'gsusb:3:999' }), /CAN interface/);
+  assert.throws(() => argsFor('scan', { can: 'gsusb:303033:999' }), /CAN interface/);
   if (process.platform !== 'win32') {
     assert.deepEqual(argsFor('scan', { can: 'slcan:canable:921600:/dev/ttyUSB0', hostId: 253 }), ['scan', '--can', 'slcan:canable:921600:/dev/ttyUSB0', '--host-id', '253']);
     assert.throws(() => argsFor('scan', { can: 'slcan:canable:921600:/dev/../ttyUSB0' }), /CAN interface/);

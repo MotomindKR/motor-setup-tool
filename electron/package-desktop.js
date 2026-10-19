@@ -75,7 +75,7 @@ fs.mkdirSync(path.join(backend, 'lib'), { recursive: true });
 fs.copyFileSync(sourceBinary, path.join(backend, backendName));
 if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
-fs.copyFileSync(path.join(root, 'vendor', 'gs_usb', 'LICENSE'), path.join(backend, 'gs_usb-LICENSE'));
+fs.copyFileSync(path.join(root, 'packaging', 'licenses', 'gsusbio-0.1.0', 'LICENSE'), path.join(backend, 'gsusbio-LICENSE'));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
   const source = path.join(sdkDir, '..', name);

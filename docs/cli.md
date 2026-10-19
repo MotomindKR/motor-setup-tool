@@ -27,7 +27,7 @@ application directory.
 |---|---|---|
 | SocketCAN (Linux) | `can list` | `can0` |
 | SLCAN | `can serial-list` | `slcan:canable:921600:/dev/ttyUSB0` or `slcan:canable:921600:COM3` |
-| GS USB | `can usb-list` | `gsusb:3:79` (use listed bus/address) |
+| GS USB | `can usb-list` | `gsusb:303033:79` (use the listed adapter `id`) |
 
 SLCAN also supports the `lawicel` profile; both serial and direct USB modes
 configure Classic CAN at 1 Mbps when opened. A GS USB address can change after

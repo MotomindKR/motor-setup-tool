@@ -80,7 +80,7 @@ function serialPortValid() {
 function busReady() {
   if (slcanSelected()) return serialPortValid();
   if (gsusbSelected()) return state.usbAdapters.some(adapter =>
-    `gsusb:${adapter.bus}:${adapter.address}` === selectedCan() && adapter.accessible);
+    adapter.id === selectedCan() && adapter.accessible);
   return state.interfaces.some(bus => bus.name === selectedCan() && bus.up && /^ERROR-(ACTIVE|WARNING|PASSIVE)$/.test(bus.state));
 }
 function target() { return { can: selectedCan(), hostId: $('host-id').value, id: state.motor?.id }; }
@@ -126,7 +126,7 @@ function renderSurface() {
 
 function updateControls() {
   const selected = state.interfaces.find(bus => bus.name === selectedCan());
-  const selectedUsb = state.usbAdapters.find(adapter => `gsusb:${adapter.bus}:${adapter.address}` === selectedCan());
+  const selectedUsb = state.usbAdapters.find(adapter => adapter.id === selectedCan());
   const ready = busReady();
   const selectedMotor = motorReady();
   const busy = Boolean(state.busy) || state.installingUpdate;
@@ -231,19 +231,20 @@ async function refreshInterfaces() {
 
 function updateUsbAdapters(adapters) {
   state.usbAdapters = Array.isArray(adapters) ? adapters.filter(adapter =>
-    Number.isInteger(adapter.bus) && Number.isInteger(adapter.address)) : [];
+    typeof adapter.id === 'string' && /^gsusb:(?:[0-9a-f]{2}){1,256}:[1-9][0-9]{0,2}$/.test(adapter.id)
+      && typeof adapter.bus_id === 'string' && Number.isInteger(adapter.address)) : [];
   const select = $('gsusb-select');
   const previous = select.value;
   select.replaceChildren(
     new Option(state.usbAdapters.length ? 'Select an adapter' : 'No GS USB adapters found', ''),
     ...state.usbAdapters.map(adapter => {
-      const value = `gsusb:${adapter.bus}:${adapter.address}`;
-      const label = `${adapter.vendor_id.toString(16).padStart(4, '0')}:${adapter.product_id.toString(16).padStart(4, '0')} · USB ${adapter.bus}:${adapter.address}`;
+      const value = adapter.id;
+      const label = `${adapter.vendor_id.toString(16).padStart(4, '0')}:${adapter.product_id.toString(16).padStart(4, '0')} · USB ${adapter.bus_id ? `${adapter.bus_id}:` : ''}${adapter.address}`;
       return new Option(label, value);
     }),
   );
-  if (state.usbAdapters.some(adapter => `gsusb:${adapter.bus}:${adapter.address}` === previous)) select.value = previous;
-  else if (state.usbAdapters.length === 1) select.value = `gsusb:${state.usbAdapters[0].bus}:${state.usbAdapters[0].address}`;
+  if (state.usbAdapters.some(adapter => adapter.id === previous)) select.value = previous;
+  else if (state.usbAdapters.length === 1) select.value = state.usbAdapters[0].id;
 }
 
 function updateSerialPorts(ports) {

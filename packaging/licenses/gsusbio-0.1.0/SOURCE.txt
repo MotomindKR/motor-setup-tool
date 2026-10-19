@@ -1,0 +1,4 @@
+gsusbio 0.1.0
+https://crates.io/crates/gsusbio/0.1.0
+https://github.com/gmmyung/gsusbio
+LICENSE copied from the published 0.1.0 crate archive.
