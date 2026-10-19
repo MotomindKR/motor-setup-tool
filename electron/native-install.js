@@ -52,11 +52,11 @@ async function installWindows(app, installer, version, progress) {
   await fs.appendFile(logFile, `${new Date().toISOString()} Launching Windows update helper\n`);
   const output = await fs.open(logFile, 'a');
   let child;
+  let launchError;
   try {
     child = spawn('powershell.exe', args, { cwd: directory, detached: true, stdio: ['ignore', output.fd, output.fd], windowsHide: true });
+    child.once('error', error => { launchError = error; });
   } finally { await output.close(); }
-  let launchError;
-  child.once('error', error => { launchError = error; });
   try {
     const deadline = Date.now() + 15_000;
     while (true) {
