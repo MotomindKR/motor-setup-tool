@@ -2,7 +2,6 @@
 
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { argsFor, Backend } = require('./backend');
@@ -58,20 +57,24 @@ test('firmware transfer cannot be cancelled after transfer starts', () => {
   assert.throws(() => backend.cancel(), /wait for it to finish/);
 });
 
-test('cancellation waits for the backend process to exit', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'motomind-electron-'));
-  const executable = path.join(dir, 'backend');
-  fs.writeFileSync(executable, '#!/bin/sh\ntrap "exit 2" TERM\nwhile :; do sleep 0.1; done\n', { mode: 0o755 });
-  const events = [];
-  const backend = new Backend(executable, event => events.push(event));
-  try {
-    const pending = backend.run('monitor', { can: 'can0', id: 1 });
-    assert.equal(backend.cancel(), true);
-    assert.deepEqual(await pending, { cancelled: true });
-    assert.equal(backend.active, null);
-    assert.equal(events.at(-1).type, 'finish');
-    assert.equal(events.at(-1).cancelled, true);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+test('cancellation retains the active job until the child exits', () => {
+  const backend = new Backend(process.execPath, () => {});
+  let signal;
+  backend.active = {
+    operation: 'monitor', transferStarted: false, cancelRequested: false,
+    child: { pid: 123, kill(value) { signal = value; return true; } },
+  };
+  assert.equal(backend.cancel(), true);
+  assert.equal(signal, 'SIGTERM');
+  assert.equal(backend.active.cancelRequested, true);
+  assert.throws(() => backend.run('interfaces'), /Finish or stop/);
+  backend.active = null;
+  assert.equal(backend.cancel(), false);
+});
+
+test('cancellation handles a failed spawn without a PID', () => {
+  const backend = new Backend(process.execPath, () => {});
+  backend.active = { transferStarted: false, cancelRequested: false, child: { pid: undefined, kill() { throw new Error('must not be called'); } } };
+  assert.equal(backend.cancel(), true);
+  assert.equal(backend.active.cancelRequested, true);
 });

@@ -32,7 +32,9 @@ fs.mkdirSync(path.dirname(output), { recursive: true });
 fs.rmSync(output, { recursive: true, force: true });
 if (process.platform === 'darwin') {
   fs.mkdirSync(output);
-  fs.cpSync(runtime, bundle, { recursive: true });
+  // Electron frameworks use relative symlinks at their roots. Rebasing them
+  // makes macOS reject the copied app as an invalid framework bundle.
+  fs.cpSync(runtime, bundle, { recursive: true, verbatimSymlinks: true });
   const oldBinary = path.join(bundle, 'Contents', 'MacOS', 'Electron');
   fs.renameSync(oldBinary, path.join(bundle, 'Contents', 'MacOS', 'Motor Setup Tool'));
   const plist = path.join(bundle, 'Contents', 'Info.plist');
@@ -42,7 +44,7 @@ if (process.platform === 'darwin') {
   info = info.replace(/(<key>CFBundleIdentifier<\/key>\s*<string>)[^<]+(<\/string>)/, '$1com.motomind.MotorSetup$2');
   fs.writeFileSync(plist, info);
 } else {
-  fs.cpSync(runtime, output, { recursive: true });
+  fs.cpSync(runtime, output, { recursive: true, verbatimSymlinks: true });
   fs.renameSync(path.join(output, process.platform === 'win32' ? 'electron.exe' : 'electron'), path.join(output, binaryName));
 }
 if (process.platform === 'linux') {

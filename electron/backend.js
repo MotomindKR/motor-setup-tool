@@ -202,7 +202,8 @@ class Backend {
     if (!this.active) return false;
     if (this.active.transferStarted) throw new Error('Firmware transfer is in progress; wait for it to finish');
     this.active.cancelRequested = true;
-    this.active.child.kill('SIGTERM');
+    // A failed spawn has no PID. Its error event will clear the active job.
+    if (this.active.child.pid != null) this.active.child.kill('SIGTERM');
     return true;
   }
 
