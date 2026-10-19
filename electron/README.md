@@ -47,4 +47,5 @@ disables the motor before exit. Opening the app or a recording sends no motor
 command. Firmware transfer finishes before the window closes.
 
 **Settings** shows the version, appearance mode, and updates. The update button
-verifies and opens the native installer when the motor is idle.
+verifies and installs Linux and Windows updates when the motor is idle. macOS
+opens the DMG for installation.

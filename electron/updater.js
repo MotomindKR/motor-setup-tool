@@ -82,7 +82,7 @@ async function download(url, destination, expected, progress) {
   if (hash.digest('hex') !== expected) throw new Error('Update checksum does not match the release');
 }
 
-async function install(app, release, progress, openInstaller) {
+async function install(app, release, progress, installFile) {
   if (!release?.installable || !release.filename) throw new Error('Check for an available installer first');
   const checksumText = await get(release.checksumUrl, 64_000);
   const checksums = new Map(checksumText.trim().split(/\r?\n/).map(line => {
@@ -103,9 +103,8 @@ async function install(app, release, progress, openInstaller) {
     await fs.rm(destination, { force: true });
     throw error;
   }
-  const error = await openInstaller(destination);
-  if (error) throw new Error(`Could not open installer: ${error}`);
-  progress('Installer opened. Finish installation, then restart the app.');
+  progress('Installing verified update…');
+  await installFile(destination);
 }
 
 module.exports = { check, install, installerName, isNewer };

@@ -1,7 +1,7 @@
 {
   "name": "motomind-motor-calib-electron",
   "desktopName": "motor-setup-tool.desktop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "Electron desktop UI for the Motomind motor calibration tool",
   "homepage": "https://github.com/MotomindKR/motor-setup-tool",
@@ -9,7 +9,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check updater.js && node --check package-desktop.js && node --check package-installers.js && node --check build-icons.js && node --check set-windows-icon.mjs && node --test backend.test.js updater.test.js",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check updater.js && node --check native-install.js && node --check package-desktop.js && node --check package-installers.js && node --check build-icons.js && node --check set-windows-icon.mjs && node --test backend.test.js updater.test.js",
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",
     "package:desktop": "node package-desktop.js",

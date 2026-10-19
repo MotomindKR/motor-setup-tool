@@ -82,6 +82,27 @@ jobs:
       - name: Build desktop installers
         working-directory: electron
         run: npm run package:installers
+      - name: Test Windows silent upgrade
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v0.1.10 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.10-win32-x64.exe' --dir "$env:RUNNER_TEMP"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.10-win32-x64.exe'
+          $oldInstall = Start-Process -FilePath $oldInstaller -ArgumentList '/S' -Wait -PassThru
+          if ($oldInstall.ExitCode -ne 0) { throw "Old installer exited with $($oldInstall.ExitCode)" }
+          $appExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'Motor Setup Tool.exe' -Recurse -File | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $appExe) { throw 'Installed Windows app was not found' }
+          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
+          $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
+          $resultFile = Join-Path $env:RUNNER_TEMP 'update-error.txt'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/install-windows.ps1 -ParentPid 2147483647 -Installer $installer -AppExe $appExe -ExpectedVersion $version -ResultFile $resultFile
+          if (Test-Path $resultFile) { throw (Get-Content $resultFile -Raw) }
+          $actual = (Get-Item $appExe).VersionInfo.ProductVersion
+          if ($actual -ne $version -and $actual -ne "$version.0") { throw "Installed version $actual does not match $version" }
+          Get-Process 'Motor Setup Tool' -ErrorAction SilentlyContinue | Stop-Process -Force
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.platform }}
@@ -117,7 +138,7 @@ jobs:
           sha256sum -c SHA256SUMS
           test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 6
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes 'Installers for Linux x64/ARM64 (DEB and RPM), macOS ARM64 (DMG), and Windows x64 (EXE). SHA256SUMS verifies each download. Settings → Check for update downloads and opens the matching installer.'
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes 'Installers for Linux x64/ARM64 (DEB and RPM), macOS ARM64 (DMG), and Windows x64 (EXE). SHA256SUMS verifies each download. Settings → Check for update installs verified updates on Linux and Windows; macOS opens the DMG.'
           fi
           gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.exe SHA256SUMS --clobber
           gh release edit "$RELEASE_TAG" --draft=false

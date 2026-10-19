@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const { Backend, backendPath } = require('./backend');
 const updater = require('./updater');
+const nativeInstall = require('./native-install');
 
 if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
 
@@ -29,6 +30,8 @@ let backend;
 let backendError;
 let quitting = false;
 let checkedUpdate = null;
+let installingUpdate = false;
+let updateError = null;
 
 function send(event) {
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
@@ -160,11 +163,16 @@ app.whenReady().then(async () => {
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
+    updateError = await fs.readFile(path.join(app.getPath('userData'), 'update-error.txt'), 'utf8');
+    await fs.rm(path.join(app.getPath('userData'), 'update-error.txt'));
+  } catch { /* No previous update error. */ }
+  try {
     backend = new Backend(backendPath(root, process.resourcesPath), send);
   } catch (error) { backendError = error; }
 
   ipcMain.handle('backend:run', async (event, operation, params) => {
     assertSender(event);
+    if (installingUpdate) throw new Error('Wait for the update to finish');
     if (backendError) throw backendError;
     if (operation === 'analyze' && !knownRuns.has(params?.directory)) throw new Error('Select a saved run first');
     if (operation === 'calibrate' && params?.output && !selectedOutputs.has(params.output)) throw new Error('Choose the calibration folder with the file picker');
@@ -190,6 +198,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('backend:manualIntent', (event, value) => {
     assertSender(event);
+    if (installingUpdate) throw new Error('Wait for the update to finish');
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
@@ -225,17 +234,33 @@ app.whenReady().then(async () => {
     await fs.writeFile(temp, JSON.stringify(map));
     await fs.rename(temp, referenceFile());
   });
-  ipcMain.handle('updates:info', event => { assertSender(event); return { version: app.getVersion() }; });
+  ipcMain.handle('updates:info', event => {
+    assertSender(event);
+    const result = { version: app.getVersion(), updateError };
+    updateError = null;
+    return result;
+  });
   ipcMain.handle('updates:check', async event => {
     assertSender(event);
+    if (installingUpdate) throw new Error('Update already in progress');
     checkedUpdate = await updater.check(app.getVersion());
-    return { available: checkedUpdate.available, version: checkedUpdate.version, installable: checkedUpdate.installable };
+    const installMode = nativeInstall.mode(app);
+    return { available: checkedUpdate.available, version: checkedUpdate.version,
+      installable: checkedUpdate.installable && Boolean(installMode), installMode,
+      reason: checkedUpdate.installable && !installMode ? 'Install a packaged copy to update from the app.' : null };
   });
   ipcMain.handle('updates:install', async event => {
     assertSender(event);
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
-    await updater.install(app, checkedUpdate, message => window?.webContents.send('updates:progress', message), file => shell.openPath(file));
+    if (!nativeInstall.mode(app)) throw new Error('Install a packaged copy to update from the app');
+    if (installingUpdate) throw new Error('Update already in progress');
+    installingUpdate = true;
+    const release = checkedUpdate;
+    const progress = message => window?.webContents.send('updates:progress', message);
+    try {
+      await updater.install(app, release, progress, file => nativeInstall.install(app, file, release.version, progress, filePath => shell.openPath(filePath)));
+    } finally { installingUpdate = false; }
   });
   ipcMain.handle('runs:list', async event => { assertSender(event); return listRuns(); });
   ipcMain.handle('runs:pick', async event => {

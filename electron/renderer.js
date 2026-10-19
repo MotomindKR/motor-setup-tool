@@ -129,7 +129,7 @@ function updateControls() {
   const selectedUsb = state.usbAdapters.find(adapter => `gsusb:${adapter.bus}:${adapter.address}` === selectedCan());
   const ready = busReady();
   const selectedMotor = motorReady();
-  const busy = Boolean(state.busy);
+  const busy = Boolean(state.busy) || state.installingUpdate;
   const manual = state.busy === 'manual';
   const status = state.manualStatus;
   const fresh = feedbackFresh();
@@ -161,7 +161,7 @@ function updateControls() {
   for (const id of ['jog-reverse', 'jog-forward']) $(id).disabled = !manual || !fresh || !status?.enabled || status?.preparing;
   $('test-zero').disabled = !selectedMotor || (busy && (!manual || status?.enabled || status?.preparing));
   $('stop-motor').disabled = !selectedMotor || (busy && !manual);
-  $('global-stop').disabled = !state.motor || state.busy === 'firmwareUpdate';
+  $('global-stop').disabled = !state.motor || state.busy === 'firmwareUpdate' || state.installingUpdate;
   for (const id of ['zero', 'set-id', 'firmware-check']) $(id).disabled = busy || !selectedMotor;
   $('firmware-update').disabled = busy || !selectedMotor || !state.firmware || state.firmware.id !== state.motor?.id;
   $('refit').disabled = busy || !state.directory;
@@ -169,6 +169,7 @@ function updateControls() {
   $('copy-run').disabled = !state.directory;
   $('cancel').disabled = state.busy === 'firmwareUpdate' || manual;
   $('install-update').disabled = busy || state.installingUpdate;
+  $('check-update').disabled = state.installingUpdate;
   $('jog-hint').textContent = status?.preparing ? 'Checking firmware watchdog…' : 'Hold to jog. Release to stop.';
   if (manual) {
     $('status-badge').textContent = status?.enabled ? 'Motor enabled' : status?.preparing ? 'Checking watchdog' : 'Monitoring';
@@ -655,6 +656,7 @@ function wire() {
     $('settings-dialog').showModal();
     try {
       const info = await window.motorApp.updateInfo();
+      if (info.updateError) $('update-status').textContent = info.updateError;
       $('app-version').textContent = info.version;
     } catch (error) { $('update-status').textContent = error.message; }
   };
@@ -667,10 +669,11 @@ function wire() {
       const result = await window.motorApp.checkUpdate();
       state.updateCandidate = result.available ? result : null;
       $('update-status').textContent = result.available
-        ? result.installable ? `Version ${result.version} is available.` : `Version ${result.version} has no installer for this computer yet.`
+        ? result.installable ? `Version ${result.version} is available.` : result.reason || `Version ${result.version} has no installer for this computer yet.`
         : 'You have the latest version.';
       $('install-update').classList.toggle('hidden', !result.installable);
-      $('install-update').querySelector('.button-label').textContent = `Install ${result.version}`;
+      $('install-update').querySelector('.button-label').textContent = result.installMode === 'mac-dmg'
+        ? `Open ${result.version} DMG` : `Install ${result.version}`;
     } catch (error) { $('update-status').textContent = error.message; }
     finally { $('check-update').disabled = false; updateControls(); }
   };

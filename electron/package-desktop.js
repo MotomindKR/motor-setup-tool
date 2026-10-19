@@ -61,7 +61,7 @@ if (process.platform === 'linux') {
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'updater.js', 'renderer.js', 'index.html', 'styles.css']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'updater.js', 'native-install.js', 'install-windows.ps1', 'renderer.js', 'index.html', 'styles.css']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
 const pkg = require('./package.json');

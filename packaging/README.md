@@ -42,6 +42,8 @@ combines the checksums into `SHA256SUMS`.
 ## Updates
 
 **Settings → Check for update** shows **Install** when the latest release has a
-matching installer and `SHA256SUMS`. It verifies the download and opens the OS
-installer. Finish installation and restart the app. Updates wait for motor
-operations to end.
+matching installer and `SHA256SUMS`. It verifies the download before installing.
+On Linux, the app asks for system authorization, installs the DEB/RPM, and
+restarts. On Windows, it closes, runs the NSIS installer silently, and restarts;
+installation errors appear in Settings on the next launch. On macOS, the DMG
+opens for manual installation. Updates wait for motor operations to end.

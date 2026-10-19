@@ -7,6 +7,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { check, install, installerName, isNewer } = require('./updater');
+const { mode } = require('./native-install');
+
+test('direct installation is offered only from supported packaged launchers', () => {
+  assert.equal(mode({ isPackaged: false }, 'linux', '/opt/Motor Setup Tool/motor-setup-tool'), null);
+  assert.equal(mode({ isPackaged: true }, 'linux', '/opt/Motor Setup Tool/motor-setup-tool'), 'linux');
+  assert.equal(mode({ isPackaged: true }, 'win32', 'C:\\Users\\Me\\AppData\\Local\\Programs\\Motor Setup Tool\\Motor Setup Tool.exe'), 'windows');
+  assert.equal(mode({ isPackaged: true }, 'darwin', '/Applications/Motor Setup Tool.app/Contents/MacOS/Motor Setup Tool'), 'mac-dmg');
+});
 
 test('version comparison accepts only newer numeric releases', () => {
   assert.equal(isNewer('v0.1.6', '0.1.5'), true);
@@ -16,13 +24,13 @@ test('version comparison accepts only newer numeric releases', () => {
   assert.equal(isNewer('not-a-version', '0.1.5'), false);
 });
 
-test('installer is opened only after its downloaded bytes match SHA256SUMS', async () => {
+test('installer is run only after its downloaded bytes match SHA256SUMS', async () => {
   const originalFetch = global.fetch;
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-update-'));
   const filename = await installerName('0.1.7');
   const bytes = Buffer.from('installer test payload');
   const digest = createHash('sha256').update(bytes).digest('hex');
-  let opened = false;
+  let installed = false;
   global.fetch = async url => url.endsWith('SHA256SUMS')
     ? new Response(`${digest}  ${filename}\n`)
     : new Response(bytes);
@@ -30,16 +38,15 @@ test('installer is opened only after its downloaded bytes match SHA256SUMS', asy
   try {
     await install({ getPath: () => directory }, candidate, () => {}, async file => {
       assert.deepEqual(await fs.readFile(file), bytes);
-      opened = true;
-      return '';
+      installed = true;
     });
-    assert.equal(opened, true);
-    opened = false;
+    assert.equal(installed, true);
+    installed = false;
     global.fetch = async url => url.endsWith('SHA256SUMS')
       ? new Response(`${'0'.repeat(64)}  ${filename}\n`)
       : new Response(bytes);
-    await assert.rejects(install({ getPath: () => directory }, candidate, () => {}, async () => { opened = true; }), /checksum/);
-    assert.equal(opened, false);
+    await assert.rejects(install({ getPath: () => directory }, candidate, () => {}, async () => { installed = true; }), /checksum/);
+    assert.equal(installed, false);
   } finally {
     global.fetch = originalFetch;
     await fs.rm(directory, { recursive: true, force: true });
