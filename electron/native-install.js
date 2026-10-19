@@ -41,6 +41,9 @@ async function installWindows(app, installer, version, progress) {
   const pendingFile = path.join(directory, 'pending-update.json');
   const resultFile = path.join(directory, 'update-error.txt');
   const logFile = path.join(directory, 'update.log');
+  const systemDirectory = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  const powershell = path.win32.join(systemDirectory, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const consoleHost = path.win32.join(systemDirectory, 'conhost.exe');
   await fs.mkdir(directory, { recursive: true });
   await fs.copyFile(path.join(__dirname, 'install-windows.ps1'), helper);
   await fs.rm(readyFile, { force: true });
@@ -54,7 +57,9 @@ async function installWindows(app, installer, version, progress) {
   let child;
   let launchError;
   try {
-    child = spawn('powershell.exe', args, { cwd: directory, detached: true, stdio: ['ignore', output.fd, output.fd], windowsHide: true });
+    // A detached PowerShell can exit before -File runs when it has no console.
+    // Give it an independent console without displaying a terminal window.
+    child = spawn(consoleHost, ['--headless', powershell, ...args], { cwd: directory, detached: true, stdio: ['ignore', output.fd, output.fd], windowsHide: true });
     child.once('error', error => { launchError = error; });
   } finally { await output.close(); }
   try {

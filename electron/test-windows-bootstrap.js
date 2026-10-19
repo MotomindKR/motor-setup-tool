@@ -17,9 +17,10 @@ const { spawn, execFileSync } = require('node:child_process');
     { name: 'attached-pipe', command: fullPath, detached: false, windowsHide: true, pipe: true },
     { name: 'detached-pipe', command: fullPath, detached: true, windowsHide: true, pipe: true },
     { name: 'hidden-style', command: fullPath, detached: true, windowsHide: false, pipe: false, style: true },
+    { name: 'headless-conhost', command: path.join(process.env.SystemRoot, 'System32', 'conhost.exe'), prefix: ['--headless', fullPath], detached: true, windowsHide: true, pipe: false },
   ]) {
     const output = path.join(directory, `${item.name}.txt`);
-    const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...(item.style ? ['-WindowStyle', 'Hidden'] : []), '-File', script, '-Output', output];
+    const args = [...(item.prefix || []), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...(item.style ? ['-WindowStyle', 'Hidden'] : []), '-File', script, '-Output', output];
     const child = spawn(item.command, args, { cwd: directory, detached: item.detached, windowsHide: item.windowsHide, stdio: item.pipe ? ['ignore', 'pipe', 'pipe'] : 'ignore' });
     let stderr = '';
     child.stdout?.on('data', chunk => { stderr += chunk; });
