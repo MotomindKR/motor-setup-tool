@@ -106,6 +106,7 @@ jobs:
             ${{ runner.temp }}/motomind-update-tests/*/*.txt
             ${{ runner.temp }}/motomind-update-tests/*/*.png
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: installers-${{ matrix.platform }}
           if-no-files-found: error

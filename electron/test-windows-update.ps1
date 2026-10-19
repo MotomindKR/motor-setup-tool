@@ -18,6 +18,7 @@ function Install-Previous([string]$Scope, [string]$Directory) {
 }
 
 function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]$ExpectedVersion, [string]$ExpectedError = '') {
+  Write-Output "Testing $Name in $Directory"
   $caseDirectory = Join-Path $testRoot $Name
   New-Item -ItemType Directory -Path $caseDirectory -Force | Out-Null
   $appExe = Join-Path $Directory 'Motor Setup Tool.exe'
@@ -50,18 +51,11 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   }
 }
 
-# A bare /S chooses the user installation when both scopes are registered,
-# even when the update was requested from the machine installation.
+# A bare /S chooses the machine installation when both scopes are registered,
+# even when the update was requested from the user installation.
 Install-Previous '/allusers' $machineDirectory
 Install-Previous '/currentuser' $userDirectory
-$legacy = Start-Process -FilePath $Installer -ArgumentList '/S' -Wait -PassThru
-if ($legacy.ExitCode -ne 0) { throw 'The legacy /S reproduction failed to install' }
-$machineBefore = Get-Content (Join-Path $machineDirectory 'resources\app\package.json') -Raw | ConvertFrom-Json
-$userBefore = Get-Content (Join-Path $userDirectory 'resources\app\package.json') -Raw | ConvertFrom-Json
-if ($machineBefore.version -eq $Version -or $userBefore.version -ne $Version) {
-  throw 'The legacy installer did not reproduce selecting the other installation'
-}
-Write-Output "Reproduced legacy /S updating the user copy while the machine copy remained $($machineBefore.version)"
+Test-Update 'user-with-machine-copy' $userDirectory $Installer $Version
 Test-Update 'machine-with-user-copy' $machineDirectory $Installer $Version
 
 Install-Previous '/currentuser' $userDirectory
