@@ -6,7 +6,7 @@
 ## Build and run
 
 Use Linux, Rust 1.95 or newer, and a C compiler/linker. CI pins Rust 1.98.1.
-On Ubuntu/Debian, install the build and desktop dependencies:
+On Ubuntu/Debian:
 
 ```sh
 sudo apt-get install build-essential pkg-config libxkbcommon-x11-0 \
@@ -15,16 +15,15 @@ sudo apt-get install build-essential pkg-config libxkbcommon-x11-0 \
 ./scripts/run.sh
 ```
 
-`setup.sh` installs a workspace-local Rust toolchain if no usable Cargo is
-available. `run.sh` selects that toolchain when present. Cargo downloads the
-version-matched MuJoCo library into `.tools/mujoco/`; `Cargo.lock` pins Rust
-crates. Development builds include the downloaded library's path. Release
-builds use a relative library path and must be packaged with MuJoCo.
+| Item | Behavior |
+|---|---|
+| Toolchain | `setup.sh` installs a workspace-local Rust if needed; `run.sh` selects it |
+| Dependencies | `Cargo.lock` pins crates; Cargo downloads matching MuJoCo to `.tools/mujoco/` |
+| Library loading | Development uses the download path; release builds need MuJoCo packaged beside the app |
+| App identity | Executable: `motor-setup-tool`; desktop ID: `com.motomind.MotorSetup` |
 
-The Cargo package and executable are `motor-setup-tool`. Desktop integration
-uses `com.motomind.MotorSetup`; the app embeds its own window icon. Data, cache,
-CAN locks, and window preferences keep their v0.1.0 locations for compatibility.
-Do not rename the lock directory: old and new binaries must share bus ownership.
+Data, cache, CAN locks, and window settings retain their v0.1.0 locations.
+Keep the lock directory name so old and new binaries share bus ownership.
 
 Opening the app does not start motor motion. Use a real saved run to work on
 results/UI without hardware:
@@ -50,18 +49,15 @@ export RUSTUP_HOME="$PWD/.tools/rustup"
 export PATH="$CARGO_HOME/bin:$PATH"
 ```
 
-The script runs formatting, Clippy with warnings denied, and unit tests. Tests
-cover protocol encoding, rejected inputs, command limits, MuJoCo replay,
-parameter recovery, held-out acceptance, cancellation, and UI theme contrast.
-They require no motor and send no frames to a physical CAN bus. The explicitly
-ignored `vcalwatch` test needs an isolated virtual CAN interface; normal CI does
-not enable it.
+`check.sh` runs formatting, Clippy with warnings denied, and unit tests. These
+cover protocol, command limits, replay, fitting, acceptance, cancellation, and
+theme contrast without sending physical CAN frames. The ignored `vcalwatch`
+test needs an isolated virtual CAN interface.
 
-[Unit tests](../.github/workflows/tests.yml) run on every push to `main`, pull
-requests targeting `main`, and manual dispatch. The workflow uses the Ubuntu
-22.04 build container and a verified MuJoCo SDK. It does not publish a release.
-[Release CI](../.github/workflows/release.yml) builds Electron archives for
-Linux, macOS, and Windows when a matching version tag is pushed.
+| Workflow | Trigger | Output |
+|---|---|---|
+| [Unit tests](../.github/workflows/tests.yml) | Main, pull request, manual | Checks in the Ubuntu build container |
+| [Desktop release](../.github/workflows/release.yml) | Matching version tag | Linux DEB/RPM, macOS DMG, Windows EXE |
 
 For the same environment locally:
 
@@ -72,11 +68,9 @@ docker run --rm --user "$(id -u):$(id -g)" \
   motomind-packager bash scripts/check-ci.sh
 ```
 
-The Test tab uses the same exclusive CAN lock and verified firmware watchdog
-as calibration. It runs its control loop on a worker thread; each UI frame
-renews a 250 ms intent lease. Jog button release commands zero speed while keeping the motor enabled.
-Lost UI authority latches the motor disabled.
-The UI never automatically enables a motor when a view is opened.
+The Test tab shares calibration's CAN lock and watchdog. Its worker renews a
+250 ms intent lease from UI frames. Releasing Jog commands zero speed; loss of
+UI authority disables the motor. Opening a view never enables it.
 
 ## Code map
 
@@ -93,10 +87,9 @@ The UI never automatically enables a motor when a view is opened.
 | `pipeline.rs` | Input validation, acceptance, reports, and exports |
 | `bridge.rs`, `paths.rs` | Artifact I/O and user directories |
 
-The UI sends work to a background worker. Recording and fitting emit typed
-progress events. The motor loop has its own timing and cancellation checks;
-rendering and theme detection do not run inside it. Plot styling and legends
-are shared through `styled_plot`.
+The UI sends work to a background worker. The motor loop owns timing and
+cancellation; rendering stays outside it. Recording and fitting emit typed
+progress events. Plots share `styled_plot` styling and legends.
 
 ## Changes that affect results
 
@@ -141,33 +134,10 @@ comes from the XDG Settings portal over D-Bus, with the window system/egui
 fallback when unavailable. Fonts and branding are embedded; see
 [asset provenance and licenses](../assets/README.md).
 
-## Command-line reference
+## CLI and compatibility
 
-See the [CLI guide](cli.md) for subcommands, scripting, calibration, and bounded
-jogging. They share the GUI's hardware and fitting implementations. The CAN
-setup worker holds the same interface lock and elevates only the host's `ip`
-command through PolicyKit (GUI) or sudo (terminal); the main app stays unprivileged.
-
-The older option-based commands remain available for compatibility.
-
-Run these options with `./scripts/run.sh` or the bundled Rust backend:
-
-| Option | Effect |
-|---|---|
-| `--version` | Print the app version |
-| `--list-can` | List CAN interfaces without sending motor commands |
-| `--self-check` | Check MuJoCo, writable data paths, theme lookup, and passive CAN discovery |
-| `--open=/path/to/run` | Open saved graphs |
-| `--analyze=/path/to/run` | Refit saved data without a window; replaces analysis artifacts |
-| `--refit=/path/to/run` | Refit saved data in the UI |
-| `--connect=can0` | Open the UI and scan the selected idle bus |
-| `--scan=can0` | Scan motor identities and firmware from the terminal |
-| `--firmware=can0 --motor-id=ID` | Query firmware; the motor is stopped |
-| `--update-firmware=can0 --motor-id=ID --model=RS-00` | Start a firmware update immediately |
-
-Scan/version queries can stop motors. Firmware update is a write operation,
-not a diagnostic check. See the [user guide](user-guide.md#update-firmware)
-before using it.
-
-For a specific view, add `--screenshot-tab=calibrate|test|motor|files` to a
-screenshot command. Selecting the Test view does not start monitoring or motion.
+See the [CLI guide](cli.md) for commands and scripting. GUI and CLI share the
+same CAN lock; only the host's `ip` command is elevated for CAN setup. Legacy
+options such as `--open`, `--refit`, and `--self-check` remain available in
+`./scripts/run.sh --help`. Use `--screenshot-tab=calibrate|test|motor|files`
+to capture a specific view; selecting Test starts no motion.

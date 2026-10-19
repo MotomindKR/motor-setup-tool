@@ -2,21 +2,32 @@
 
 [Download and quick start](../README.md) · [MuJoCo exports](simulation.md)
 
+**Jump to:** [Connection](#connect-a-motor) · [Calibration](#run-calibration) ·
+[Results](#compare-the-result) · [Test and jog](#monitor-and-jog-a-motor) ·
+[Firmware](#update-firmware) · [Troubleshooting](#troubleshooting)
+
 ## Connect a motor
 
-Use an unloaded motor with its housing secured and shaft clear. Connect a power
-supply appropriate for the motor, CAN-H to CAN-H, and CAN-L to CAN-L. Follow the
-adapter and motor documentation for grounding and CAN termination. Close other
-motor-control applications before operating this tool.
+Before scanning:
 
-For Linux SocketCAN, the adapter must have a working kernel driver and
-appear as a CAN interface, such as `can0`. Select a down interface and click
-**CAN up** to configure **1 Mbps**. Linux opens its administrator authentication
-dialog; the app never handles your password. An interface that is already up
-offers **Restart CAN** instead. Setup is disabled while this app is controlling a motor.
+1. Secure the unloaded motor housing and clear the shaft.
+2. Connect the correct power supply, CAN-H to CAN-H, and CAN-L to CAN-L.
+3. Check grounding and termination against the adapter and motor manuals.
+4. Close other motor-control applications.
 
-The button requires the host's `iproute2`, `pkexec`, and desktop authentication
-agent. If these are unavailable, configure an idle bus in a terminal:
+| Adapter mode | Available on | Select in Connection |
+|---|---|---|
+| SocketCAN | Linux | A CAN interface such as `can0` |
+| GS USB | Linux, macOS, Windows | A detected USB adapter |
+| SLCAN | Linux, macOS, Windows | Serial port, protocol profile, and UART speed |
+
+### SocketCAN on Linux
+
+Select the interface and click **CAN up** to configure a down bus at 1 Mbps.
+An active interface offers **Restart CAN**. The system authentication dialog
+requires `iproute2`, `pkexec`, and a desktop authentication agent; the app does
+not handle the password. If these are unavailable, configure an idle bus in a
+terminal:
 
 ```sh
 ip -details link show type can
@@ -24,35 +35,36 @@ sudo ip link set can0 down
 sudo ip link set can0 up type can bitrate 1000000
 ```
 
-Replace `can0` with your adapter's interface and use the bitrate configured on
-your motor. Run the app as your normal user.
+Replace `can0` and the bitrate as needed. Run the app as your normal user.
 
 ### Direct GS USB adapters
 
-Select **GS USB** under **Connection** to use a compatible USB-CAN adapter
-directly on Linux, macOS, or Windows. This uses the adapter's GS USB protocol;
-it does not require SLCAN firmware or a serial port. Choose the USB adapter,
-then scan. On Linux, direct USB mode detaches the `gs_usb` kernel driver while
-the operation owns the adapter and reattaches it when the operation ends. If
-you return to SocketCAN, click **CAN up** to bring the recreated interface
-back to 1 Mbps.
+Select **GS USB**, choose the USB adapter, then scan. This mode uses the GS USB
+protocol directly. On Linux, it temporarily detaches the `gs_usb` kernel
+driver; when returning to SocketCAN, click **CAN up** again.
 
 On Linux, grant your desktop user USB access once, then reconnect the adapter:
 
 ```sh
-sudo install -m 0644 packaging/99-motomind-gsusb.rules /etc/udev/rules.d/
+sudo install -m 0644 "/opt/Motor Setup Tool/packaging/99-motomind-gsusb.rules" /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 ```
 
-The rule covers the GS USB IDs supported by this app. The desktop connection
-panel shows **USB access denied** until access is available. A USB bus/address
-can change after reconnecting; click the refresh icon to update the list.
-SocketCAN remains available when you want to keep using `can0`.
+If **USB access denied** remains, reconnect the adapter after loading the rule.
+Refresh the list after reconnecting because its USB address may change.
+
+### SLCAN serial adapters
+
+Select **SLCAN**, then choose a detected port (or **Enter manually…**), the
+LAWICEL or CANable profile, and the adapter's UART speed. The app configures
+Classic CAN at 1 Mbps when it opens the port.
+
+### Scan
 
 In **Connection**, choose the bus, click **Scan**, then choose the discovered
 motor. The app reads its firmware to select the model and calibration preset.
-Scan can stop responding motors, so use it on an idle bus. Each motor needs a
-unique CAN ID. An unknown or unreadable firmware version blocks calibration.
+Use an idle bus: scanning can stop responding motors. Each motor needs a unique
+CAN ID. An unknown or unreadable firmware version blocks calibration.
 
 ## Run calibration
 
@@ -65,11 +77,10 @@ unique CAN ID. An unknown or unreadable firmware version blocks calibration.
 5. Wait for recording, fitting, and validation to finish. The default recording
    contains 40 seconds of training and 20 seconds of separate validation.
 
-The suite combines speed steps, sine sweeps, multisine motion, torque bursts,
-and coast-down. The app stops acquisition if a configured limit, communication
-check, or motor fault check fails. **Stop** stays visible while the job runs.
-Disabling a motor can let it coast; a software stop cannot reach a disconnected
-bus. Keep a physical stop accessible.
+The motion suite uses speed steps, sweeps, torque bursts, and coast-down.
+**Stop** cancels the job. Limits, communication errors, and motor faults also
+stop acquisition. A disabled motor may coast, and a software stop cannot reach
+a disconnected bus; keep a physical stop accessible.
 
 ## Compare the result
 
@@ -82,21 +93,20 @@ parameters. **Training** shows the recording used for fitting.
 | Residuals | Simulation minus measurement; zero means agreement |
 | Torque | Commanded torque and motor-reported torque |
 
-The controls above the graphs show or hide the measured and simulated traces.
-When a reference angle is set, the position plot uses that displayed angle;
-residuals and fit calculations retain the motor's raw position coordinates.
-`report.json` records the motor UUID and reference angle for every completed
-calibration. Accepted fits also include both fields in `calibration.json`.
+| Check | Meaning |
+|---|---|
+| Error cards | Fitted RMSE and change from the editable baseline |
+| Fitted parameters | Estimated values, with full precision in saved files |
+| Diagnostics | Rejection reasons and model limitations |
 
-The error cards show the fitted model's RMSE and the change from the baseline.
-The baseline is an editable starting model, not manufacturer inertia/friction
-measurements. **Fitted parameters** shows the resulting values; **Diagnostics**
-explains rejection reasons and model limitations. Displayed values use compact
-precision; saved files retain full precision.
+Use the graph controls to show or hide traces. A reference angle changes the
+displayed position; fitting and residuals still use raw motor coordinates.
+`report.json` stores the motor UUID and reference angle; accepted
+`calibration.json` files do too.
 
-A rejected fit is saved for inspection but does not produce accepted calibration
-exports. Read the diagnostics, check the setup and limits, and record again if
-needed. A good bare-motor result does not establish behavior under a robot load.
+Rejected fits remain available for inspection but have no accepted exports.
+Check **Diagnostics** before recording again. A bare-motor fit does not predict
+behavior with a robot load.
 
 ## Set zero or change the ID
 
@@ -118,50 +128,40 @@ Select the motor, then use **Test** or **Setup**:
 
 ## Monitor and jog a motor
 
-Open **Test** and choose **Start monitoring**. The motor is disabled first;
-position, speed, torque, temperature, mode, and fault bits update live. Graphs
-show the last 30 seconds. Unavailable or stale live values display `--`.
+1. Open **Test → Start monitoring**. The motor starts disabled. Live position,
+   speed, torque, temperature, mode, and faults update; graphs retain 30 seconds.
+   Stale or unavailable values show `--`.
+2. Secure the housing, clear the shaft, choose a speed, and check
+   **Motor secured · shaft clear**.
+3. Click **Enable motor** and wait for the watchdog check.
+4. Hold **Jog −** or **Jog +**. Release to command zero speed while keeping the
+   motor enabled. Click **Disable motor** to turn torque off.
 
-To jog, secure the motor, clear the shaft, select a speed, and check
-**Motor secured · shaft clear**. Choose **Enable motor**, wait for the watchdog
-check, then hold **Jog −** or **Jog +**. The button keeps the jog active if the
-pointer drifts outside it.
-Releasing the button commands zero speed and keeps the motor enabled, so you
-can jog again immediately. **Disable motor** in the top-right bar turns torque
-off. Enabling alone applies zero torque; after a jog, the controller brakes
-toward zero speed without holding a fixed position.
+| Limit | Maximum |
+|---|---|
+| Speed | Lower of 1 rad/s and 10% of calibration speed limit |
+| Torque | Lower of 10% rated torque and calibration torque limit |
+| Travel | Lower of ±one output revolution from enable position and calibration travel limit |
 
-Jog speed is capped at 1 rad/s or 10% of the model's calibration speed limit,
-whichever is lower. Torque is capped at 10% of rated torque or the calibration
-limit, whichever is lower. Travel is limited to ±one output revolution from
-each enable position, or the smaller calibration travel limit. These limits
-are intended for a secured bare motor.
-
-**Disable motor** at the top right, **Stop monitoring**, switching tabs, closing
-the window,
-loss of focus, stale UI input, missing feedback, faults, and exceeded limits
-stop jogging. The status bar shows why jogging stopped, and communication or
-limit errors remain visible in the Test view. The firmware watchdog must pass
-before jogging is permitted.
-Motor selection and setup operations are locked while monitoring; stop
-monitoring to change them. Monitoring does not create a calibration recording.
+Enabling alone commands zero torque. After a jog, the controller brakes toward
+zero speed without holding a fixed position. Jogging also stops on monitor
+stop, tab/window/focus change, stale input, missing feedback, faults, or exceeded
+limits. The Test view reports communication and limit errors. Stop monitoring
+before changing motors or setup. Monitoring saves no recording.
 
 ## Update firmware
 
-After scanning, **Firmware update available** appears beside the selected motor
-when its version is older than the verified release in the app’s catalog. Click
-the notice to open the updater. This comparison works offline; it does not poll
-for future vendor releases or recommend downgrading newer firmware.
+The **Firmware update available** notice compares the selected motor against
+the app's bundled, verified catalog. It works offline and does not track future
+vendor releases or recommend downgrades.
 
-Open **Setup → Firmware update** and choose **Download and verify**.
-Review the installed and target versions, then press the update button for the
-selected model and ID. The catalog's release is shown in the UI; it is bundled
-with the app rather than automatically following the vendor's newest release.
+1. Open **Setup → Firmware update** and select **Download and verify**.
+2. Compare the installed and target versions and confirm the model and ID.
+3. Start the update. Keep motor power and USB connected until it finishes.
 
-Keep motor power and USB connected until the update finishes. Cancellation and
-window closing are disabled while writing firmware. Success requires a matching
-version readback and unchanged motor identity. The updater needs a responsive
-motor; recovery from an interrupted transfer may require the vendor's tools.
+The app blocks cancellation and window closing during the write. Success
+requires a matching version readback and the same motor identity. An interrupted
+transfer may require the vendor's recovery tools.
 
 ## Open and refit recordings
 
@@ -194,5 +194,4 @@ for the files to use in your robot model.
 | Another operation owns the bus | Finish or close the other app instance; do not delete its lock file |
 | Fit rejected or residuals remain large | Read Diagnostics, verify a bare unloaded shaft and correct model, and inspect the measured motion |
 
-The interface follows system light/dark appearance. There is no separate theme
-switch in the app.
+Use **Settings → Appearance** to choose Light, Dark, or System.

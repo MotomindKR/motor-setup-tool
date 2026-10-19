@@ -6,62 +6,36 @@
 [![Desktop release](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml/badge.svg)](https://github.com/MotomindKR/motor-setup-tool/actions/workflows/release.yml)
 [![Download Electron app](https://img.shields.io/badge/Download-Electron_app-E82E01)](https://github.com/MotomindKR/motor-setup-tool/releases/latest)
 
-A desktop app by Motomind. Calibrate a bare RobStride motor, compare its
-motion with MuJoCo, and manage its ID, zero position, and firmware.
-
-- Monitor live motor feedback and use hold-to-jog controls in the Test tab.
-- Bring CAN up with the system password dialog, or operate from the command line.
-- Discover motors on available CAN buses and identify their model from firmware.
-- Measure armature inertia, damping, friction, and effective delay with one preset per model.
-- Compare measured motion with simulation before and after calibration.
-- Save recordings, inspect residuals, and export accepted results for MuJoCo.
+Calibrate a bare RobStride motor, compare its motion with MuJoCo, and manage
+its ID, zero position, and firmware. Supports RS-00 through RS-06.
 
 ## Install
 
-Get the installer for your computer from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
+Get the latest installer from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
 
-| Your computer | Download |
+| System | Installer |
 |---|---|
-| Linux Intel/AMD | `motor-setup-tool-0.1.7-linux-x64.deb` or `.rpm` |
-| Linux ARM64 | `motor-setup-tool-0.1.7-linux-arm64.deb` or `.rpm` |
-| macOS Apple silicon | `motor-setup-tool-0.1.7-darwin-arm64.dmg` |
-| Windows Intel/AMD | `motor-setup-tool-0.1.7-win32-x64.exe` |
+| Linux x64 or ARM64 | `.deb` or `.rpm` |
+| macOS Apple silicon | `.dmg` |
+| Windows x64 | `.exe` |
 
-Open the DMG on macOS or the EXE installer on Windows. Install the DEB or RPM
-with your Linux package manager. MuJoCo is bundled. Settings checks for a new
-version, verifies its checksum from `SHA256SUMS`, and opens the matching
-installer. Complete the installation and restart the app.
+MuJoCo is bundled. **Settings → Check for update** downloads and opens a
+checksum-verified installer; finish installation in the system dialog.
 
 ## Your first calibration
 
-You need a RobStride **RS-00 through RS-06**, its power supply, and a supported
-USB-CAN adapter. Linux supports SocketCAN, direct GS USB, and SLCAN; macOS and
-Windows support direct GS USB and SLCAN serial adapters. Secure the motor
-housing, leave the shaft unloaded and clear, and have a physical stop available.
+You need a motor, its power supply, and a supported USB-CAN adapter. Secure the
+housing, clear the unloaded shaft, and keep a physical stop available.
 
-1. Power the motor and connect CAN. [Configure the CAN interface](docs/user-guide.md#connect-a-motor) if needed.
+1. Power the motor and [connect CAN](docs/user-guide.md#connect-a-motor).
 2. Select the adapter under **Connection**, click **Scan**, and select your motor.
-3. Open **Calibrate** and review the model's torque, speed, and travel limits.
-4. Optionally choose a save location, check **Motor secured · limits reviewed**, then **Start calibration**.
-5. Review **Validation** to see how well the fitted simulation predicts a separate recording.
+3. Open **Calibrate**, review the limits, and check **Motor secured · limits reviewed**.
+4. Select **Start calibration**. The app records, fits, and validates the result.
+5. Open **Validation** to compare measured motion with the fitted model.
 
-Recording and fitting show progress. **Stop** ends acquisition or cancels fitting.
-Results include the motor UUID. Use **Setup** for ID and firmware operations; use **Test** to monitor, jog,
-or set zero and **Files** to reopen or refit a saved run.
-
-## Read the results
-
-Graph legends identify **Measured**, **Before**, and **After**. Motion shows
-position and velocity; Residuals shows simulation error; Torque compares the
-command with motor-reported torque. Lower validation RMSE means a closer fit.
-
-An accepted fit exports `calibration.json` and `post_calibration.xml`. The fit
-assumes commanded torque is accurate and describes the bare motor; it does not
-calibrate torque strength or PD gains. Applying the estimated delay requires
-the supplied replay helper, not XML alone.
-
-Recordings are stored in `~/.local/share/motomind-motor-calib/runs/` by default.
-**Files → Copy folder path** shows the location of the current run.
+Accepted runs export `calibration.json` and `post_calibration.xml`. See the
+[user guide](docs/user-guide.md#compare-the-result) to interpret graphs and
+[simulation guide](docs/simulation.md) to use the exports.
 
 ## Documentation
 
@@ -74,9 +48,3 @@ Recordings are stored in `~/.local/share/motomind-motor-calib/runs/` by default.
 | Understand the fitting method | [Identification](docs/identification.md) |
 | Work on CAN or firmware support | [Protocol reference](docs/protocol.md) |
 | Build or publish desktop releases | [Release guide](packaging/README.md) |
-
-## Electron UI
-
-The Electron interface is in [electron/](electron/README.md). It starts the
-Rust backend for motor control and calibration. Build and run it with
-`cargo build --locked`, then `cd electron && npm ci && npm start`.

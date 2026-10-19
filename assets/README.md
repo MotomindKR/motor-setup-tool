@@ -1,7 +1,15 @@
 # Brand assets
 
-- `motomind-logo.svg`: downloaded from https://www.motomind.co.kr/src/motomind_logo.svg on 2026-09-22, as linked by https://www.motomind.co.kr/ko. Official artwork, original brand red preserved. Optimized with SVGO 4 (`--multipass`), viewBox retained. Motomind trademark remains the property of Motomind.
-- `motor-setup-tool.svg`: app icon, with a motor face, a zero-index mark and scale ticks around the original orange-red M outline extracted from the wordmark. Uses Motomind charcoal and neutral greys; no text or gradients. Optimized with SVGO 4 (`--multipass`). `icons/*.png` supplies 16–512 px launcher sizes; the native window embeds the 256 px version. Regenerate with `python3 assets/build_icons.py` (requires `python3-gi` and `librsvg2-common`).
-- `fonts/Pretendard-{Regular,SemiBold,Bold}.otf`: upstream static fonts (400/600/700), including Korean and Latin glyphs, from https://github.com/orioncactus/pretendard/tree/main/packages/pretendard/dist/public/static. Redistributed under SIL OFL; see `fonts/OFL.txt`.
+| Asset | Source and use |
+|---|---|
+| `motomind-logo.svg` | [Official Motomind artwork](https://www.motomind.co.kr/src/motomind_logo.svg), downloaded 2026-09-22; original red preserved |
+| `motor-setup-tool.svg` | App icon derived from the wordmark's M outline, with a motor face, zero mark, and scale ticks |
+| `icons/*.png` | 16–512 px launcher icons; native window embeds the 256 px version |
+| `fonts/Pretendard-{Regular,SemiBold,Bold}.otf` | [Pretendard static fonts](https://github.com/orioncactus/pretendard/tree/main/packages/pretendard/dist/public/static), redistributed under [SIL OFL](fonts/OFL.txt) |
+| `fonts/MotomindNumbers-Bold.otf` | Renamed Pretendard Bold subset with tabular digits enabled by default |
 
-UI fonts, branding, and the window icon are bundled with the Electron app. The optional native development UI embeds these assets in its binary, so displaying either UI does not require network access. Pretendard supplies Korean and Latin glyphs. Physical values use `MotomindNumbers-Bold.otf`, an OFL subset derived from Pretendard Bold with its existing `tnum` glyphs made the default. The derivative is renamed to respect reserved font names. `fonts/build_numbers.py` regenerates it and verifies equal digit advances.
+The logo and icon were optimized with SVGO 4 (`--multipass`). Regenerate PNGs
+with `python3 assets/build_icons.py` (`python3-gi` and `librsvg2-common` needed).
+Regenerate the numeric font with `fonts/build_numbers.py`; it verifies equal
+digit advances. Assets are bundled, so neither UI needs network access to
+display them. Motomind retains its trademark.

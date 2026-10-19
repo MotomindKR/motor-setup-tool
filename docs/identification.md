@@ -2,10 +2,11 @@
 
 [Developer guide](development.md) · [Simulation and exports](simulation.md)
 
-The full suite defaults to 40 seconds of training followed by 20 seconds of
-independent validation. Only training samples select parameters. The exported
-session contains actual transmitted, quantized torque commands and separate
-observation timestamps; fitting never re-creates commands from the waveform.
+The default run records **40 s training + 20 s independent validation**. Only
+training selects parameters. Replay uses the transmitted, quantized commands
+and recorded observation timestamps, not regenerated waveforms.
+
+## Motion plan
 
 | Training interval | Excitation | Purpose |
 |---|---|---|
@@ -15,25 +16,23 @@ observation timestamps; fitting never re-creates commands from the waveform.
 | 30–36 s | Alternating torque bursts, 20–100% torque limit, 60–160 ms widths | Acceleration and torque range |
 | 36–40 s | Zero commanded torque while enabled | Coast-down |
 
-There is one preset per motor. Intervals scale with recording duration. Held-out
-validation uses different frequencies, speed levels, pulse widths and amplitudes.
-Requested target speed reaches 75% of the configured speed cutoff. The preset
-speed cutoff is 45% of the smaller of nominal no-load speed and wire range.
-Preset torque uses the bench cap below; travel is ±24 rad from the initial
-position. Sweep range, durations and limits can be edited in Advanced.
+| Setting | Default or behavior |
+|---|---|
+| Preset | One per motor; intervals scale with recording duration |
+| Validation | Different frequencies, speeds, pulses, and amplitudes |
+| Requested speed | Up to 75% of configured speed cutoff |
+| Preset speed cutoff | 45% of the smaller of no-load speed and wire range |
+| Torque / travel | Bench torque cap below; ±24 rad from initial position |
 
-Speed stages use a bounded host PI controller. Torque bursts directly request
-bounded torque; their response is not a commanded position or velocity. Above
-85% of the speed cutoff, the generator commands opposing torque. Near 75% of
-the travel bound, it commands a return toward center. Independent acquisition
-speed/travel/temperature cutoffs, cancellation, CAN error handling and the
-firmware watchdog remain active. These tests keep firmware operation-mode
-Kp/Kd at zero. No motor motion starts when opening the app.
+**Advanced** can change sweep range, duration, and limits. Speed stages use a
+bounded host PI controller; bursts request bounded torque. Above 85% of the
+speed cutoff, the generator opposes motion. Near 75% of travel, it returns
+toward center. Acquisition limits, CAN checks, cancellation, and the watchdog
+remain active. Firmware operation-mode Kp/Kd stay at zero.
 
-The motion preview shows requested speed and burst torque, not predicted motor
-response. High-frequency tracking may be amplitude-limited. `excitation_revision`
-identifies the waveform generation used for each session; recorded commands
-remain the replay input. The UI requires limit review before a hardware run.
+The preview shows requested inputs, not predicted response. High-frequency
+tracking may be limited. `excitation_revision` identifies the generator;
+recorded commands remain the replay input. Opening the app starts no motion.
 
 ## Motor specifications versus test settings
 
@@ -51,12 +50,14 @@ For RS04 the lower published 35 Nm rating is used for bench-policy calculations.
 | RS05 | 1.8 | 5.5 | 480 | 7.75 | 48 |
 | RS06 | 11 | 36 | 480 | 9 | 48 |
 
-The app's bench torque cap is min(25% rated, 10% peak, 10% wire range), and
-its speed cap is min(50% no-load, 50% wire range). The single preset uses that torque cap and 45% of the smaller of no-load
-speed and wire range.
-These are application policy, not manufacturer safety guarantees. Ratings do
-not justify commanding full peak torque during bare-shaft identification.
-Temperature limits refer to reported motor temperature, not the ambient rating.
+| Bench policy | Formula |
+|---|---|
+| Torque cap | min(25% rated, 10% peak, 10% wire range) |
+| Speed cap | min(50% no-load, 50% wire range) |
+| Preset speed cutoff | 45% of the smaller of no-load speed and wire range |
+
+These are application policy, not manufacturer safety guarantees. Temperature
+limits use reported motor temperature, not ambient rating.
 
 ## Fitting stages
 
@@ -87,17 +88,19 @@ reports containing a Stribeck peak retain their original replay semantics.
 
 ## Acceptance and limitations
 
-Acceptance requires optimizer convergence, sufficient parameter separation,
-no delay-boundary hit, no material worsening of either held-out RMSE, and
-held-out velocity RMSE below the larger of 0.05 rad/s or 20% of measured RMS
-velocity. These are engineering acceptance thresholds, not confidence intervals.
+Acceptance requires all of the following:
 
-The fit assumes accurate commanded torque and identifies an effective model
-of the unloaded gearbox output. Delay includes host scheduling, CAN transport,
-firmware, filtering, and reception. It does not separately identify those
-contributions or independently resolve delay below the feedback interval.
-Temperature/load-dependent friction, compliance, backlash, torque strength,
-and PD gains are outside the fitted model.
+- Optimizer convergence and sufficient parameter separation.
+- No delay-boundary hit or material worsening of either held-out RMSE.
+- Held-out velocity RMSE below the larger of 0.05 rad/s or 20% of measured RMS velocity.
+
+These engineering thresholds are not confidence intervals.
+
+The model assumes accurate commanded torque at the unloaded gearbox output.
+Delay combines host, CAN, firmware, filtering, and reception timing; it cannot
+separate those contributions or resolve below the feedback interval. It omits
+load/temperature-dependent friction, compliance, backlash, torque strength,
+and PD gains.
 
 See [Simulation and exports](simulation.md) to apply an accepted result. For
 implementation changes, keep the validation recording out of all parameter

@@ -4,14 +4,15 @@
 
 ## Choose an accepted result
 
-Use `calibration.json` and `post_calibration.xml` from an accepted run. A rejected
-fit retains `candidate.json` and `candidate.xml` for inspection; these are not
-accepted exports. Refit removes stale accepted files if the new result fails
-validation.
+| Fit status | Files to use |
+|---|---|
+| Accepted | `calibration.json` and `post_calibration.xml` |
+| Rejected | `candidate.json` and `candidate.xml` for inspection only |
 
-All mechanical values refer to the **gearbox output shaft**. Estimates assume
-commanded torque is accurate. They do not identify torque strength, PD gains,
-or the inertia of a robot link attached later.
+Refit removes stale accepted files if validation later fails. All mechanical
+values refer to the **gearbox output shaft** and assume accurate commanded
+torque. The fit does not identify torque strength, PD gains, or attached link
+inertia.
 
 ## Apply the parameters
 
@@ -22,15 +23,14 @@ or the inertia of a robot link attached later.
 | `parameters.friction` | Joint `frictionloss` | Nm |
 | `parameters.delay` | Delay the actuator command in the control/replay loop | s |
 
-The standalone XML uses a direct torque actuator with `gear="1"` and negligible
-numerical body inertia. In a robot model, retain the actual link mass/inertia
-and avoid counting the motor inertia or friction twice. Adapt actuator scaling
-if your robot uses a different transmission convention.
+When adding the fit to a robot model:
 
-**Loading the XML does not activate delay.** The exported `replay_wrapper.py`
-implements delayed torque commands and the stepping behavior used by the app.
-The delay estimate includes host, CAN, firmware, and feedback timing. Apply it
-once, accounting for delay already present in your control stack.
+- Keep the real link mass and inertia; avoid counting motor inertia or friction twice.
+- Adjust actuator scaling if your transmission differs from the standalone
+  XML's direct torque actuator (`gear="1"`).
+- Apply delay once, accounting for delay already in your control stack.
+  **Loading the XML does not activate delay**; `replay_wrapper.py` provides
+  the command delay and stepping behavior used by the app.
 
 Example using the exported bare-motor model:
 
@@ -49,10 +49,9 @@ replay = TorqueReplay(model, data, calibration)
 replay.advance_to(0.01, [(0.0, 0.02)])
 ```
 
-This optional helper requires Python MuJoCo in your simulation environment. The
-calibration app itself runs MuJoCo natively and does not require Python. New
-fits use constant `frictionloss`; the helper also supports older saved models
-with a separate static-friction peak.
+The helper requires Python MuJoCo; the calibration app does not. New fits use
+constant `frictionloss`. The helper also reads older models with a separate
+static-friction peak.
 
 ## Run folder reference
 
@@ -70,6 +69,5 @@ with a separate static-friction peak.
 | `replay_wrapper.py` | Optional delayed-command replay helper |
 | `error.json` | Acquisition failure details, when a run fails |
 
-Interrupted acquisition preserves partial data when available. Incomplete
-sessions cannot be fitted. Fitting changes simulation artifacts, not firmware
-calibration constants in the motor.
+Interrupted acquisition may preserve partial data, but incomplete sessions
+cannot be fitted. Fitting changes files, not firmware calibration constants.

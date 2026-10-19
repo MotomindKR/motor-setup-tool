@@ -1,17 +1,18 @@
 # Command-line guide
 
-The Rust backend included in the Electron bundle works in a terminal or over
-SSH. Subcommands never open a window and do not need a display server.
+The Rust backend runs without a window or display server. The examples below
+use the installed Linux DEB/RPM path; source builds can use
+`target/release/motor-setup-tool` or `./scripts/run.sh`.
 
 ```sh
-tool=./motor-setup-tool/resources/backend/motor-setup-tool
+tool="/opt/Motor Setup Tool/resources/backend/motor-setup-tool"
 "$tool" --help
 "$tool" calibrate --help
 ```
 
-Use the extracted Linux bundle from the release archive. A source build also
-supports these commands through
-`./scripts/run.sh` or `target/release/motor-setup-tool`.
+On macOS, the backend is inside `Motor Setup Tool.app/Contents/Resources/backend/`.
+On Windows, it is `resources\backend\motor-setup-tool.exe` inside the installed
+application directory.
 
 ## Connect
 
@@ -22,26 +23,23 @@ supports these commands through
 "$tool" info --can can0 --id 127
 ```
 
-`can up` configures a down interface at **1 Mbps**, using sudo's terminal prompt.
-Use `--auth polkit` for the desktop password dialog, or `--auth direct` from an
-already privileged shell. Without a terminal, sudo fails unless authorization
-is already available; passwords are never read or stored by this tool.
-`can restart can0` resets an idle bus. Motor operations share a lock with the
-GUI, so close its active monitor or calibration before using the CLI.
-For SLCAN, pass an adapter string such as
-`--can slcan:canable:921600:/dev/ttyUSB0`. Choose `lawicel` for a LAWICEL
-adapter. On Windows, use a COM port such as `slcan:canable:921600:COM3`.
-`can serial-list` lists suggested serial ports. The serial transport sets
-Classic CAN to 1 Mbps when it opens.
-For a GS USB adapter, use `can usb-list`, then pass its bus and address as
-`--can gsusb:3:79` (substitute the listed numbers). Direct USB mode configures
-1 Mbps and takes ownership of the adapter when an operation starts. Its USB
-address can change after unplugging, so list again after reconnecting.
-On Linux, see the [USB access instructions](user-guide.md#direct-gs-usb-adapters)
-if the app reports a permission error.
+| Transport | Find it | `--can` example |
+|---|---|---|
+| SocketCAN (Linux) | `can list` | `can0` |
+| SLCAN | `can serial-list` | `slcan:canable:921600:/dev/ttyUSB0` or `slcan:canable:921600:COM3` |
+| GS USB | `can usb-list` | `gsusb:3:79` (use listed bus/address) |
 
-Use the ID returned by scan. The host ID defaults to 253; `--host-id` changes it.
-Identity queries and scans disable responding motors. Use an idle bench bus.
+SLCAN also supports the `lawicel` profile; both serial and direct USB modes
+configure Classic CAN at 1 Mbps when opened. A GS USB address can change after
+reconnection. See [USB access](user-guide.md#direct-gs-usb-adapters) for Linux
+permissions.
+
+`can up` configures an idle SocketCAN interface at 1 Mbps. It uses sudo in a
+terminal; use `--auth polkit` for a desktop dialog or `--auth direct` in an
+already privileged shell. `can restart can0` resets an idle bus. GUI and CLI
+operations share a lock. Scans and identity queries can disable responding
+motors, so use an idle bench bus. Use the ID returned by scan; host ID defaults
+to 253 and can be changed with `--host-id`.
 
 ## Calibrate and analyze
 
@@ -58,11 +56,13 @@ replays MuJoCo. `--yes` confirms the motor is secured, the shaft is clear, and
 the preset limits have been reviewed. Ctrl+C cancels acquisition or fitting;
 active motor control stops before exit.
 
-Optional calibration arguments: `--output NEW_DIRECTORY`, `--train-seconds`,
-`--validation-seconds`, `--torque-limit`, `--speed-limit`, `--travel-limit`.
-Limits use Nm, rad/s, and radians and are checked against the detected model's
-bench limits. Existing output directories are rejected. Without `--output`,
-recordings use the same data directory as the GUI.
+| Option | Purpose |
+|---|---|
+| `--output NEW_DIRECTORY` | Save to a new directory; existing paths are rejected |
+| `--train-seconds`, `--validation-seconds` | Set recording durations |
+| `--torque-limit`, `--speed-limit`, `--travel-limit` | Set Nm, rad/s, and rad limits within the model's bench caps |
+
+Without `--output`, recordings use the GUI's data directory.
 
 Artifacts and acceptance rules are identical to the GUI. Open the resulting
 directory from **Files** to view graphs. `analyze` replaces analysis artifacts
