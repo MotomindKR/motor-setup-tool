@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "motor-setup-tool"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "clap",

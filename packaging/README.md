@@ -44,6 +44,8 @@ combines the checksums into `SHA256SUMS`.
 **Settings → Check for update** shows **Install** when the latest release has a
 matching installer and `SHA256SUMS`. It verifies the download before installing.
 On Linux, the app asks for system authorization, installs the DEB/RPM, and
-restarts. On Windows, it closes, runs the NSIS installer silently, and restarts;
-installation errors appear in Settings on the next launch. On macOS, the DMG
+restarts. On Windows, it closes, updates the same installation folder and scope,
+checks both the launcher and UI versions, and restarts. System installations
+request Windows administrator authorization. A failed update opens Settings on
+restart; diagnostics are in `update.log` in the app's user data folder. On macOS, the DMG
 opens for manual installation. Updates wait for motor operations to end.

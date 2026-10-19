@@ -120,6 +120,7 @@ function createWindow() {
   window.webContents.on('render-process-gone', () => { try { backend?.cancel(); } catch { /* Firmware transfer finishes before exit. */ } });
   window.webContents.on('did-finish-load', () => {
     if (backendError) send({ type: 'error', message: backendError.message });
+    if (updateError) send({ type: 'updateFailure', message: updateError, version: app.getVersion() });
     if (process.env.MOTOMIND_SMOKE_PATH) {
       setTimeout(async () => {
         try {
@@ -148,7 +149,11 @@ function createWindow() {
             await window.webContents.executeJavaScript('document.getElementById("settings-dialog").showModal()');
           }
           const details = await window.webContents.executeJavaScript('({title:document.title,bridge:typeof window.motorApp,can:document.getElementById("can-state").textContent,logo:document.querySelector(".brand img").naturalWidth,tab:state.tab,actionsHidden:document.getElementById("top-actions").classList.contains("hidden"),theme:document.documentElement.dataset.theme,appearance:document.getElementById("theme-select").value,connectionOpen:document.getElementById("connection-panel").open})');
+          details.version = app.getVersion();
+          details.updateError = updateError;
+          details.settingsOpen = await window.webContents.executeJavaScript('document.getElementById("settings-dialog").open');
           await fs.writeFile(process.env.MOTOMIND_SMOKE_PATH, (await window.webContents.capturePage()).toPNG());
+          await fs.writeFile(`${process.env.MOTOMIND_SMOKE_PATH}.json`, JSON.stringify(details));
           console.log(JSON.stringify(details));
           app.quit();
         } catch (error) { console.error(error); app.exit(1); }
@@ -163,8 +168,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
-    updateError = await fs.readFile(path.join(app.getPath('userData'), 'update-error.txt'), 'utf8');
-    await fs.rm(path.join(app.getPath('userData'), 'update-error.txt'));
+    updateError = await nativeInstall.readUpdateError(app);
   } catch { /* No previous update error. */ }
   try {
     backend = new Backend(backendPath(root, process.resourcesPath), send);
@@ -236,9 +240,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('updates:info', event => {
     assertSender(event);
-    const result = { version: app.getVersion(), updateError };
-    updateError = null;
-    return result;
+    return { version: app.getVersion(), updateError };
   });
   ipcMain.handle('updates:check', async event => {
     assertSender(event);

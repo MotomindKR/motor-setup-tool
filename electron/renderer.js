@@ -458,7 +458,11 @@ async function stopMonitor() {
 }
 
 function eventReceived(event) {
-  if (event.type === 'start') {
+  if (event.type === 'updateFailure') {
+    $('app-version').textContent = event.version;
+    $('update-status').textContent = event.message;
+    $('settings-dialog').showModal();
+  } else if (event.type === 'start') {
     state.busy = event.operation;
     $('work').classList.toggle('hidden', event.operation === 'manual');
     $('work-title').textContent = ({ interfaces: 'Checking interfaces', canUp: 'Bringing up CAN', canRestart: 'Restarting CAN', scan: 'Finding motors', plan: 'Loading preset', calibrate: 'Calibrating motor', manual: 'Monitoring motor', analyze: 'Refitting recording', firmwarePrepare: 'Verifying firmware', firmwareUpdate: 'Updating firmware' })[event.operation] || 'Working';

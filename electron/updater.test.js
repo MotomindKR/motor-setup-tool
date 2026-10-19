@@ -7,7 +7,26 @@ const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { check, install, installerName, isNewer } = require('./updater');
-const { mode } = require('./native-install');
+const { mode, readUpdateError } = require('./native-install');
+
+test('a helper failure cannot silently restart the previous version', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-update-state-'));
+  const pending = path.join(directory, 'pending-update.json');
+  const result = path.join(directory, 'update-error.txt');
+  const app = { getPath: () => directory, getVersion: () => '0.1.14' };
+  try {
+    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
+    assert.match(await readUpdateError(app), /Update to 0\.1\.15 did not complete.*still 0\.1\.14/);
+    assert.match(await readUpdateError(app), /Update to 0\.1\.15 did not complete/);
+    await fs.rm(result);
+    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
+    assert.equal(await readUpdateError({ ...app, getVersion: () => '0.1.15' }), null);
+    await assert.rejects(fs.access(pending), { code: 'ENOENT' });
+    await fs.writeFile(result, 'Update failed: launcher version mismatch');
+    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
+    assert.match(await readUpdateError({ ...app, getVersion: () => '0.1.15' }), /launcher version mismatch/);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
 
 test('direct installation is offered only from supported packaged launchers', () => {
   assert.equal(mode({ isPackaged: false }, 'linux', '/opt/Motor Setup Tool/motor-setup-tool'), null);
