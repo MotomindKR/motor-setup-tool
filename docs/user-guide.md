@@ -126,6 +126,16 @@ Select the motor, then use **Test** or **Setup**:
 - The top bar shows **Connected · Enabled** or **Connected · Disabled**.
   **Disable motor** is available only while the selected motor is enabled.
 
+### Persistent registers
+
+Open **Setup → Persistent registers** after selecting a motor. Choose a register
+and click **Read**. Gains and filters `0x2011`–`0x2017` can be edited within their
+documented ranges; the speed and current limit registers are read only. Enter a
+value and click **Save** to confirm the change. The app disables the motor,
+checks its UUID and current value, writes the new value, and sends the motor's
+save command. Power cycle and read again to verify the value persisted. Volatile
+`0x70xx` control registers are absent from this editor.
+
 ## Monitor and jog a motor
 
 1. Open **Test → Start monitoring**. The motor starts disabled. Live position,
@@ -157,11 +167,13 @@ vendor releases or recommend downgrades.
 
 1. Open **Setup → Firmware update** and select **Download and verify**.
 2. Compare the installed and target versions and confirm the model and ID.
-3. Start the update. Keep motor power and USB connected until it finishes.
+3. Start the update. The app disables the motor before checking the bus and
+   starting transfer. Keep motor power and USB connected until it finishes.
 
 The app blocks cancellation and window closing during the write. Success
 requires a matching version readback and the same motor identity. An interrupted
-transfer may require the vendor's recovery tools.
+transfer may require the vendor's recovery tools. After a verified update, the
+selected motor stays selected and its displayed firmware version refreshes.
 
 ## Open and refit recordings
 

@@ -1,7 +1,7 @@
 {
   "name": "motomind-motor-calib-electron",
   "desktopName": "motor-setup-tool.desktop",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "description": "Electron desktop UI for the Motomind motor calibration tool",
   "homepage": "https://github.com/MotomindKR/motor-setup-tool",

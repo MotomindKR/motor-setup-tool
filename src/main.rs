@@ -13,6 +13,7 @@ mod manual;
 mod paths;
 mod pipeline;
 mod protocol;
+mod registers;
 mod theme;
 mod types;
 

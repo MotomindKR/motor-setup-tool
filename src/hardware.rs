@@ -588,7 +588,7 @@ impl Bus {
             Err(e) => Err(e),
         }
     }
-    fn read_parameter(&self, index: u16) -> Result<[u8; 4]> {
+    pub(crate) fn read_parameter(&self, index: u16) -> Result<[u8; 4]> {
         self.flush()?;
         let mut f = protocol::frame(17, self.config.host_id as u16, self.config.motor_id);
         f.data[..2].copy_from_slice(&index.to_le_bytes());
@@ -618,7 +618,7 @@ impl Bus {
         let v = protocol::firmware_version(&f, self.config.motor_id, self.config.host_id).unwrap();
         Ok(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]))
     }
-    fn write_parameter(&self, index: u16, value: [u8; 4]) -> Result<()> {
+    pub(crate) fn write_parameter(&self, index: u16, value: [u8; 4]) -> Result<()> {
         let mut f = protocol::frame(18, self.config.host_id as u16, self.config.motor_id);
         f.data[..2].copy_from_slice(&index.to_le_bytes());
         f.data[4..].copy_from_slice(&value);

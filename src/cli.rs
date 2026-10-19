@@ -1,5 +1,7 @@
 //! Headless commands share the GUI's acquisition, manual control, and fitting code.
-use crate::{bridge, can_admin, experiment, firmware, hardware, manual, pipeline, types::*};
+use crate::{
+    bridge, can_admin, experiment, firmware, hardware, manual, pipeline, registers, types::*,
+};
 use anyhow::{Context, Result, ensure};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -138,6 +140,48 @@ enum Command {
         #[command(subcommand)]
         command: FirmwareCommand,
     },
+    /// Read documented persistent registers or save a verified change.
+    Register {
+        #[command(subcommand)]
+        command: RegisterCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum RegisterCommand {
+    /// List documented persistent setup registers.
+    List,
+    /// Read a register from a disabled motor.
+    Read {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long, value_parser = register_index)]
+        index: u16,
+    },
+    /// Write a documented gain/filter and save it to motor storage.
+    Write {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long, value_parser = register_index)]
+        index: u16,
+        #[arg(long)]
+        value: f32,
+        #[arg(long)]
+        uuid: String,
+        #[arg(long)]
+        expected_raw: String,
+        #[arg(long, required = true)]
+        yes: bool,
+    },
+}
+
+fn register_index(text: &str) -> std::result::Result<u16, String> {
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        u16::from_str_radix(hex, 16).map_err(|_| "Enter a valid hex register index".into())
+    } else {
+        text.parse()
+            .map_err(|_| "Enter a valid decimal register index".into())
+    }
 }
 
 #[derive(Subcommand)]
@@ -635,6 +679,27 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             })?;
             output(&json!({"id":target.id,"firmware":version}))
         }
+        Command::Register { command } => match command {
+            RegisterCommand::List => output(&registers::CATALOG),
+            RegisterCommand::Read { target, index } => {
+                let (config, _) = detected(&target)?;
+                output(&registers::read(&config, index)?)
+            }
+            RegisterCommand::Write {
+                target,
+                index,
+                value,
+                uuid,
+                expected_raw,
+                ..
+            } => output(&registers::write(
+                &detected(&target)?.0,
+                index,
+                value,
+                &uuid,
+                &expected_raw,
+            )?),
+        },
     }
 }
 
@@ -768,6 +833,20 @@ mod tests {
             vec!["zero", "--id", "127"],
             vec!["set-id", "--id", "127", "--new-id", "1"],
             vec!["firmware", "update", "--id", "127"],
+            vec![
+                "register",
+                "write",
+                "--id",
+                "127",
+                "--index",
+                "0x2012",
+                "--value",
+                "1",
+                "--uuid",
+                "0000000000000000",
+                "--expected-raw",
+                "00000000",
+            ],
             vec!["calibrat"],
             vec!["--misspelled"],
             vec!["monitor", "--id", "0"],
@@ -792,6 +871,8 @@ mod tests {
             .is_ok()
         );
         assert!(Cli::try_parse_from(["tool", "--list-can"]).is_ok());
+        assert_eq!(register_index("0x2012").unwrap(), 0x2012);
+        assert!(register_index("0xzzzz").is_err());
         assert!(
             Cli::try_parse_from(["tool", "--screenshot=/tmp/a.png", "--screenshot-theme=dark"])
                 .is_ok()

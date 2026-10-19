@@ -119,6 +119,10 @@
           <div class="row setup-id-row"><input id="new-id" type="number" min="1" max="254" placeholder="New ID" aria-label="New motor ID"><button id="set-id" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-hash"/></svg>Change ID</button></div>
           <details><summary>Motor specifications</summary><div id="motor-spec" class="muted small"></div></details>
           <details><summary>CAN protocol</summary><div id="protocol-spec" class="muted small"></div></details>
+          <hr><h3>Persistent registers</h3>
+          <select id="register-select" aria-label="Motor register"><option value="">Select a register</option></select>
+          <div id="register-status" class="muted small" role="status">Read a register before editing it.</div>
+          <div class="row register-actions"><button id="register-read" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>Read</button><input id="register-value" type="number" step="any" placeholder="Value" aria-label="Register value" disabled><button id="register-write" class="secondary" disabled><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg>Save</button></div>
           <hr><div class="section-head"><h3>Firmware update</h3><a href="https://github.com/RobStride/Product_Information/releases/tag/V26.05.19" id="firmware-release" class="small">Release notes</a></div>
           <button id="firmware-check" class="secondary full" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>Download and verify</button>
           <div id="firmware-result" class="muted small"></div>

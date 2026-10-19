@@ -217,6 +217,8 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
     )?;
     let bus = Bus::open(c)?;
     let outcome = (|| -> Result<String> {
+        progress(0., "Disabling motor before firmware update".into());
+        bus.stopped()?;
         // Detect other senders/autoreporting before entering the bootloader.
         bus.flush()?;
         let quiet = Instant::now();
@@ -227,7 +229,6 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
             );
             thread::sleep(Duration::from_millis(1));
         }
-        bus.stopped()?;
         let version = bus.firmware_version()?;
         check_model(&version, &official.model)?;
         ensure!(

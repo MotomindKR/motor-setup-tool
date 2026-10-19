@@ -24,6 +24,7 @@ const state = {
   wantEnabled: false, manualEverEnabled: false, direction: 0, lastStatusAt: 0,
   manualIntentPending: false, lastLiveDraw: 0, outputDirectory: null,
   updateCandidate: null, installingUpdate: false, referenceAngle: 0,
+  registers: null, registersLoading: false, registersFailed: false, registerRead: null,
 };
 let referenceAngleUnit = 'rad';
 function angleForInput(radians) {
@@ -89,6 +90,28 @@ function maxJogSpeed() { return Math.max(0.01, Math.min(Number($('speed-limit').
 function feedbackFresh() { return state.manualStatus?.fresh && performance.now() - state.lastStatusAt < 200; }
 function motorReady() {
   return Boolean(busReady() && state.motor?.model && !state.motor?.issue);
+}
+function motorUuid() {
+  return Array.isArray(state.motor?.uuid) ? state.motor.uuid.map(value => Number(value).toString(16).padStart(2, '0')).join('').toUpperCase() : '';
+}
+function selectedRegister() {
+  return state.registers?.find(item => String(item.index) === $('register-select').value);
+}
+function clearRegisterRead() {
+  state.registerRead = null;
+  $('register-value').value = '';
+  $('register-status').textContent = 'Read a register before editing it.';
+  updateControls();
+}
+async function loadRegisters() {
+  if (state.registers || state.registersLoading || state.registersFailed || state.busy) return;
+  state.registersLoading = true;
+  try {
+    const registers = await run('registerList');
+    state.registers = registers;
+    $('register-select').replaceChildren(new Option('Select a register', ''), ...registers.map(item => new Option(`0x${item.index.toString(16).toUpperCase()} · ${item.name}${item.writable ? '' : ' · read only'}`, String(item.index))));
+  } catch { state.registersFailed = true; }
+  finally { state.registersLoading = false; updateControls(); }
 }
 function buildConfig() {
   if (!state.preset || !state.motor) throw new Error('Scan and select a motor first');
@@ -163,6 +186,16 @@ function updateControls() {
   $('stop-motor').disabled = !selectedMotor || (busy && !manual);
   $('global-stop').disabled = !state.motor || state.busy === 'firmwareUpdate' || state.installingUpdate;
   for (const id of ['zero', 'set-id', 'firmware-check']) $(id).disabled = busy || !selectedMotor;
+  const register = selectedRegister();
+  const registerRead = state.registerRead?.index === register?.index && state.registerRead?.uuid === motorUuid();
+  const registerValue = $('register-value').value.trim();
+  const parsedValue = Number(registerValue);
+  $('register-select').disabled = busy || !selectedMotor || !state.registers;
+  $('register-read').disabled = busy || !selectedMotor || !register;
+  $('register-value').disabled = busy || !selectedMotor || !register?.writable || !registerRead;
+  $('register-value').min = register ? String(register.min) : '';
+  $('register-value').max = register ? String(register.max) : '';
+  $('register-write').disabled = busy || !selectedMotor || !register?.writable || !registerRead || !registerValue || !Number.isFinite(parsedValue) || parsedValue < register.min || parsedValue > register.max || parsedValue === state.registerRead.value;
   $('firmware-update').disabled = busy || !selectedMotor || !state.firmware || state.firmware.id !== state.motor?.id;
   $('refit').disabled = busy || !state.directory;
   $('show-run').disabled = !state.directory;
@@ -187,6 +220,7 @@ function resetMotor() {
   state.preset = null;
   state.preview = null;
   state.firmware = null;
+  clearRegisterRead();
   $('motor-select').replaceChildren(new Option('Scan to discover', ''));
   $('motor-details').textContent = 'No motor selected';
   $('preset').textContent = '';
@@ -199,6 +233,11 @@ function resetMotor() {
   $('jog-reviewed').checked = false;
   renderSurface();
   updateControls();
+}
+
+function renderMotorDetails() {
+  const motor = state.motor;
+  $('motor-details').textContent = motor ? `${motor.model || 'Unknown model'} · firmware ${motor.firmware || 'unknown'} · UUID ${Array.isArray(motor.uuid) ? motor.uuid.map(value => Number(value).toString(16).padStart(2, '0')).join('').toUpperCase() : 'unknown'}${motor.issue ? ` · ${motor.issue}` : ''}` : 'No motor selected';
 }
 
 async function run(operation, params = {}) {
@@ -275,6 +314,7 @@ async function scan() {
 
 async function selectMotor() {
   state.motor = state.motors.find(motor => String(motor.id) === $('motor-select').value) || null;
+  clearRegisterRead();
   state.referenceAngle = 0;
   showReferenceAngle(0);
   state.preset = null;
@@ -283,7 +323,7 @@ async function selectMotor() {
   $('jog-reviewed').checked = false;
   $('firmware-result').textContent = '';
   const motor = state.motor;
-  $('motor-details').textContent = motor ? `${motor.model || 'Unknown model'} · firmware ${motor.firmware || 'unknown'} · UUID ${Array.isArray(motor.uuid) ? motor.uuid.map(value => Number(value).toString(16).padStart(2, '0')).join('').toUpperCase() : 'unknown'}${motor.issue ? ` · ${motor.issue}` : ''}` : 'No motor selected';
+  renderMotorDetails();
   if (motor?.uuid) {
     try {
       const angle = await window.motorApp.getReferenceAngle(motor.uuid);
@@ -316,6 +356,7 @@ function setTab(tab) {
   for (const button of document.querySelectorAll('[data-tab]')) button.classList.toggle('selected', button.dataset.tab === tab);
   for (const panel of document.querySelectorAll('.tab-panel')) panel.classList.toggle('hidden', panel.id !== `panel-${tab}`);
   if (tab === 'files') refreshRuns();
+  if (tab === 'setup') { state.registersFailed = false; loadRegisters(); }
   renderSurface();
   updateControls();
 }
@@ -482,6 +523,7 @@ function eventReceived(event) {
     $('status-badge').textContent = event.cancelled ? 'Stopped' : event.ok ? motorReady() ? 'Connected' : 'Not connected' : 'Attention';
     $('status-badge').className = `badge ${event.ok || event.cancelled ? '' : 'error'}`;
     if (event.operation === 'manual') renderLive();
+    if (state.tab === 'setup' && !state.registers && !state.registersLoading && !state.registersFailed) queueMicrotask(loadRegisters);
   } else if (event.type === 'error') notice(event.message, true);
   updateControls();
 }
@@ -718,6 +760,44 @@ function wire() {
   };
   $('scan').onclick = scan;
   $('motor-select').onchange = selectMotor;
+  $('register-select').onchange = () => {
+    clearRegisterRead();
+    const register = selectedRegister();
+    if (register) $('register-status').textContent = `0x${register.index.toString(16).toUpperCase()} · ${register.writable ? `editable · ${register.min}–${register.max}` : 'read only'}`;
+    updateControls();
+  };
+  $('register-value').oninput = updateControls;
+  $('register-read').onclick = async () => {
+    const register = selectedRegister();
+    if (!register) return;
+    clearRegisterRead();
+    const motor = state.motor;
+    try {
+      const result = await run('registerRead', { ...target(), index: register.index });
+      if (state.motor !== motor || selectedRegister()?.index !== register.index || result.uuid !== motorUuid()) return;
+      state.registerRead = result;
+      $('register-value').value = String(result.value);
+      $('register-status').textContent = `Current ${result.value}${register.writable ? ` · range ${register.min}–${register.max}` : ' · read only'}`;
+      updateControls();
+    } catch { /* notice already shown */ }
+  };
+  $('register-write').onclick = async () => {
+    const register = selectedRegister();
+    const prior = state.registerRead;
+    const value = Number($('register-value').value);
+    if (!register?.writable || !prior || prior.index !== register.index || prior.uuid !== motorUuid() || $('register-write').disabled) return;
+    if (!window.confirm(`Save ${register.name} (0x${register.index.toString(16).toUpperCase()}) from ${prior.value} to ${value} on motor ID ${state.motor.id}?`)) return;
+    const motor = state.motor;
+    try {
+      const result = await run('registerWrite', { ...target(), index: register.index, value, uuid: prior.uuid, expectedRaw: prior.raw, confirmed: true });
+      if (state.motor !== motor || selectedRegister()?.index !== register.index) return;
+      state.registerRead = result;
+      $('register-value').value = String(result.value);
+      $('register-status').textContent = `Saved ${result.value} · power cycle to verify persistence`;
+      notice(`${register.name} saved. Power cycle the motor to verify persistence.`);
+    } catch { clearRegisterRead(); }
+    updateControls();
+  };
   $('reviewed').onchange = updateControls;
   $('jog-reviewed').onchange = () => {
     if (!$('jog-reviewed').checked) { state.wantEnabled = false; state.direction = 0; sendManualIntent(); }
@@ -831,7 +911,24 @@ function wire() {
   };
   $('firmware-update').onclick = async () => {
     if (!window.confirm(`Update ${state.motor.model} · ID ${state.motor.id} from ${state.firmware.current_version} to ${state.firmware.version}? Keep power and USB connected until transfer finishes.`)) return;
-    try { const result = await run('firmwareUpdate', { ...target(), confirmed: true }); if (result?.cancelled) { notice('Firmware preparation stopped.'); return; } notice('Firmware update completed. Scan again to verify.'); resetMotor(); } catch {}
+    const motor = state.motor;
+    try {
+      const result = await run('firmwareUpdate', { ...target(), confirmed: true });
+      if (result?.cancelled) { notice('Firmware preparation stopped.'); return; }
+      if (state.motor !== motor || result.id !== motor.id) { notice('Firmware verified. Select the motor again.'); return; }
+      motor.firmware = result.firmware;
+      state.firmware = null;
+      clearRegisterRead();
+      state.manualStatus = null;
+      state.manualHistory = [];
+      $('firmware-result').textContent = `Installed and verified · ${result.firmware}`;
+      $('reviewed').checked = false;
+      $('jog-reviewed').checked = false;
+      renderMotorDetails();
+      renderSurface();
+      updateControls();
+      notice(`Firmware ${result.firmware} installed and verified. Motor disabled.`);
+    } catch { /* notice already shown */ }
   };
   $('pick-run').onclick = async () => {
     try { const result = await window.motorApp.pickRun(); if (result) { openReport(result); setTab('files'); } }

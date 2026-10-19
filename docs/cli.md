@@ -104,6 +104,9 @@ Its duration starts after the enable handshake finishes.
 "$tool" set-id --can can0 --id 127 --new-id 7 --yes
 "$tool" firmware check --can can0 --id 7
 "$tool" firmware update --can can0 --id 7 --yes
+"$tool" register list
+"$tool" register read --can can0 --id 7 --index 0x2012
+"$tool" register write --can can0 --id 7 --index 0x2012 --value 0.025 --uuid UUID_FROM_READ --expected-raw RAW_FROM_READ --yes
 ```
 
 Zero requires a stationary motor. ID changes check for collisions and verify
@@ -111,6 +114,12 @@ the motor identity. Firmware check uses the bundled verified release catalog;
 update downloads and verifies the matching image. Keep power connected until
 the update finishes. Once firmware transfer starts, termination requests wait
 for it to finish rather than interrupting a flash write.
+
+Register writes accept only documented persistent gains and filters. Use the
+`uuid` and `raw` fields returned by a recent `register read`; the motor is
+stopped and both are checked again before a write. A successful save means the
+motor acknowledged the save command and readback matched. Power cycle and read
+again to verify persistence.
 
 ## Scripts
 

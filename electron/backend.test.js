@@ -22,6 +22,12 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.deepEqual(argsFor('canRestart', { can: 'can0' }), ['can', 'restart', 'can0', '--auth', 'polkit']);
   assert.deepEqual(argsFor('serialPorts'), ['can', 'serial-list']);
   assert.deepEqual(argsFor('usbAdapters'), ['can', 'usb-list']);
+  assert.deepEqual(argsFor('registerList'), ['register', 'list']);
+  assert.deepEqual(argsFor('registerRead', { can: 'can0', id: 1, index: 0x2012 }), ['register', 'read', '--can', 'can0', '--host-id', '253', '--id', '1', '--index', '0x2012']);
+  assert.throws(() => argsFor('registerRead', { can: 'can0', id: 1, index: 0x7005 }), /documented persistent/);
+  assert.throws(() => argsFor('registerWrite', { can: 'can0', id: 1, index: 0x2012 }), /Confirm/);
+  assert.throws(() => argsFor('registerWrite', { can: 'can0', id: 1, index: 0x2018, value: 1, uuid: '0000000000000000', expectedRaw: '0000803F', confirmed: true }), /documented persistent/);
+  assert.deepEqual(argsFor('registerWrite', { can: 'can0', id: 1, index: 0x2012, value: 2.5, uuid: '0000000000000000', expectedRaw: '0000803F', confirmed: true }), ['register', 'write', '--can', 'can0', '--host-id', '253', '--id', '1', '--index', '0x2012', '--value', '2.5', '--uuid', '0000000000000000', '--expected-raw', '0000803F', '--yes']);
   assert.deepEqual(argsFor('scan', { can: 'gsusb:303033:79', hostId: 253 }), ['scan', '--can', 'gsusb:303033:79', '--host-id', '253']);
   assert.deepEqual(argsFor('scan', { can: 'gsusb:00:79', hostId: 253 }), ['scan', '--can', 'gsusb:00:79', '--host-id', '253']);
   assert.throws(() => argsFor('scan', { can: 'gsusb:0:79' }), /CAN interface/);

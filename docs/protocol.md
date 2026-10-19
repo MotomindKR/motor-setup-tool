@@ -84,6 +84,13 @@ Mode/watchdog settings remain in place after capture; the app does not save
 them to flash. Scanning and calibration do not change IDs, zero position, or
 firmware. Those are separate user-triggered operations.
 
+The Setup register editor reads documented persistent `0x20xx` parameters
+using CAN type 17. It writes only gains and filters `0x2011`–`0x2017` using type
+18, verifies the readback, then sends the documented type 22 save frame. It
+checks motor UUID and the prior raw value before writing. The `0x2018` and
+`0x2019` protection limits are read only; volatile `0x70xx` control parameters
+cannot be edited. A power cycle is needed to verify nonvolatile storage.
+
 ## Firmware transfer
 
 `firmware_catalog.json` pins the model-specific versions, URLs, and SHA-256
