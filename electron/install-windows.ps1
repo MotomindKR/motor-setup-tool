@@ -27,7 +27,7 @@ function Get-InstallScope([string]$Directory) {
     foreach ($view in @('Software', 'Software\WOW6432Node')) {
       $entries = Get-ItemProperty "$($scope[0])\$view\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue
       foreach ($entry in $entries) {
-        if ($entry.DisplayName -ne 'Motor Setup Tool') { continue }
+        if ($entry.DisplayName -notmatch '^Motor Setup Tool(?: \d+\.\d+\.\d+)?$') { continue }
         $location = (Get-ItemProperty "$($scope[0])\$view\$($entry.PSChildName)" -ErrorAction SilentlyContinue).InstallLocation
         if (-not $location -and $entry.UninstallString -match '^"([^"]+)"') {
           $location = Split-Path -Parent $Matches[1]
