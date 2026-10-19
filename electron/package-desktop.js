@@ -17,8 +17,9 @@ const bundle = process.platform === 'darwin' ? path.join(output, 'Motor Setup To
 const resources = process.platform === 'darwin' ? path.join(bundle, 'Contents', 'Resources') : path.join(bundle, 'resources');
 const app = path.join(resources, 'app');
 const backend = path.join(resources, 'backend');
-const binaryName = process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
-const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', 'release', binaryName);
+const backendName = process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
+const launcherName = process.platform === 'win32' ? 'Motor Setup Tool.exe' : 'motor-setup-tool';
+const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', 'release', backendName);
 const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', 'mujoco-3.12.0', 'lib');
 const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : process.platform === 'win32' ? 'mujoco.dll' : 'libmujoco.so.3.12.0';
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
@@ -44,7 +45,7 @@ if (process.platform === 'darwin') {
   fs.writeFileSync(plist, info);
 } else {
   fs.cpSync(runtime, output, { recursive: true, verbatimSymlinks: true });
-  fs.renameSync(path.join(output, process.platform === 'win32' ? 'electron.exe' : 'electron'), path.join(output, binaryName));
+  fs.renameSync(path.join(output, process.platform === 'win32' ? 'electron.exe' : 'electron'), path.join(output, launcherName));
 }
 if (process.platform === 'linux') {
   const rules = path.join(output, 'packaging', '99-motomind-gsusb.rules');
@@ -64,8 +65,8 @@ for (const relative of ['motomind-logo.svg', 'motor-setup-tool.svg', 'icons/256.
   fs.copyFileSync(path.join(root, 'assets', relative), target);
 }
 fs.mkdirSync(path.join(backend, 'lib'), { recursive: true });
-fs.copyFileSync(sourceBinary, path.join(backend, binaryName));
-if (process.platform !== 'win32') fs.chmodSync(path.join(backend, binaryName), 0o755);
+fs.copyFileSync(sourceBinary, path.join(backend, backendName));
+if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
 fs.copyFileSync(path.join(root, 'vendor', 'gs_usb', 'LICENSE'), path.join(backend, 'gs_usb-LICENSE'));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
@@ -75,7 +76,7 @@ for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
 }
 const libraryKey = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : process.platform === 'win32' ? 'PATH' : 'LD_LIBRARY_PATH';
 const smokeEnv = { ...process.env, [libraryKey]: [path.join(backend, 'lib'), process.env[libraryKey]].filter(Boolean).join(path.delimiter) };
-const selfCheck = JSON.parse(execFileSync(path.join(backend, binaryName), ['--self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
+const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['--self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
   throw new Error('Packaged backend self-check returned an unexpected version');
 }

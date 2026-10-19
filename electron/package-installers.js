@@ -18,6 +18,14 @@ const prepackaged = platform === 'darwin' ? path.join(staged, 'Motor Setup Tool.
 const installers = path.join(root, 'dist-electron', 'installers');
 fs.rmSync(installers, { recursive: true, force: true });
 execFileSync(process.execPath, [path.join(__dirname, 'package-desktop.js')], { stdio: 'inherit' });
+if (platform === 'win32') {
+  // NSIS shortcuts target PRODUCT_FILENAME.exe; productName is the default filename.
+  const config = require('./builder.json');
+  const shortcutTarget = `${config.win.executableName || config.executableName || config.productName}.exe`;
+  if (!fs.existsSync(path.join(staged, shortcutTarget))) {
+    throw new Error(`Windows launcher ${shortcutTarget} is missing; NSIS shortcuts would be broken`);
+  }
+}
 
 const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg'] : ['--win', 'nsis'];
 execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--prepackaged', prepackaged, '--config', path.join(__dirname, 'builder.json'), ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, stdio: 'inherit' });
