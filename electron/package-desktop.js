@@ -2,7 +2,6 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 if (!['linux', 'darwin', 'win32'].includes(process.platform)) throw new Error('Unsupported desktop platform');
@@ -82,11 +81,4 @@ if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
 }
 if (process.platform === 'darwin') execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
 
-const archiveName = `${stem}.tar.gz`;
-const archive = path.join(root, 'dist-electron', archiveName);
-fs.rmSync(archive, { force: true });
-execFileSync('tar', ['-czf', archive, '-C', output, '.']);
-const digest = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
-fs.writeFileSync(`${archive}.sha256`, `${digest}  ${archiveName}\n`);
 console.log(`Built ${output}`);
-console.log(`Release archive ${archive}`);

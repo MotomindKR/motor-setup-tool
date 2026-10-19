@@ -3,16 +3,12 @@
 const fs = require('node:fs/promises');
 const { createWriteStream } = require('node:fs');
 const path = require('node:path');
-const { spawn, execFile } = require('node:child_process');
-const { promisify } = require('node:util');
 const { createHash } = require('node:crypto');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const exec = promisify(execFile);
 const releaseApi = 'https://api.github.com/repos/MotomindKR/motor-setup-tool/releases/latest';
 const releasePrefix = 'https://github.com/MotomindKR/motor-setup-tool/releases/download/';
-const archiveName = () => `motor-setup-tool-electron-${process.platform}-${process.arch}.tar.gz`;
 const versionParts = version => /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number);
 
 function isNewer(remote, local) {
@@ -24,9 +20,17 @@ function isNewer(remote, local) {
   return false;
 }
 
-function executable(root) {
-  if (process.platform === 'darwin') return path.join(root, 'Motor Setup Tool.app', 'Contents', 'MacOS', 'Motor Setup Tool');
-  return path.join(root, process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool');
+async function installerExtension() {
+  if (process.platform === 'darwin') return 'dmg';
+  if (process.platform === 'win32') return 'exe';
+  if (process.platform !== 'linux') return null;
+  const info = await fs.readFile('/etc/os-release', 'utf8').catch(() => '');
+  return /^(ID|ID_LIKE)=.*\b(fedora|rhel|centos|suse|rocky|almalinux)\b/m.test(info) ? 'rpm' : 'deb';
+}
+
+async function installerName(version) {
+  const extension = await installerExtension();
+  return extension ? `motor-setup-tool-${version}-${process.platform}-${process.arch}.${extension}` : null;
 }
 
 async function get(url, limit) {
@@ -35,9 +39,9 @@ async function get(url, limit) {
     if (response.status === 404 && url === releaseApi) throw new Error('No public GitHub release is available yet');
     throw new Error(`GitHub request failed (${response.status})`);
   }
-  const text = await response.text();
-  if (Buffer.byteLength(text) > limit) throw new Error('GitHub response is too large');
-  return text;
+  const content = await response.text();
+  if (Buffer.byteLength(content) > limit) throw new Error('GitHub response is too large');
+  return content;
 }
 
 async function check(currentVersion) {
@@ -45,12 +49,14 @@ async function check(currentVersion) {
   const version = release.tag_name?.replace(/^v/, '');
   if (!versionParts(version)) throw new Error('GitHub release has an invalid version');
   const available = isNewer(version, currentVersion);
-  const archive = release.assets?.find(asset => asset.name === archiveName());
-  const checksum = release.assets?.find(asset => asset.name === `${archiveName()}.sha256`);
+  const filename = await installerName(version);
+  const installer = release.assets?.find(asset => asset.name === filename);
+  const checksum = release.assets?.find(asset => asset.name === 'SHA256SUMS');
   const validAsset = asset => asset && typeof asset.browser_download_url === 'string' && asset.browser_download_url.startsWith(releasePrefix);
   return {
-    available, version, installable: Boolean(available && validAsset(archive) && validAsset(checksum)),
-    archiveUrl: validAsset(archive) ? archive.browser_download_url : null,
+    available, version, filename,
+    installable: Boolean(available && filename && validAsset(installer) && validAsset(checksum)),
+    installerUrl: validAsset(installer) ? installer.browser_download_url : null,
     checksumUrl: validAsset(checksum) ? checksum.browser_download_url : null,
   };
 }
@@ -76,58 +82,30 @@ async function download(url, destination, expected, progress) {
   if (hash.digest('hex') !== expected) throw new Error('Update checksum does not match the release');
 }
 
-async function install(app, release, progress) {
-  if (!release?.installable) throw new Error('Check for an available Electron update first');
-  const checksumText = await get(release.checksumUrl, 4096);
-  const checksumFields = checksumText.trim().split(/\s+/);
-  if (checksumFields.length !== 2 || !/^[a-f0-9]{64}$/i.test(checksumFields[0]) || checksumFields[1] !== archiveName()) {
-    throw new Error('Release checksum is missing or invalid');
-  }
-  const checksum = checksumFields[0];
-  const parent = path.join(app.getPath('userData'), 'installed');
-  const destination = path.join(parent, release.version);
-  const staged = path.join(parent, `.staging-${process.pid}-${Date.now()}`);
-  const archive = path.join(parent, `.download-${process.pid}.tar.gz`);
-  await fs.mkdir(parent, { recursive: true });
+async function install(app, release, progress, openInstaller) {
+  if (!release?.installable || !release.filename) throw new Error('Check for an available installer first');
+  const checksumText = await get(release.checksumUrl, 64_000);
+  const checksums = new Map(checksumText.trim().split(/\r?\n/).map(line => {
+    const match = /^([a-f0-9]{64})  ([A-Za-z0-9._-]+)$/i.exec(line);
+    if (!match) throw new Error('Release checksum list is invalid');
+    return [match[2], match[1].toLowerCase()];
+  }));
+  const expected = checksums.get(release.filename);
+  if (!expected) throw new Error('Release installer checksum is missing');
+  const downloads = path.join(app.getPath('userData'), 'installers');
+  const destination = path.join(downloads, release.filename);
+  await fs.mkdir(downloads, { recursive: true });
+  await fs.rm(destination, { force: true });
   try {
-    progress('Downloading update…');
-    await download(release.archiveUrl, archive, checksum.toLowerCase(), progress);
-    progress('Installing update…');
-    const { stdout } = await exec('tar', ['-tzf', archive], { maxBuffer: 8_000_000 });
-    for (const name of stdout.split(/\r?\n/).filter(Boolean)) {
-      const parts = name.replace(/\/$/, '').split('/');
-      if (path.isAbsolute(name) || parts.includes('..') || name.includes('\\')) throw new Error('Update archive contains an invalid path');
-    }
-    await fs.mkdir(staged);
-    await exec('tar', ['-xzf', archive, '-C', staged]);
-    await fs.access(executable(staged));
-    await fs.rm(destination, { recursive: true, force: true });
-    await fs.rename(staged, destination);
-    await fs.writeFile(path.join(parent, 'latest.json'), JSON.stringify({ version: release.version }));
-    progress('Update installed. Restarting…');
-    launch(executable(destination));
-    return true;
-  } finally {
-    await fs.rm(archive, { force: true });
-    await fs.rm(staged, { recursive: true, force: true });
+    progress('Downloading installer…');
+    await download(release.installerUrl, destination, expected, progress);
+  } catch (error) {
+    await fs.rm(destination, { force: true });
+    throw error;
   }
+  const error = await openInstaller(destination);
+  if (error) throw new Error(`Could not open installer: ${error}`);
+  progress('Installer opened. Finish installation, then restart the app.');
 }
 
-function launch(binary) {
-  const child = spawn(binary, [], { detached: true, stdio: 'ignore', cwd: path.dirname(binary) });
-  child.unref();
-}
-
-async function launchInstalledIfNewer(app) {
-  try {
-    const parent = path.join(app.getPath('userData'), 'installed');
-    const { version } = JSON.parse(await fs.readFile(path.join(parent, 'latest.json'), 'utf8'));
-    if (!versionParts(version) || !isNewer(version, app.getVersion())) return false;
-    const binary = executable(path.join(parent, version));
-    await fs.access(binary);
-    launch(binary);
-    return true;
-  } catch { return false; }
-}
-
-module.exports = { check, install, isNewer, launchInstalledIfNewer };
+module.exports = { check, install, installerName, isNewer };

@@ -1,0 +1,25 @@
+{
+  "appId": "com.motomind.MotorSetup",
+  "productName": "Motor Setup Tool",
+  "directories": { "output": "../dist-electron/installers" },
+  "asar": false,
+  "publish": null,
+  "linux": {
+    "category": "Utility",
+    "icon": "../assets/icons/256.png",
+    "executableName": "motor-setup-tool",
+    "syncDesktopName": true,
+    "desktop": { "entry": { "Name": "Motor Setup Tool", "Comment": "Motomind motor setup and calibration" } }
+  },
+  "mac": {
+    "identity": null,
+    "category": "public.app-category.utilities"
+  },
+  "dmg": { "title": "Motor Setup Tool" },
+  "win": { "target": "nsis" },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  }
+}

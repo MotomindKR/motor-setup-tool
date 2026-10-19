@@ -30,19 +30,17 @@ choose **Enter manually…** if it is missing, then choose the LAWICEL or CANabl
 profile and UART speed before scanning. Review the limits before
 issuing a motion command.
 
-## Desktop bundle
+## Desktop installers
 
 ```sh
 cargo build --locked --release
 cd electron
-npm run package:linux
-../dist-electron/motor-setup-tool-electron-linux-x64/motor-setup-tool
+npm run package:installers
 ```
 
-Use `npm run package:desktop` on macOS or Windows. The package script copies
-Electron, the release Rust binary, the pinned MuJoCo library, and UI assets
-into `dist-electron/`, then makes a `.tar.gz` archive and `.sha256` checksum.
-Keep the extracted directory together when moving it. Set
+The package script stages Electron, the release Rust binary, the pinned MuJoCo
+library, and UI assets, then builds DEB/RPM, DMG, or NSIS EXE installers under
+`dist-electron/`. Each installer gets a `.sha256` checksum. Set
 `MUJOCO_DYNAMIC_LINK_DIR` when the SDK is outside
 `.tools/mujoco/mujoco-3.12.0/lib`. No AppImage is produced.
 
@@ -68,6 +66,7 @@ Only one backend operation can run at a time. A stop request sends SIGTERM to
 the CLI, whose motor worker stops and disables before exiting. No motor command
 is sent by opening the Electron app or loading a recording.
 
-Settings shows the app version, checks the latest GitHub release, and installs
-a matching checksum-verified Electron bundle when one is available. Installation
-is disabled while a motor operation is active.
+Settings shows the app version, checks the latest GitHub release, and downloads
+the matching installer after verifying its checksum. Complete installation in
+the system installer and restart the app. Installation is disabled while a motor
+operation is active.

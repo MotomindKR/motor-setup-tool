@@ -667,7 +667,7 @@ function wire() {
       const result = await window.motorApp.checkUpdate();
       state.updateCandidate = result.available ? result : null;
       $('update-status').textContent = result.available
-        ? result.installable ? `Version ${result.version} is available.` : `Version ${result.version} has no Electron bundle for this computer yet.`
+        ? result.installable ? `Version ${result.version} is available.` : `Version ${result.version} has no installer for this computer yet.`
         : 'You have the latest version.';
       $('install-update').classList.toggle('hidden', !result.installable);
       $('install-update').querySelector('.button-label').textContent = `Install ${result.version}`;

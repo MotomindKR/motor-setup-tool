@@ -16,28 +16,21 @@ motion with MuJoCo, and manage its ID, zero position, and firmware.
 - Compare measured motion with simulation before and after calibration.
 - Save recordings, inspect residuals, and export accepted results for MuJoCo.
 
-## Download and run
+## Install
 
-Get the Electron bundle for your computer from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
+Get the installer for your computer from **[Releases](https://github.com/MotomindKR/motor-setup-tool/releases/latest)**.
 
 | Your computer | Download |
 |---|---|
-| Linux Intel/AMD | `motor-setup-tool-electron-linux-x64.tar.gz` |
-| Linux ARM64 | `motor-setup-tool-electron-linux-arm64.tar.gz` |
-| macOS Intel/ARM | `motor-setup-tool-electron-darwin-x64.tar.gz` / `motor-setup-tool-electron-darwin-arm64.tar.gz` |
-| Windows Intel/AMD | `motor-setup-tool-electron-win32-x64.tar.gz` |
+| Linux Intel/AMD | `motor-setup-tool-0.1.7-linux-x64.deb` or `.rpm` |
+| Linux ARM64 | `motor-setup-tool-0.1.7-linux-arm64.deb` or `.rpm` |
+| macOS Apple silicon | `motor-setup-tool-0.1.7-darwin-arm64.dmg` |
+| Windows Intel/AMD | `motor-setup-tool-0.1.7-win32-x64.exe` |
 
-Extract the archive and open the app inside it. On Linux x64:
-
-```sh
-mkdir motor-setup-tool
-tar -xzf motor-setup-tool-electron-linux-x64.tar.gz -C motor-setup-tool
-./motor-setup-tool/motor-setup-tool
-```
-
-MuJoCo is bundled. Keep the extracted directory together. Settings shows the
-current version and can install a newer Electron bundle from GitHub. Each archive
-has a `.sha256` checksum file.
+Open the DMG on macOS or the EXE installer on Windows. Install the DEB or RPM
+with your Linux package manager. MuJoCo is bundled. Settings checks for a new
+version, verifies its checksum from `SHA256SUMS`, and opens the matching
+installer. Complete the installation and restart the app.
 
 ## Your first calibration
 

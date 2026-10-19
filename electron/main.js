@@ -154,7 +154,6 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  if (await updater.launchInstalledIfNewer(app)) { app.quit(); return; }
   app.setAppUserModelId('com.motomind.MotorSetup');
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -234,8 +233,7 @@ app.whenReady().then(async () => {
     assertSender(event);
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
-    await updater.install(app, checkedUpdate, message => window?.webContents.send('updates:progress', message));
-    app.quit();
+    await updater.install(app, checkedUpdate, message => window?.webContents.send('updates:progress', message), file => shell.openPath(file));
   });
   ipcMain.handle('runs:list', async event => { assertSender(event); return listRuns(); });
   ipcMain.handle('runs:pick', async event => {

@@ -23,8 +23,6 @@ jobs:
             runner: ubuntu-22.04
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
-          - platform: darwin-x64
-            runner: macos-15-intel
           - platform: darwin-arm64
             runner: macos-15
           - platform: win32-x64
@@ -52,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev fakeroot rpm
       - name: Install macOS MuJoCo SDK
         if: runner.os == 'macOS'
         shell: bash
@@ -81,19 +79,22 @@ jobs:
       - name: Check Electron code
         working-directory: electron
         run: npm run check
-      - name: Package Electron bundle
+      - name: Build desktop installers
         working-directory: electron
-        run: npm run package:desktop
+        run: npm run package:installers
       - uses: actions/upload-artifact@v4
         with:
-          name: electron-${{ matrix.platform }}
+          name: installers-${{ matrix.platform }}
           if-no-files-found: error
           path: |
-            dist-electron/*.tar.gz
-            dist-electron/*.tar.gz.sha256
+            dist-electron/*.deb
+            dist-electron/*.rpm
+            dist-electron/*.dmg
+            dist-electron/*.exe
+            dist-electron/*.sha256
 
   publish:
-    name: Publish Electron bundles
+    name: Publish desktop installers
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
@@ -102,7 +103,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: electron-*
+          pattern: installers-*
           merge-multiple: true
           path: dist-electron
       - name: Verify and publish
@@ -112,10 +113,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          sha256sum -c ./*.sha256
-          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 5
+          cat ./*.sha256 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 6
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes 'Electron bundles for Linux, macOS, and Windows. Use Settings → Check for update in an installed app for future releases.'
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes 'Installers for Linux x64/ARM64 (DEB and RPM), macOS ARM64 (DMG), and Windows x64 (EXE). SHA256SUMS verifies each download. Settings → Check for update downloads and opens the matching installer.'
           fi
-          gh release upload "$RELEASE_TAG" ./*.tar.gz ./*.sha256 --clobber
+          gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.exe SHA256SUMS --clobber
           gh release edit "$RELEASE_TAG" --draft=false

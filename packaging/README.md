@@ -1,9 +1,11 @@
 # Desktop release guide
 
-The release workflow builds Electron bundles for Linux x64/ARM64, macOS
-x64/ARM64, and Windows x64. Each bundle contains Electron, the Rust motor
-backend, MuJoCo 3.12.0, and the UI assets. It publishes a `.tar.gz` archive
-and a matching `.sha256` file for each platform. No AppImage is produced.
+The release workflow builds Electron installers for Linux x64/ARM64 (DEB and
+RPM), macOS ARM64 (DMG), and Windows x64 (NSIS EXE). Each installer contains
+Electron, the Rust backend, MuJoCo 3.12.0, and the UI assets. The release
+includes `SHA256SUMS` for all six installers. There is no AppImage or macOS
+x64 target. Windows ARM64 is omitted because MuJoCo 3.12.0 does not publish a
+Windows ARM64 library.
 
 ## Publish
 
@@ -11,8 +13,8 @@ and a matching `.sha256` file for each platform. No AppImage is produced.
    `Cargo.lock` and commit the changes.
 2. Let the unit test workflow pass on `main`.
 3. Push a matching `vX.Y.Z` tag. The [release workflow](../.github/workflows/release.yml)
-   builds all five bundles, verifies the checksums, and publishes the GitHub
-   release when every build succeeds.
+   builds four platform variants, verifies six installers, and publishes the
+   GitHub release when every build succeeds.
 
 ## Build locally
 
@@ -21,24 +23,23 @@ the pinned MuJoCo SDK to `.tools/mujoco` when `MUJOCO_DOWNLOAD_DIR` points
 there. On macOS, mount the MuJoCo 3.12.0 DMG, copy its versioned dylib into
 `.tools/mujoco/mujoco-3.12.0/lib`, add a `libmujoco.dylib` symlink, and set
 `MUJOCO_DYNAMIC_LINK_DIR` to that directory. The release workflow does this
-automatically.
+automatically. Linux RPM packaging also needs `rpmbuild` (`rpm` package).
 
 ```sh
 cargo build --locked --release
 cd electron
 npm ci
 npm run check
-npm run package:desktop
+npm run package:installers
 ```
 
-The output is under `dist-electron/`. Run the executable in the unpacked
-directory, or publish the archive and checksum pair to GitHub Releases.
+Installers and their individual checksums appear under `dist-electron/`.
+The publish job combines the checksums into `SHA256SUMS`.
 
 ## Updates
 
 Settings queries the latest GitHub release. The Install button appears only
-when that release includes the matching `motor-setup-tool-electron-PLATFORM-ARCH.tar.gz`
-and `.sha256` assets. The app verifies the checksum, extracts the bundle into
-its user data directory, and launches it. The original launcher redirects to
-that newer installed version on subsequent starts. A running motor operation
-must finish before installation.
+when that release has the matching installer and `SHA256SUMS`. The app verifies
+the download and opens the native installer. The user completes installation
+in the system dialog, then restarts the app. A running motor operation must
+finish before installation.
