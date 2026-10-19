@@ -190,7 +190,7 @@ for the files to use in your robot model.
 | Scan finds no motor | Motor power, matching bitrate, CAN wiring, and unique IDs |
 | Unknown model or firmware | Read the installed version with the vendor's tool; unsupported version families cannot be calibrated |
 | “No buffer space available” | Frames may not be draining from the transmit queue; investigate bus errors and acknowledgements before retrying |
-| Watchdog preflight fails | Check the firmware and communication state; calibration requires the watchdog check to pass |
+| Watchdog preflight fails | Check the motor's firmware and close other CAN senders. A failed run saves `watchdog_preflight.json`; recent versions include a bounded CAN trace showing traffic during the quiet interval. Calibration requires the watchdog check to pass. |
 | Another operation owns the bus | Finish or close the other app instance; do not delete its lock file |
 | Fit rejected or residuals remain large | Read Diagnostics, verify a bare unloaded shaft and correct model, and inspect the measured motion |
 

@@ -27,6 +27,24 @@ pub struct Bus {
     socket: BusSocket,
     config: Config,
 }
+
+#[derive(Serialize)]
+pub(crate) struct QuietCanFrame {
+    elapsed_ms: u128,
+    id: String,
+    data: String,
+}
+
+pub(crate) struct WatchdogPreflight {
+    pub(crate) feedback: Feedback,
+    pub(crate) passive_reports: usize,
+    pub(crate) last_passive_report_ms: Option<u128>,
+    pub(crate) used_passive_report: bool,
+    pub(crate) addressed_frames: usize,
+    pub(crate) quiet_frames: Vec<QuietCanFrame>,
+    pub(crate) quiet_frames_omitted: usize,
+    pub(crate) gsusb_tx_echoes: Option<u64>,
+}
 enum BusSocket {
     #[cfg(target_os = "linux")]
     SocketCan(CanSocket),
@@ -270,6 +288,19 @@ pub(crate) fn lock_interface(interface: &str) -> Result<std::fs::File> {
     Ok(lock)
 }
 impl Bus {
+    fn gsusb_tx_echoes(&self) -> Option<u64> {
+        if let BusSocket::GsUsb(device) = &self.socket {
+            Some(
+                device
+                    .lock()
+                    .expect("GS-USB device lock poisoned")
+                    .tx_echoes(),
+            )
+        } else {
+            None
+        }
+    }
+
     pub fn open(config: &Config) -> Result<Self> {
         let (lock, socket) = if let Some((usb_bus, usb_address)) = gsusb_address(&config.interface)?
         {
@@ -642,7 +673,7 @@ impl Bus {
         &self,
         cancel: &AtomicBool,
         motor_state: impl Fn(bool),
-    ) -> Result<Feedback> {
+    ) -> Result<WatchdogPreflight> {
         let bus = self;
         let c = &self.config;
         // Program raw firmware ticks and verify actual expiry below. Tick periods
@@ -661,26 +692,62 @@ impl Bus {
             .context("Watchdog preflight could not enable motor at zero torque")?;
         motor_state(true);
         let watchdog_start = Instant::now();
+        let echoes_before = bus.gsusb_tx_echoes();
         let mut active_reports = 0;
         let mut latest_report = None;
+        let mut addressed_frames = 0;
+        let mut quiet_frames = Vec::new();
+        let mut quiet_frames_omitted = 0;
         while watchdog_start.elapsed() < Duration::from_millis(300) {
             ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
-            if let Some(frame) = bus.receive()?
-                && let Some(feedback) =
+            if let Some(frame) = bus.receive()? {
+                let elapsed = watchdog_start.elapsed();
+                if frame.id as u8 == c.motor_id {
+                    addressed_frames += 1;
+                }
+                let trace_frame = QuietCanFrame {
+                    elapsed_ms: elapsed.as_millis(),
+                    id: format!("{:08X}", frame.id),
+                    data: frame
+                        .data
+                        .iter()
+                        .map(|byte| format!("{byte:02X}"))
+                        .collect(),
+                };
+                if quiet_frames.len() == 128 {
+                    // Preserve the first and last 64 frames if the bus is busy.
+                    quiet_frames.remove(64);
+                    quiet_frames_omitted += 1;
+                }
+                quiet_frames.push(trace_frame);
+                if let Some(feedback) =
                     protocol::active_feedback(&frame, c.motor_id, c.host_id, &c.profile)
-            {
-                active_reports += 1;
-                latest_report = Some((feedback, watchdog_start.elapsed()));
+                {
+                    active_reports += 1;
+                    latest_report = Some((feedback, elapsed));
+                }
             }
         }
+        let gsusb_tx_echoes = echoes_before
+            .zip(bus.gsusb_tx_echoes())
+            .map(|(before, after)| after - before);
         // Type-24 reports reflect status without sending a new motor command.
         // Require a recent report; older firmware may not support this feature.
         if active_reports >= 3
-            && let Some((feedback, observed_at)) = latest_report
-            && observed_at >= Duration::from_millis(250)
+            && let Some((feedback, observed_at)) = latest_report.as_ref()
+            && *observed_at >= Duration::from_millis(250)
         {
             motor_state(feedback.mode == 2);
-            return Ok(feedback);
+            return Ok(WatchdogPreflight {
+                feedback: feedback.clone(),
+                passive_reports: active_reports,
+                last_passive_report_ms: Some(observed_at.as_millis()),
+                used_passive_report: true,
+                addressed_frames,
+                quiet_frames,
+                quiet_frames_omitted,
+                gsusb_tx_echoes,
+            });
         }
         // Legacy fallback: a zero-torque command requests status after the quiet
         // interval. Still fail closed unless it reports Reset with no faults.
@@ -688,7 +755,16 @@ impl Bus {
         bus.send(protocol::torque(c.motor_id, 0., &c.profile).0)?;
         let expired = bus.feedback(Duration::from_millis(50))?;
         motor_state(expired.mode == 2);
-        Ok(expired)
+        Ok(WatchdogPreflight {
+            feedback: expired,
+            passive_reports: active_reports,
+            last_passive_report_ms: latest_report.map(|(_, at)| at.as_millis()),
+            used_passive_report: false,
+            addressed_frames,
+            quiet_frames,
+            quiet_frames_omitted,
+            gsusb_tx_echoes,
+        })
     }
     pub fn stop(&self) -> Result<()> {
         self.send(protocol::frame(
@@ -1067,26 +1143,36 @@ pub fn acquire(
         }),
     )?;
     check_firmware_model(c, firmware.as_deref())?;
-    let expired = bus.watchdog_preflight(cancel, &motor_state)?;
+    let preflight = bus.watchdog_preflight(cancel, &motor_state)?;
+    let expired = &preflight.feedback;
     bridge::write_json(
         &dir.join("watchdog_preflight.json"),
         &serde_json::json!({
             "model": c.profile.model, "motor_id": c.motor_id,
+            "interface": c.interface,
             "firmware_version": firmware, "timeout_register": "0x7028",
             "timeout_raw_ticks": 2000, "quiet_wait_ms": 300,
             "observed_mode": expired.mode, "observed_faults": expired.faults,
             "passed": expired.mode == 0 && expired.faults == 0,
-            "observation": "Passive periodic motor status after 300 ms quiet when supported; otherwise zero-torque status request. This is not a measured expiry timestamp."
+            "observation": if preflight.used_passive_report { "passive periodic status" } else { "zero-torque status request after quiet interval" },
+            "passive_reports": preflight.passive_reports,
+            "last_passive_report_ms": preflight.last_passive_report_ms,
+            "addressed_frames_during_quiet": preflight.addressed_frames,
+            "gsusb_tx_echoes_during_quiet": preflight.gsusb_tx_echoes,
+            "quiet_frames": preflight.quiet_frames,
+            "quiet_frames_omitted": preflight.quiet_frames_omitted,
+            "trace_note": "Accepted extended eight-byte CAN frames received during the 300 ms quiet interval. The app sends no frames in this interval. Standard, remote, and short frames are not included. GS-USB transmit echoes are counted separately."
         }),
     )?;
     ensure!(
         expired.mode == 0 && expired.faults == 0,
-        "{} ID {} firmware {}: watchdog 0x7028 read back 2000, but status after 300 ms without commands was mode={} (0=Reset, 2=Run), faults=0x{:02x}. Calibration blocked: communication-loss stopping was not verified. Check firmware watchdog support and other CAN senders. See watchdog_preflight.json",
+        "{} ID {} firmware {}: watchdog 0x7028 read back 2000, but status after a 300 ms pause in app commands was mode={} (0=Reset, 2=Run), faults=0x{:02x}. Calibration blocked: communication-loss stopping was not verified. {} CAN frames addressed to this motor were observed during the quiet interval. See watchdog_preflight.json for the CAN trace.",
         c.profile.model,
         c.motor_id,
         firmware.as_deref().unwrap_or("unknown"),
         expired.mode,
-        expired.faults
+        expired.faults,
+        preflight.addressed_frames
     );
     bus.stop()?;
     let mut session = Session {
