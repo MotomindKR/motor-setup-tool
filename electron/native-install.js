@@ -40,6 +40,7 @@ async function installWindows(app, installer, version, progress) {
   const readyFile = path.join(directory, `update-ready-${process.pid}.txt`);
   const pendingFile = path.join(directory, 'pending-update.json');
   const resultFile = path.join(directory, 'update-error.txt');
+  const logFile = path.join(directory, 'update.log');
   await fs.mkdir(directory, { recursive: true });
   await fs.copyFile(path.join(__dirname, 'install-windows.ps1'), helper);
   await fs.rm(readyFile, { force: true });
@@ -48,7 +49,12 @@ async function installWindows(app, installer, version, progress) {
   const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper,
     '-ParentPid', String(process.pid), '-Installer', installer, '-AppExe', app.getPath('exe'),
     '-ExpectedVersion', version, '-ResultFile', resultFile, '-ReadyFile', readyFile];
-  const child = spawn('powershell.exe', args, { cwd: directory, detached: true, stdio: 'ignore', windowsHide: true });
+  await fs.appendFile(logFile, `${new Date().toISOString()} Launching Windows update helper\n`);
+  const output = await fs.open(logFile, 'a');
+  let child;
+  try {
+    child = spawn('powershell.exe', args, { cwd: directory, detached: true, stdio: ['ignore', output.fd, output.fd], windowsHide: true });
+  } finally { await output.close(); }
   let launchError;
   child.once('error', error => { launchError = error; });
   try {
@@ -58,7 +64,10 @@ async function installWindows(app, installer, version, progress) {
       try { await fs.access(readyFile); break; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (child.exitCode !== null || Date.now() >= deadline) {
-        const detail = await fs.readFile(resultFile, 'utf8').catch(() => 'The Windows update helper did not start.');
+        const detail = await fs.readFile(resultFile, 'utf8').catch(async () => {
+          const log = await fs.readFile(logFile, 'utf8').catch(() => '');
+          return `The Windows update helper did not start (exit ${child.exitCode ?? 'timeout'}). Details: ${logFile}\n${log.slice(-2000).trim()}`;
+        });
         throw new Error(detail);
       }
       await new Promise(resolve => setTimeout(resolve, 50));

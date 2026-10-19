@@ -1,0 +1,50 @@
+name: Windows updater regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      installer_run:
+        description: Workflow run containing the installers-win32-x64 artifact
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  update:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-win32-x64
+          run-id: ${{ inputs.installer_run }}
+          github-token: ${{ github.token }}
+          path: dist-electron
+      - name: Test update handoff, install scopes, and failure recovery
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download v0.1.15 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.15-win32-x64.exe' --dir "$env:RUNNER_TEMP"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.15-win32-x64.exe'
+          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
+          $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
+          if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-update-diagnostics
+          path: |
+            ${{ runner.temp }}/motomind-update-tests/*/*.json
+            ${{ runner.temp }}/motomind-update-tests/*/*.log
+            ${{ runner.temp }}/motomind-update-tests/*/*.txt
+            ${{ runner.temp }}/motomind-update-tests/*/*.png
