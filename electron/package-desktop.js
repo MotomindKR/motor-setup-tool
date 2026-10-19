@@ -23,6 +23,7 @@ const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', '
 const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', 'mujoco-3.12.0', 'lib');
 const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : process.platform === 'win32' ? 'mujoco.dll' : 'libmujoco.so.3.12.0';
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
+const iconBase = path.join(root, 'assets', 'icons', 'motor-setup-tool');
 
 for (const source of [sourceBinary, mujoco]) {
   if (!fs.existsSync(source)) throw new Error(`Missing ${source}. Build the release backend and install the pinned MuJoCo SDK first.`);
@@ -42,10 +43,16 @@ if (process.platform === 'darwin') {
   info = info.replace(/(<key>CFBundleExecutable<\/key>\s*<string>)Electron(<\/string>)/, '$1Motor Setup Tool$2');
   info = info.replace(/(<key>CFBundleName<\/key>\s*<string>)Electron(<\/string>)/, '$1Motor Setup Tool$2');
   info = info.replace(/(<key>CFBundleIdentifier<\/key>\s*<string>)[^<]+(<\/string>)/, '$1com.motomind.MotorSetup$2');
+  info = info.replace(/(<key>CFBundleIconFile<\/key>\s*<string>)[^<]*(<\/string>)/, '$1motor-setup-tool.icns$2');
+  if (!info.includes('<string>motor-setup-tool.icns</string>')) throw new Error('Electron app bundle has no icon entry');
   fs.writeFileSync(plist, info);
+  fs.copyFileSync(`${iconBase}.icns`, path.join(resources, 'motor-setup-tool.icns'));
 } else {
   fs.cpSync(runtime, output, { recursive: true, verbatimSymlinks: true });
   fs.renameSync(path.join(output, process.platform === 'win32' ? 'electron.exe' : 'electron'), path.join(output, launcherName));
+  if (process.platform === 'win32') {
+    execFileSync(process.execPath, [path.join(__dirname, 'set-windows-icon.mjs'), path.join(output, launcherName), `${iconBase}.ico`, require('./package.json').version]);
+  }
 }
 if (process.platform === 'linux') {
   const rules = path.join(output, 'packaging', '99-motomind-gsusb.rules');
@@ -58,8 +65,8 @@ for (const name of ['main.js', 'preload.js', 'backend.js', 'updater.js', 'render
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
 const pkg = require('./package.json');
-fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js' }, null, 2));
-for (const relative of ['motomind-logo.svg', 'motor-setup-tool.svg', 'icons/256.png', 'fonts/Pretendard-Regular.otf', 'fonts/Pretendard-Bold.otf', 'fonts/MotomindNumbers-Bold.otf', 'fonts/OFL.txt', 'README.md']) {
+fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName }, null, 2));
+for (const relative of ['motomind-logo.svg', 'motor-setup-tool.svg', 'icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/Pretendard-Regular.otf', 'fonts/Pretendard-Bold.otf', 'fonts/MotomindNumbers-Bold.otf', 'fonts/OFL.txt', 'README.md']) {
   const target = path.join(app, 'assets', relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(path.join(root, 'assets', relative), target);

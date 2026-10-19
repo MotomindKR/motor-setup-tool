@@ -13,11 +13,14 @@
   },
   "mac": {
     "identity": null,
+    "icon": "../assets/icons/motor-setup-tool.icns",
     "category": "public.app-category.utilities"
   },
   "dmg": { "title": "Motor Setup Tool" },
-  "win": { "target": "nsis" },
+  "win": { "target": "nsis", "icon": "../assets/icons/motor-setup-tool.ico" },
   "nsis": {
+    "installerIcon": "../assets/icons/motor-setup-tool.ico",
+    "uninstallerIcon": "../assets/icons/motor-setup-tool.ico",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "deleteAppDataOnUninstall": false

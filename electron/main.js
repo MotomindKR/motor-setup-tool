@@ -7,6 +7,8 @@ const os = require('node:os');
 const { Backend, backendPath } = require('./backend');
 const updater = require('./updater');
 
+if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
+
 const root = path.resolve(__dirname, '..');
 const knownRuns = new Set();
 const selectedOutputs = new Set();
@@ -98,7 +100,7 @@ function createWindow() {
     minWidth: 1060,
     minHeight: 700,
     title: 'Motor Setup Tool · Motomind',
-    icon: path.join(root, 'assets', 'icons', '256.png'),
+    icon: path.join(root, 'assets', 'icons', process.platform === 'win32' ? 'motor-setup-tool.ico' : '256.png'),
     backgroundColor: '#f4f5f7',
     autoHideMenuBar: true,
     webPreferences: {
@@ -154,7 +156,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  app.setAppUserModelId('com.motomind.MotorSetup');
+  if (process.platform === 'win32') app.setAppUserModelId('com.motomind.MotorSetup');
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
