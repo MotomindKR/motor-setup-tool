@@ -67,10 +67,13 @@ pub fn firmware_model(version: &str) -> Option<String> {
         .map(str::parse)
         .collect::<Result<_, _>>()
         .ok()?;
-    if v.len() == 4 && v[0] == 0 && v[1] <= 6 {
-        Some(format!("RS-{:02}", v[1]))
-    } else {
-        None
+    if v.len() != 4 || v[0] != 0 {
+        return None;
+    }
+    match v[1] {
+        0..=6 => Some(format!("RS-{:02}", v[1])),
+        10 => Some("RS-10P".into()),
+        _ => None,
     }
 }
 pub fn firmware_version(f: &WireFrame, motor: u8, host: u8) -> Option<[u8; 4]> {
@@ -130,6 +133,38 @@ mod tests {
         assert_eq!(
             (fb.velocity, fb.torque, fb.temperature, fb.mode),
             (33., -14., 40., 2)
+        );
+    }
+    #[test]
+    fn rs10p_firmware_and_wire_scaling_are_model_specific() {
+        assert_eq!(firmware_model("0.10.0.6").as_deref(), Some("RS-10P"));
+        assert!(firmware_model("0.10.0").is_none());
+        assert!(firmware_model("0.7.0.1").is_none());
+        let p = Profile::presets()
+            .into_iter()
+            .find(|p| p.model == "RS-10P")
+            .unwrap();
+        let (command, _) = torque(7, 21., &p);
+        assert_eq!(command.id, 0x01bfff07);
+        let frame = WireFrame {
+            id: 0x028007fd,
+            data: [0xff, 0xff, 0xff, 0xff, 0, 0, 1, 0x90],
+        };
+        let fb = feedback(&frame, 7, 253, &p).unwrap();
+        assert_eq!((fb.velocity, fb.torque), (13., -42.));
+        assert_eq!(
+            active_feedback(
+                &WireFrame {
+                    id: 0x188007fd,
+                    ..frame
+                },
+                7,
+                253,
+                &p
+            )
+            .unwrap()
+            .velocity,
+            13.
         );
     }
     #[test]

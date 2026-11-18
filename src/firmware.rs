@@ -12,8 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const RELEASE_URL: &str =
-    "https://github.com/RobStride/Product_Information/releases/tag/V26.05.19";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Release {
     pub model: String,
@@ -62,6 +60,31 @@ fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
     );
     Ok(())
 }
+fn download_image(r: &Release) -> Result<Vec<u8>> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(60)))
+        .build()
+        .new_agent();
+    let mut response = match agent.get(&r.url).call() {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(404)) => bail!(
+            "RobStride no longer hosts {} firmware {}. Check for an app update.",
+            r.model,
+            r.version
+        ),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Could not download {} firmware {}", r.model, r.version));
+        }
+    };
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(0x80001)
+        .read_to_vec()?;
+    verify_image(&bytes, r)?;
+    Ok(bytes)
+}
 #[derive(Clone, Debug)]
 pub struct Prepared {
     pub release: Release,
@@ -102,18 +125,7 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
     let bytes = if let Some(bytes) = cached {
         bytes
     } else {
-        let agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(60)))
-            .build()
-            .new_agent();
-        let bytes = agent
-            .get(&r.url)
-            .call()?
-            .body_mut()
-            .with_config()
-            .limit(0x80001)
-            .read_to_vec()?;
-        verify_image(&bytes, &r)?;
+        let bytes = download_image(&r)?;
         fs::write(&path, &bytes)?;
         bytes
     };
@@ -334,17 +346,86 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+
+    fn serve_image(status: &str, body: &[u8]) -> (String, thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/image.bin", listener.local_addr().unwrap());
+        let status = status.to_owned();
+        let body = body.to_vec();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert!(count > 0 && request.len() < 8192);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn missing_vendor_image_explains_how_to_refresh_the_catalog() {
+        let (url, server) = serve_image("404 Not Found", &[]);
+        let mut r = release("RS-00").unwrap();
+        r.url = url;
+        let error = download_image(&r).unwrap_err().to_string();
+        assert!(error.contains("RobStride no longer hosts RS-00 firmware"));
+        assert!(error.contains(&r.version));
+        assert!(error.contains("Check for an app update"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn downloaded_images_must_match_the_pinned_digest() {
+        let image = vec![1, 2, 3, 4, 5];
+        let mut r = release("RS-00").unwrap();
+        r.sha256 = Sha256::digest(&image)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let (url, server) = serve_image("200 OK", &image);
+        r.url = url;
+        assert_eq!(download_image(&r).unwrap(), image);
+        server.join().unwrap();
+        let (url, server) = serve_image("200 OK", &[1, 2, 3, 4, 6]);
+        r.url = url;
+        assert!(
+            download_image(&r)
+                .unwrap_err()
+                .to_string()
+                .contains("SHA-256 mismatch")
+        );
+        server.join().unwrap();
+    }
     #[test]
     fn update_notice_compares_numeric_versions_in_the_same_model() {
         for profile in crate::types::Profile::presets() {
             let r = release(&profile.model).unwrap();
-            let old = format!("0.{}.0.0", &profile.model[4..]);
+            let family = if profile.model == "RS-10P" {
+                "10"
+            } else {
+                &profile.model[4..]
+            };
+            let old = format!("0.{family}.0.0");
             assert_eq!(
                 available_update(&profile.model, &old).unwrap().version,
                 r.version
             );
             assert!(available_update(&profile.model, &r.version).is_none());
-            let future = format!("0.{}.99.0", &profile.model[4..]);
+            let future = format!("0.{family}.99.0");
             assert!(available_update(&profile.model, &future).is_none());
         }
         assert!(available_update("RS-00", "0.0.3.9").is_some());
@@ -360,6 +441,19 @@ mod tests {
             let r = release(&p.model).unwrap();
             assert_eq!(protocol::firmware_model(&r.version).unwrap(), p.model);
             assert_eq!(r.sha256.len(), 64);
+            assert_eq!(r.url.rsplit('/').next().unwrap(), r.filename);
+            assert_eq!(
+                r.filename,
+                format!(
+                    "{}_{}.bin",
+                    if p.model == "RS-10P" {
+                        "rs10".into()
+                    } else {
+                        p.model.to_lowercase().replace('-', "")
+                    },
+                    r.version
+                )
+            );
             assert!(r.url.starts_with(
                 "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/"
             ));

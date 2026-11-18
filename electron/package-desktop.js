@@ -25,6 +25,8 @@ const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : pr
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
 const iconBase = path.join(root, 'assets', 'icons', 'motor-setup-tool');
 
+execFileSync(process.execPath, [path.join(path.dirname(require.resolve('vite/package.json')), 'bin', 'vite.js'), 'build'], { cwd: __dirname, stdio: 'inherit' });
+
 for (const source of [sourceBinary, mujoco]) {
   if (!fs.existsSync(source)) throw new Error(`Missing ${source}. Build the release backend and install the pinned MuJoCo SDK first.`);
 }
@@ -61,12 +63,14 @@ if (process.platform === 'linux') {
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'updater.js', 'native-install.js', 'install-windows.ps1', 'renderer.js', 'index.html', 'styles.css']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js', 'native-install.js', 'install-windows.ps1']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
+fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist'), { recursive: true });
+fs.copyFileSync(path.join(__dirname, 'node_modules', '@motomindkr', 'ui', 'THIRD_PARTY_NOTICES.md'), path.join(app, 'electron', 'ui-dist', 'THIRD_PARTY_NOTICES.md'));
 const pkg = require('./package.json');
 fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName }, null, 2));
-for (const relative of ['motomind-logo.svg', 'motor-setup-tool.svg', 'icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/Pretendard-Regular.otf', 'fonts/Pretendard-Bold.otf', 'fonts/MotomindNumbers-Bold.otf', 'fonts/OFL.txt', 'README.md']) {
+for (const relative of ['icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/OFL.txt', 'README.md']) {
   const target = path.join(app, 'assets', relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(path.join(root, 'assets', relative), target);
@@ -75,7 +79,6 @@ fs.mkdirSync(path.join(backend, 'lib'), { recursive: true });
 fs.copyFileSync(sourceBinary, path.join(backend, backendName));
 if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
-fs.copyFileSync(path.join(root, 'packaging', 'licenses', 'gsusbio-0.1.0', 'LICENSE'), path.join(backend, 'gsusbio-LICENSE'));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
   const source = path.join(sdkDir, '..', name);
@@ -83,7 +86,7 @@ for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
 }
 const libraryKey = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : process.platform === 'win32' ? 'PATH' : 'LD_LIBRARY_PATH';
 const smokeEnv = { ...process.env, [libraryKey]: [path.join(backend, 'lib'), process.env[libraryKey]].filter(Boolean).join(path.delimiter) };
-const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['--self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
+const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
   throw new Error('Packaged backend self-check returned an unexpected version');
 }

@@ -177,7 +177,9 @@ mod tests {
                     .contains(expected)
             );
         }
-        assert!(wait(Command::new("/bin/true"), &AtomicBool::new(false)).is_ok());
-        assert!(wait(Command::new("/bin/true"), &AtomicBool::new(true)).is_err());
+        let mut success = Command::new("/bin/sh");
+        success.args(["-c", "exit 0"]);
+        assert!(wait(success, &AtomicBool::new(false)).is_ok());
+        assert!(wait(Command::new("/bin/sh"), &AtomicBool::new(true)).is_err());
     }
 }

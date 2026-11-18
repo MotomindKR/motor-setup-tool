@@ -97,12 +97,18 @@ pub fn torque_limit(c: &Config) -> f64 {
         .spec()
         .map_or(0., |s| c.torque_limit.min(s.rated_torque * 0.1))
 }
-pub fn travel_limit(c: &Config) -> f64 {
-    c.travel_limit.min(std::f64::consts::TAU)
-}
-
 fn motion_requested(input: &Intent, now: Instant) -> bool {
     input.enabled && input.fresh(now)
+}
+
+fn jog_target(c: &Config, requested: f64, position: f64) -> f64 {
+    if requested == 0. {
+        return 0.;
+    }
+    let remaining = c.travel_limit - position * requested.signum();
+    let margin = (max_speed(c) * 0.1).min(c.travel_limit * 0.1);
+    let braking_distance = max_speed(c).min(c.travel_limit * 0.5);
+    requested * ((remaining - margin) / (braking_distance - margin)).clamp(0., 1.)
 }
 
 fn jog_torque(c: &Config, target: f64, velocity: f64, dt: f64, integral: &mut f64) -> f64 {
@@ -136,10 +142,10 @@ fn validate_feedback(c: &Config, fb: &Feedback, position: f64) -> Result<()> {
         c.speed_limit.min(max_speed(c) * 2. + 0.5)
     );
     ensure!(
-        position.abs() < travel_limit(c),
+        position.abs() < c.travel_limit,
         "Jog moved {:.3} rad from enable (limit ±{:.3} rad); motor disabled",
         position,
-        travel_limit(c)
+        c.travel_limit
     );
     Ok(())
 }
@@ -167,6 +173,7 @@ fn run(
     let mut has_jogged = false;
     let mut encoder = EncoderTracker::new(fb.position, c.profile.position_range, c.speed_limit);
     let mut encoder_start = Instant::now();
+    let mut position = 0.;
     let mut integral = 0.;
     let mut stop_reason = None;
     let mut last_tick = Instant::now();
@@ -207,6 +214,7 @@ fn run(
             fb = bus.enable_zero_torque(cancel)?;
             encoder = EncoderTracker::new(fb.position, c.profile.position_range, c.speed_limit);
             encoder_start = Instant::now();
+            position = 0.;
             integral = 0.;
             has_jogged = false;
             enabled = true;
@@ -232,10 +240,19 @@ fn run(
             ensure!(dt < 0.1, "Jog control missed its deadline; motor disabled");
             let direction = request.direction.clamp(-1, 1) as f64;
             ensure!(request.speed.is_finite(), "Invalid jog speed");
-            let target = direction * request.speed.clamp(0., max_speed(c));
+            let requested = direction * request.speed.clamp(0., max_speed(c));
+            let target = jog_target(c, requested, position);
+            if target != requested {
+                // Do not carry accumulated drive into the travel braking zone.
+                integral = 0.;
+            }
             if direction != 0. {
                 has_jogged = true;
-                stop_reason = None;
+                stop_reason = if target == 0. {
+                    Some("Travel limit reached · jog back to continue".into())
+                } else {
+                    None
+                };
             }
             // Enabling alone applies zero torque. After a jog, releasing holds
             // zero speed with bounded braking torque, without a position hold.
@@ -255,7 +272,7 @@ fn run(
                 fb.mode == 2,
                 "Motor left Run mode; enable again after checking its status"
             );
-            let position = encoder.update(fb.position, encoder_start.elapsed())?;
+            position = encoder.update(fb.position, encoder_start.elapsed())?;
             validate_feedback(c, &fb, position)?;
         } else {
             ensure!(
@@ -337,7 +354,7 @@ mod tests {
                 mode: 2,
             };
             assert!(validate_feedback(&c, &fb, 0.).is_ok());
-            assert!(validate_feedback(&c, &fb, travel_limit(&c)).is_err());
+            assert!(validate_feedback(&c, &fb, c.travel_limit).is_err());
             fb.faults = 1;
             assert!(validate_feedback(&c, &fb, 0.).is_err());
             fb.faults = 0;
@@ -346,6 +363,76 @@ mod tests {
             fb.temperature = 25.;
             fb.velocity = c.speed_limit;
             assert!(validate_feedback(&c, &fb, 0.).is_err());
+        }
+    }
+    #[test]
+    fn jogging_passes_one_revolution_and_uses_the_configured_travel_limit() {
+        let mut c = Config::default();
+        let fb = Feedback {
+            position: 0.,
+            velocity: 0.5,
+            torque: 0.,
+            temperature: 25.,
+            faults: 0,
+            mode: 2,
+        };
+        for sign in [-1., 1.] {
+            assert!(validate_feedback(&c, &fb, sign * 6.288).is_ok());
+            assert_eq!(jog_target(&c, sign * 0.5, sign * 6.288), sign * 0.5);
+        }
+        c.travel_limit = 2.;
+        assert!(validate_feedback(&c, &fb, 2.).is_err());
+    }
+
+    #[test]
+    fn travel_boundary_slows_outward_jogging_and_allows_reverse() {
+        let c = Config::default();
+        for sign in [-1., 1.] {
+            let requested = sign * 0.5;
+            let approaching = sign * (c.travel_limit - 0.5);
+            let near = sign * (c.travel_limit - 0.01);
+            let slowed = jog_target(&c, requested, approaching);
+            assert!(slowed * sign > 0. && slowed.abs() < requested.abs());
+            assert_eq!(jog_target(&c, requested, near), 0.);
+            assert_eq!(jog_target(&c, -requested, near), -requested);
+            assert_eq!(jog_target(&c, 0., near), 0.);
+        }
+    }
+
+    #[test]
+    fn held_jog_brakes_before_the_cutoff_and_can_reverse_in_simulation() {
+        use mujoco_rs::prelude::{MjData, MjModel};
+        let c = Config {
+            travel_limit: 0.5,
+            ..Config::default()
+        };
+        for sign in [-1., 1.] {
+            let model =
+                Box::new(MjModel::from_xml_string(&crate::engine::xml(&c.baseline)).unwrap());
+            let mut data = MjData::try_new(model).unwrap();
+            data.model_opt_mut().timestep = 0.005;
+            let mut integral = 0.;
+            for tick in 0..1600 {
+                let requested = if tick < 1000 { sign * 0.5 } else { -sign * 0.5 };
+                let target = jog_target(&c, requested, data.qpos()[0]);
+                if target != requested {
+                    integral = 0.;
+                }
+                data.ctrl_mut()[0] = jog_torque(&c, target, data.qvel()[0], 0.005, &mut integral);
+                data.step();
+                assert!(
+                    data.qpos()[0].abs() < c.travel_limit,
+                    "jog crossed its cutoff"
+                );
+                if tick == 999 {
+                    assert!(data.qpos()[0] * sign > 0.35);
+                    assert!(data.qvel()[0].abs() < 0.02);
+                }
+            }
+            assert!(
+                data.qpos()[0] * sign < 0.,
+                "reverse jog did not leave the boundary"
+            );
         }
     }
 }

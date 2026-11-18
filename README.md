@@ -7,7 +7,7 @@
 [![Download Electron app](https://img.shields.io/badge/Download-Electron_app-E82E01)](https://github.com/MotomindKR/motor-setup-tool/releases/latest)
 
 Calibrate a bare RobStride motor, compare its motion with MuJoCo, and manage
-its ID, zero position, and firmware. Supports RS-00 through RS-06.
+its ID, zero position, and firmware. Supports RS-00 through RS-06 and RS-10P over Classic CAN.
 
 ## Install
 

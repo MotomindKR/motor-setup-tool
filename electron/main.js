@@ -1,16 +1,18 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const { Backend, backendPath } = require('./backend');
 const updater = require('./updater');
 const nativeInstall = require('./native-install');
+const recordings = require('./recordings');
 
 if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
 
 const root = path.resolve(__dirname, '..');
+const titleBarHeight = 40;
 const knownRuns = new Set();
 const selectedOutputs = new Set();
 const recentPathFile = () => path.join(app.getPath('userData'), 'recent-calibrations.json');
@@ -32,6 +34,7 @@ let quitting = false;
 let checkedUpdate = null;
 let installingUpdate = false;
 let updateError = null;
+let recordingOperation = false;
 
 function send(event) {
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
@@ -53,13 +56,7 @@ function dataDirectory() {
 
 async function loadRun(directory) {
   if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
-  const stat = await fs.stat(path.join(directory, 'report.json'));
-  if (stat.size > 32_000_000) throw new Error('Report is too large to display');
-  const report = JSON.parse(await fs.readFile(path.join(directory, 'report.json'), 'utf8'));
-  if (report.source !== 'hardware' || !Array.isArray(report.replays)) {
-    throw new Error('Select a completed real motor recording');
-  }
-  return { directory, report };
+  return recordings.loadRun(directory);
 }
 
 async function listRuns() {
@@ -73,38 +70,32 @@ async function listRuns() {
   if (!Array.isArray(custom)) custom = [];
   const directories = [...new Set([...entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)), ...custom.filter(value => typeof value === 'string' && path.isAbsolute(value))])];
   const runs = await Promise.all(directories.map(async directory => {
-    const name = path.basename(directory);
-    try { await fs.access(path.join(directory, 'report.json')); }
-    catch { return null; }
-    let model = null;
-    let motorId = null;
     try {
-      const configPath = path.join(directory, 'config.json');
-      if ((await fs.stat(configPath)).size <= 8192) {
-        const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
-        if (/^RS-0[0-6]$/.test(config.profile?.model) && Number.isInteger(config.motor_id)) {
-          model = config.profile.model;
-          motorId = config.motor_id;
-        }
-      }
-    } catch { /* Older runs can still be opened by folder name. */ }
-    knownRuns.add(directory);
-    const timestamp = /^\d{13}(?=-|$)/.exec(name)?.[0];
-    const modified = (await fs.stat(path.join(directory, 'report.json'))).mtimeMs;
-    return { name, directory, model, motorId, timestamp: timestamp ? Number(timestamp) : modified };
+      const run = await recordings.inspectRun(directory);
+      knownRuns.add(directory);
+      return run;
+    } catch { return null; }
   }));
   return runs.filter(Boolean).sort((a, b) => b.timestamp - a.timestamp);
 }
 
 function createWindow() {
+  const background = nativeTheme.shouldUseDarkColors ? '#121212' : '#ffffff';
   window = new BrowserWindow({
     width: 1440,
     height: 940,
-    minWidth: 1060,
-    minHeight: 700,
+    minWidth: 720,
+    minHeight: 600,
     title: 'Motor Setup Tool · Motomind',
     icon: path.join(root, 'assets', 'icons', process.platform === 'win32' ? 'motor-setup-tool.ico' : '256.png'),
-    backgroundColor: '#f4f5f7',
+    backgroundColor: background,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    titleBarOverlay: {
+      height: titleBarHeight,
+      color: background,
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#fafafa' : '#171717',
+    },
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 20, y: 13 } } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -114,7 +105,7 @@ function createWindow() {
     },
   });
   if (process.platform === 'linux') window.setMenuBarVisibility(false);
-  window.loadFile(path.join(__dirname, 'index.html'));
+  window.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('render-process-gone', () => { try { backend?.cancel(); } catch { /* Firmware transfer finishes before exit. */ } });
@@ -127,31 +118,33 @@ function createWindow() {
           if (process.env.MOTOMIND_SMOKE_REPORT) {
             const directory = process.env.MOTOMIND_SMOKE_REPORT;
             knownRuns.add(directory);
-            await window.webContents.executeJavaScript(`window.motorApp.loadRun(${JSON.stringify(directory)}).then(openReport)`);
+            await window.webContents.executeJavaScript(`window.motorSmoke.actions.openRun(${JSON.stringify(directory)})`);
             await new Promise(resolve => setTimeout(resolve, 200));
           }
           if (['calibrate', 'test', 'setup', 'files'].includes(process.env.MOTOMIND_SMOKE_TAB)) {
-            await window.webContents.executeJavaScript(`setTab(${JSON.stringify(process.env.MOTOMIND_SMOKE_TAB)})`);
+            await window.webContents.executeJavaScript(`window.motorSmoke.actions.setTab(${JSON.stringify(process.env.MOTOMIND_SMOKE_TAB)})`);
             await new Promise(resolve => setTimeout(resolve, 400));
           }
-          if (['slcan', 'gsusb'].includes(process.env.MOTOMIND_SMOKE_TRANSPORT)) {
-            await window.webContents.executeJavaScript(`document.getElementById("transport-select").value = ${JSON.stringify(process.env.MOTOMIND_SMOKE_TRANSPORT)}; document.getElementById("transport-select").dispatchEvent(new Event("change"))`);
+          if (process.env.MOTOMIND_SMOKE_TRANSPORT === 'gsusb') {
+            await window.webContents.executeJavaScript(`window.motorSmoke.actions.changeConnection('transport', ${JSON.stringify(process.env.MOTOMIND_SMOKE_TRANSPORT)})`);
             await new Promise(resolve => setTimeout(resolve, 200));
           }
           if (['system', 'light', 'dark'].includes(process.env.MOTOMIND_SMOKE_THEME)) {
-            await window.webContents.executeJavaScript(`document.getElementById("theme-select").value = ${JSON.stringify(process.env.MOTOMIND_SMOKE_THEME)}; document.getElementById("theme-select").dispatchEvent(new Event("change"))`);
+            await window.webContents.executeJavaScript(`window.motorSmoke.setTheme(${JSON.stringify(process.env.MOTOMIND_SMOKE_THEME)})`);
           }
           if (process.env.MOTOMIND_SMOKE_COLLAPSE === '1') {
-            await window.webContents.executeJavaScript('document.getElementById("connection-panel").open = false');
+            await window.webContents.executeJavaScript('window.motorSmoke.actions.toggleConnection()');
             await new Promise(resolve => setTimeout(resolve, 100));
           }
           if (process.env.MOTOMIND_SMOKE_SETTINGS === '1') {
-            await window.webContents.executeJavaScript('document.getElementById("settings-dialog").showModal()');
+            await window.webContents.executeJavaScript('window.motorSmoke.actions.openSettings()');
           }
-          const details = await window.webContents.executeJavaScript('({title:document.title,bridge:typeof window.motorApp,can:document.getElementById("can-state").textContent,logo:document.querySelector(".brand img").naturalWidth,tab:state.tab,actionsHidden:document.getElementById("top-actions").classList.contains("hidden"),theme:document.documentElement.dataset.theme,appearance:document.getElementById("theme-select").value,connectionOpen:document.getElementById("connection-panel").open})');
+          await new Promise(resolve => setTimeout(resolve, 200));
+          const details = await window.webContents.executeJavaScript('({title:document.title,bridge:typeof window.motorApp,can:document.querySelector(".connection-meta")?.textContent,logo:Boolean(document.querySelector("[data-slot=motomind-logo]")),tab:window.motorSmoke.getSnapshot().tab,theme:document.documentElement.dataset.theme,connectionOpen:window.motorSmoke.getSnapshot().connectionOpen})');
           details.version = app.getVersion();
+          details.backendReady = !backendError;
           details.updateError = updateError;
-          details.settingsOpen = await window.webContents.executeJavaScript('document.getElementById("settings-dialog").open');
+          details.settingsOpen = await window.webContents.executeJavaScript('window.motorSmoke.getSnapshot().settingsOpen');
           await fs.writeFile(process.env.MOTOMIND_SMOKE_PATH, (await window.webContents.capturePage()).toPNG());
           await fs.writeFile(`${process.env.MOTOMIND_SMOKE_PATH}.json`, JSON.stringify(details));
           console.log(JSON.stringify(details));
@@ -171,13 +164,14 @@ app.whenReady().then(async () => {
     updateError = await nativeInstall.readUpdateError(app);
   } catch { /* No previous update error. */ }
   try {
-    backend = new Backend(backendPath(root, process.resourcesPath), send);
+    backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
 
   ipcMain.handle('backend:run', async (event, operation, params) => {
     assertSender(event);
     if (installingUpdate) throw new Error('Wait for the update to finish');
     if (backendError) throw backendError;
+    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (operation === 'analyze' && !knownRuns.has(params?.directory)) throw new Error('Select a saved run first');
     if (operation === 'calibrate' && params?.output && !selectedOutputs.has(params.output)) throw new Error('Choose the calibration folder with the file picker');
     const result = await backend.run(operation, params);
@@ -206,6 +200,19 @@ app.whenReady().then(async () => {
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
+  ipcMain.handle('window:setTheme', (event, theme) => {
+    assertSender(event);
+    if (!['system', 'light', 'dark'].includes(theme)) throw new Error('Unknown appearance');
+    nativeTheme.themeSource = theme;
+    const dark = nativeTheme.shouldUseDarkColors;
+    const background = dark ? '#121212' : '#ffffff';
+    window.setBackgroundColor(background);
+    if (process.platform !== 'darwin') window.setTitleBarOverlay({
+      color: background,
+      symbolColor: dark ? '#fafafa' : '#171717',
+      height: titleBarHeight,
+    });
+  });
   ipcMain.handle('backend:preview', (event, config) => {
     assertSender(event);
     if (backendError) throw backendError;
@@ -214,7 +221,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('calibration:pickOutput', async event => {
     assertSender(event);
     if (backend?.active) throw new Error('Finish the current operation first');
-    const base = path.join(process.platform === 'linux' ? process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share') : app.getPath('appData'), 'motomind-motor-calib', 'runs');
+    const base = dataDirectory();
     await fs.mkdir(base, { recursive: true });
     const suggested = `calibration-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     const result = await dialog.showSaveDialog(window, { title: 'Choose new calibration folder', defaultPath: path.join(base, suggested), buttonLabel: 'Choose folder' });
@@ -244,6 +251,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('updates:check', async event => {
     assertSender(event);
+    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     checkedUpdate = await updater.check(app.getVersion());
     const installMode = nativeInstall.mode(app);
@@ -256,6 +264,7 @@ app.whenReady().then(async () => {
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
     if (!nativeInstall.mode(app)) throw new Error('Install a packaged copy to update from the app');
+    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     installingUpdate = true;
     const release = checkedUpdate;
@@ -276,6 +285,40 @@ app.whenReady().then(async () => {
   ipcMain.handle('runs:load', async (event, directory) => {
     assertSender(event);
     return loadRun(directory);
+  });
+  ipcMain.handle('runs:export', async (event, directory, file = null) => {
+    assertSender(event);
+    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
+    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
+    recordingOperation = true;
+    try {
+      const run = await recordings.inspectRun(directory);
+      if (file !== null && !['training.csv', 'validation.csv', 'calibration.json'].includes(file)) throw new Error('Choose an available recording file');
+      if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
+      const extension = file ? path.extname(file).slice(1) : 'zip';
+      const selection = await dialog.showSaveDialog(window, {
+        title: file ? `Download ${file}` : 'Download calibration run',
+        defaultPath: path.join(app.getPath('downloads'), recordings.exportName(run, file)),
+        filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+      });
+      if (selection.canceled || !selection.filePath) return null;
+      return await recordings.exportRun(directory, selection.filePath, file);
+    } finally { recordingOperation = false; }
+  });
+  ipcMain.handle('runs:delete', async (event, directory) => {
+    assertSender(event);
+    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
+    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
+    recordingOperation = true;
+    try {
+      await recordings.deleteRun(directory);
+      knownRuns.delete(directory);
+      let recent = [];
+      try { recent = JSON.parse(await fs.readFile(recentPathFile(), 'utf8')); } catch { /* No recent paths. */ }
+      try { if (Array.isArray(recent)) await fs.writeFile(recentPathFile(), JSON.stringify(recent.filter(item => item !== directory))); }
+      catch { /* Deletion succeeded; stale recent entries are ignored by listRuns. */ }
+      return { directory };
+    } finally { recordingOperation = false; }
   });
   ipcMain.handle('runs:show', async (event, directory) => {
     assertSender(event);

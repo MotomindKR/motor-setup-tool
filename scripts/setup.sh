@@ -12,4 +12,4 @@ if [[ -x .tools/cargo/bin/cargo ]]; then
     export RUSTUP_HOME="$PWD/.tools/rustup"
     export PATH="$CARGO_HOME/bin:$PATH"
 fi
-cargo build --locked
+cargo build --locked --release

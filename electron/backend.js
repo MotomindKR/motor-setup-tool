@@ -3,6 +3,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const registerCatalog = require('./register-catalog.json');
 
 function integer(value, name, min = 1, max = 254) {
   const n = Number(value);
@@ -22,11 +23,7 @@ function validCan(value) {
   if (/^gsusb:(?:[0-9a-f]{2}){1,256}:(?:[1-9]|[1-9][0-9]{1,2})$/.test(value)) {
     return Number(value.slice(value.lastIndexOf(':') + 1)) <= 255;
   }
-  const match = /^slcan:(lawicel|canable):(115200|460800|921600|1000000|2000000):(.{1,256})$/.exec(value);
-  if (!match) return false;
-  return process.platform === 'win32'
-    ? /^COM[1-9][0-9]*$/i.test(match[3])
-    : /^\/dev\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+$/.test(match[3]);
+  return false;
 }
 
 function target(params) {
@@ -37,18 +34,20 @@ function target(params) {
   return ['--can', can, '--host-id', integer(params.hostId ?? 253, 'Host ID'), '--id', integer(params.id, 'Motor ID')];
 }
 
-function registerIndex(value, writable = false) {
+function setupRegister(value, writable = false, model) {
+  if (!/^(?:RS-0[0-6]|RS-10P)$/.test(model)) throw new Error('Select a supported motor model');
   const index = Number(value);
-  if (!Number.isInteger(index) || !((index >= 0x2011 && index <= (writable ? 0x2017 : 0x2019)) || [0x7029, 0x702B].includes(index))) {
-    throw new Error('Select a documented persistent register');
+  const base = registerCatalog.find(item => Number(item.index) === index);
+  const item = base ? { ...base, ...base.overrides?.[model] } : null;
+  if (!Number.isInteger(index) || !item?.readable || (writable && (!item.writable || !item.editable || item.persistence !== 'save_to_flash'))) {
+    throw new Error('Select a documented register allowed for this operation');
   }
-  return `0x${index.toString(16)}`;
+  return item;
 }
 
 function argsFor(operation, params = {}) {
   switch (operation) {
     case 'interfaces': return ['can', 'list'];
-    case 'serialPorts': return ['can', 'serial-list'];
     case 'usbAdapters': return ['can', 'usb-list'];
     case 'canUp': {
       const can = params.can;
@@ -64,9 +63,8 @@ function argsFor(operation, params = {}) {
       target({ ...params, id: 1 });
       return ['scan', '--can', params.can, '--host-id', integer(params.hostId ?? 253, 'Host ID')];
     }
-    case 'info': return ['info', ...target(params)];
     case 'plan': {
-      if (!/^RS-0[0-6]$/.test(params.model)) throw new Error('Unknown motor model');
+      if (!/^(?:RS-0[0-6]|RS-10P)$/.test(params.model)) throw new Error('Unknown motor model');
       return ['plan', '--model', params.model];
     }
     case 'calibrate': {
@@ -79,16 +77,9 @@ function argsFor(operation, params = {}) {
       if (typeof params.directory !== 'string' || !path.isAbsolute(params.directory)) throw new Error('Select a saved run');
       return ['analyze', params.directory];
     }
-    case 'monitor': return ['monitor', ...target(params)];
     case 'manual': {
       if (!params.config || typeof params.config !== 'object') throw new Error('Manual configuration missing');
       return ['manual-session', ...target(params)];
-    }
-    case 'jog': {
-      if (params.confirmed !== true) throw new Error('Confirm the jog conditions first');
-      const speed = number(params.speed, 'Jog speed', -100, 100);
-      if (Number(speed) === 0) throw new Error('Jog speed must be nonzero');
-      return ['jog', ...target(params), '--speed', speed, '--seconds', number(params.seconds ?? 2, 'Jog duration', 0.05, 5), '--yes'];
     }
     case 'stop': return ['stop', ...target(params)];
     case 'zero': {
@@ -99,39 +90,41 @@ function argsFor(operation, params = {}) {
       if (params.confirmed !== true) throw new Error('Confirm the ID change first');
       return ['set-id', ...target(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
     }
-    case 'firmwareCheck': return ['firmware', 'check', ...target(params)];
     case 'firmwarePrepare': return ['firmware', 'prepare', ...target(params)];
     case 'firmwareUpdate': {
       if (params.confirmed !== true) throw new Error('Confirm firmware update and stable power first');
       return ['firmware', 'update', ...target(params), '--yes'];
     }
-    case 'registerList': return ['register', 'list'];
-    case 'registerRead': return ['register', 'read', ...target(params), '--index', registerIndex(params.index)];
+    case 'registerList': {
+      if (!/^(?:RS-0[0-6]|RS-10P)$/.test(params.model)) throw new Error('Select a supported motor model');
+      return ['register', 'list', '--model', params.model];
+    }
+    case 'registerRead': return ['register', 'read', ...target(params), '--index', setupRegister(params.index, false, params.model).index];
     case 'registerWrite': {
       if (params.confirmed !== true) throw new Error('Confirm the persistent register change first');
-      const index = registerIndex(params.index, true);
-      const value = number(params.value, 'Register value', -7, 200);
+      const item = setupRegister(params.index, true, params.model);
+      const value = number(params.value, 'Register value', item.min, item.max);
       if (typeof params.uuid !== 'string' || !/^[a-fA-F0-9]{16}$/.test(params.uuid)) throw new Error('Read the motor identity again');
       if (typeof params.expectedRaw !== 'string' || !/^[a-fA-F0-9]{8}$/.test(params.expectedRaw)) throw new Error('Read the register again');
-      return ['register', 'write', ...target(params), '--index', index, '--value', value, '--uuid', params.uuid, '--expected-raw', params.expectedRaw, '--yes'];
+      return ['register', 'write', ...target(params), '--index', item.index, '--value', value, '--uuid', params.uuid, '--expected-raw', params.expectedRaw, '--yes'];
     }
     default: throw new Error('Unknown operation');
   }
 }
 
-function backendPath(root, resourcesPath = null) {
+function backendPath(root, resourcesPath = null, override = process.env.MOTOMIND_BACKEND) {
   const binary = process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
   if (resourcesPath) {
     const bundled = path.join(resourcesPath, 'backend', binary);
-    if (fs.existsSync(bundled)) return bundled;
+    if (!fs.existsSync(bundled)) throw new Error(`Bundled Rust backend missing: ${bundled}`);
+    return bundled;
   }
-  if (process.env.MOTOMIND_BACKEND) {
-    if (fs.existsSync(process.env.MOTOMIND_BACKEND)) return path.resolve(process.env.MOTOMIND_BACKEND);
-    throw new Error(`Rust backend missing: ${process.env.MOTOMIND_BACKEND}`);
+  if (override) {
+    if (fs.existsSync(override)) return path.resolve(override);
+    throw new Error(`Rust backend missing: ${override}`);
   }
-  for (const candidate of [path.join(root, 'target', 'release', binary), path.join(root, 'target', 'debug', binary)]) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
+  const release = path.join(root, 'target', 'release', binary);
+  if (fs.existsSync(release)) return release;
   throw new Error('Rust backend missing. Build it with cargo build --release.');
 }
 
@@ -173,13 +166,13 @@ class Backend {
       let settled = false;
       child.stdout.on('data', chunk => {
         const text = chunk.toString();
-        if (operation === 'monitor' || operation === 'jog' || operation === 'manual') {
+        if (operation === 'manual') {
           lines += text;
           let index;
           while ((index = lines.indexOf('\n')) >= 0) {
             const line = lines.slice(0, index);
             lines = lines.slice(index + 1);
-            try { this.emit({ type: operation === 'manual' ? 'manualStatus' : 'feedback', value: JSON.parse(line) }); } catch { /* partial or malformed line */ }
+            try { this.emit({ type: 'manualStatus', value: JSON.parse(line) }); } catch { /* partial or malformed line */ }
           }
         } else {
           stdout += text;
@@ -209,7 +202,7 @@ class Backend {
           reject(new Error(stderr.trim() || `Backend exited with status ${code}`));
           return;
         }
-        if (operation === 'monitor' || operation === 'jog' || operation === 'manual') return resolve(null);
+        if (operation === 'manual') return resolve(null);
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Backend returned invalid JSON')); }
       });
     });

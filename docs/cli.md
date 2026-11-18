@@ -26,11 +26,9 @@ application directory.
 | Transport | Find it | `--can` example |
 |---|---|---|
 | SocketCAN (Linux) | `can list` | `can0` |
-| SLCAN | `can serial-list` | `slcan:canable:921600:/dev/ttyUSB0` or `slcan:canable:921600:COM3` |
 | GS USB | `can usb-list` | `gsusb:303033:79` (use the listed adapter `id`) |
 
-SLCAN also supports the `lawicel` profile; both serial and direct USB modes
-configure Classic CAN at 1 Mbps when opened. A GS USB address can change after
+Direct USB mode configures Classic CAN at 1 Mbps when opened. A GS USB address can change after
 reconnection. See [USB access](user-guide.md#direct-gs-usb-adapters) for Linux
 permissions.
 
@@ -104,10 +102,10 @@ Its duration starts after the enable handshake finishes.
 "$tool" set-id --can can0 --id 127 --new-id 7 --yes
 "$tool" firmware check --can can0 --id 7
 "$tool" firmware update --can can0 --id 7 --yes
-"$tool" register list
+"$tool" register list --model RS-00
 "$tool" register read --can can0 --id 7 --index 0x7029
-"$tool" register read --can can0 --id 7 --index 0x2012
-"$tool" register write --can can0 --id 7 --index 0x2012 --value 0.025 --uuid UUID_FROM_READ --expected-raw RAW_FROM_READ --yes
+"$tool" register read --can can0 --id 7 --index 0x7010
+"$tool" register write --can can0 --id 7 --index 0x7010 --value 0.025 --uuid UUID_FROM_READ --expected-raw RAW_FROM_READ --yes
 ```
 
 Zero requires a stationary motor. ID changes check for collisions and verify
@@ -139,3 +137,5 @@ an accepted fit. Machine-readable values retain full precision.
 
 Ctrl+C, SIGTERM, and SIGHUP request cancellation. A software stop still depends
 on a working CAN link; keep a physical stop available when running motion.
+
+See [Register access and persistence](registers.md) for model-specific CAN indices.

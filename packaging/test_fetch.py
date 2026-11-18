@@ -7,7 +7,9 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 
-import fetch
+# These download-integrity tests use mocked assets and do not depend on the host.
+with patch('platform.machine', return_value='x86_64'):
+    import fetch
 
 
 class DownloadTests(unittest.TestCase):

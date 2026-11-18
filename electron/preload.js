@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('motorApp', {
   platform: process.platform,
+  smokeMode: Boolean(process.env.MOTOMIND_SMOKE_PATH),
+  setWindowTheme: theme => ipcRenderer.invoke('window:setTheme', theme),
   run: (operation, params) => ipcRenderer.invoke('backend:run', operation, params),
   cancel: () => ipcRenderer.invoke('backend:cancel'),
   manualIntent: value => ipcRenderer.invoke('backend:manualIntent', value),
@@ -22,6 +24,8 @@ contextBridge.exposeInMainWorld('motorApp', {
   listRuns: () => ipcRenderer.invoke('runs:list'),
   pickRun: () => ipcRenderer.invoke('runs:pick'),
   loadRun: directory => ipcRenderer.invoke('runs:load', directory),
+  exportRun: (directory, file) => ipcRenderer.invoke('runs:export', directory, file),
+  deleteRun: directory => ipcRenderer.invoke('runs:delete', directory),
   showRun: directory => ipcRenderer.invoke('runs:show', directory),
   copyRunPath: directory => ipcRenderer.invoke('runs:copyPath', directory),
   openReleaseNotes: () => ipcRenderer.invoke('links:firmwareRelease'),

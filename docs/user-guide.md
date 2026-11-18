@@ -19,11 +19,10 @@ Before scanning:
 |---|---|---|
 | SocketCAN | Linux | A CAN interface such as `can0` |
 | GS USB | Linux, macOS, Windows | A detected USB adapter |
-| SLCAN | Linux, macOS, Windows | Serial port, protocol profile, and UART speed |
 
 ### SocketCAN on Linux
 
-Select the interface and click **CAN up** to configure a down bus at 1 Mbps.
+Select the interface and click **Bring up CAN** to configure a down bus at 1 Mbps.
 An active interface offers **Restart CAN**. The system authentication dialog
 requires `iproute2`, `pkexec`, and a desktop authentication agent; the app does
 not handle the password. If these are unavailable, configure an idle bus in a
@@ -39,9 +38,12 @@ Replace `can0` and the bitrate as needed. Run the app as your normal user.
 
 ### Direct GS USB adapters
 
-Select **GS USB**, choose the USB adapter, then scan. This mode uses the GS USB
+On Linux, select **GS USB**. On macOS and Windows it is selected automatically.
+Choose the USB adapter, then scan. A sole accessible adapter is selected for you.
+Refreshing an unchanged adapter keeps the selected motor and its settings.
+This mode uses the GS USB
 protocol directly. On Linux, it temporarily detaches the `gs_usb` kernel
-driver; when returning to SocketCAN, click **CAN up** again.
+driver; when returning to SocketCAN, click **Bring up CAN** again.
 
 On Linux, grant your desktop user USB access once, then reconnect the adapter:
 
@@ -53,29 +55,25 @@ sudo udevadm control --reload-rules
 If **USB access denied** remains, reconnect the adapter after loading the rule.
 Refresh the list after reconnecting because its USB address may change.
 
-### SLCAN serial adapters
-
-Select **SLCAN**, then choose a detected port (or **Enter manually…**), the
-LAWICEL or CANable profile, and the adapter's UART speed. The app configures
-Classic CAN at 1 Mbps when it opens the port.
-
 ### Scan
 
-In **Connection**, choose the bus, click **Scan**, then choose the discovered
-motor. The app reads its firmware to select the model and calibration preset.
+In **Connection**, choose the adapter and bus, then click **Scan motors**.
+A single motor is selected automatically. If several are found, choose one.
+The app reads its firmware to select the model and calibration preset.
 Use an idle bus: scanning can stop responding motors. Each motor needs a unique
 CAN ID. An unknown or unreadable firmware version blocks calibration.
 
 ## Run calibration
 
-1. Select **Calibrate**. Review maximum torque, speed cutoff, requested speed, and travel.
-2. Open **Motion preview** to see the requested speed and torque bursts. These
-   are test inputs, not predictions of the motor's response.
-3. If needed, adjust limits and recording duration under **Advanced**. **Restore
-   motor preset** restores the selected model's settings.
-4. Check **Motor secured · limits reviewed** and press **Start calibration**.
-5. Wait for recording, fitting, and validation to finish. The default recording
+1. Review torque, speed, travel, and temperature under **Limits**. **Reset** restores
+   the motor preset. **Advanced settings** contains duration, model, and save-folder options.
+2. Check **Motor secured · limits reviewed** and press **Start calibration**.
+3. Wait for recording, fitting, and validation to finish. The default recording
    contains 40 seconds of training and 20 seconds of separate validation.
+
+**Motion preview** is optional. It shows the requested speed and torque bursts,
+not a prediction of the response. After reviewing results, select **New calibration**
+to run another test; review is required again.
 
 The motion suite uses speed steps, sweeps, torque bursts, and coast-down.
 **Stop** cancels the job. Limits, communication errors, and motor faults also
@@ -112,19 +110,21 @@ behavior with a robot load.
 
 Select the motor, then use **Test** or **Setup**:
 
-- **Test → Set current position as zero** makes the current shaft position the zero
+- **Test → Set position as zero** makes the current shaft position the zero
   reference. The app stops the motor and checks that it is stationary first.
   Monitoring stops before the zero is written. Persistence across power cycles
   depends on the firmware.
 - To show a chosen angle at the present shaft position, enter it under
-  **Setup → Display angle at this position**, then select **Set current position**.
+  **Setup → Position reference → Display angle**, then select **Set current position**.
   The motor's firmware zero is set to 0; the app saves the displayed offset by
   the motor's eight-byte UUID. Live position and calibration reports carry this
   reference angle. The motor does not report this app offset to other software.
-- Enter **New ID**, then **Change ID**. The app checks for an ID collision and verifies
-  the same motor at its new address.
-- The top bar shows **Connected · Enabled** or **Connected · Disabled**.
-  **Disable motor** is available only while the selected motor is enabled.
+- Enter **New motor ID**, then **Change ID**. The app checks for an ID collision and verifies
+  the same motor at its new address. It stays selected with the new ID; no rescan
+  is needed. Your limits and position reference are kept.
+- The top bar shows the connection or monitoring state. In **Test**, the live
+  feedback badge shows **Enabled** or **Disabled**. **Disable motor** is available
+  for the selected motor, except during firmware transfer or app installation.
 
 ### Persistent registers
 
@@ -135,10 +135,14 @@ Open **Setup**. The main area contains the register list and editor.
 3. Choose or enter a new value and click **Save to motor**. Confirm the change.
 4. Power cycle and read again to verify persistence.
 
+The save also commits other pending persistent settings. Access depends on the
+model; write-only and undocumented settings are protected. See the
+[register audit](registers.md) for the full permissions and persistence table.
+
 | Registers | Editing |
 | --- | --- |
-| Gains and filters · `0x2011`–`0x2017` | Numeric input within documented ranges |
-| Speed and current limits · `0x2018`–`0x2019` | Read only |
+| Gains and filters · `0x7010`, `0x7011`, `0x7014`, `0x701E`–`0x7021` | Numeric input within documented ranges |
+| Speed and current limits · `0x7017`–`0x7018` | Protected (device supports R/W) |
 | Power-on position range · `zero_sta`, `0x7029` | Choose `0` (0 to 2π) or `1` (−π to π) |
 | Position offset · `add_offset`, `0x702B` | Radians, −7 to 7 |
 
@@ -155,7 +159,7 @@ update the motor firmware if a documented setting is unavailable.
    Stale or unavailable values show `--`.
 2. Secure the housing, clear the shaft, choose a speed, and check
    **Motor secured · shaft clear**.
-3. Click **Enable motor** and wait for the watchdog check.
+3. Click **Enable motor** and wait for the watchdog check. The same button changes to **Disable motor**.
 4. Hold **Jog −** or **Jog +**. Release to command zero speed while keeping the
    motor enabled. Click **Disable motor** to turn torque off.
 
@@ -163,7 +167,7 @@ update the motor firmware if a documented setting is unavailable.
 |---|---|
 | Speed | Lower of 1 rad/s and 10% of calibration speed limit |
 | Torque | Lower of 10% rated torque and calibration torque limit |
-| Travel | Lower of ±one output revolution from enable position and calibration travel limit |
+| Travel | Configured calibration travel limit, measured from the enable position |
 
 Enabling alone commands zero torque. After a jog, the controller brakes toward
 zero speed without holding a fixed position. Jogging also stops on monitor
@@ -171,13 +175,17 @@ stop, tab/window/focus change, stale input, missing feedback, faults, or exceede
 limits. The Test view reports communication and limit errors. Stop monitoring
 before changing motors or setup. Monitoring saves no recording.
 
+Jogging slows near the configured travel boundary and stops outward motion
+before the cutoff. Jog in the opposite direction to move back. There is no
+separate one-revolution limit.
+
 ## Update firmware
 
 The **Firmware update available** notice compares the selected motor against
 the app's bundled, verified catalog. It works offline and does not track future
 vendor releases or recommend downgrades.
 
-1. Open **Setup → Firmware update** and select **Download and verify**.
+1. Open **Setup → Firmware** and select **Download and verify**.
 2. Compare the installed and target versions and confirm the model and ID.
 3. Start the update. The app disables the motor before checking the bus and
    starting transfer. Keep motor power and USB connected until it finishes.
@@ -185,25 +193,27 @@ vendor releases or recommend downgrades.
 The app blocks cancellation and window closing during the write. Success
 requires a matching version readback and the same motor identity. An interrupted
 transfer may require the vendor's recovery tools. After a verified update, the
-selected motor stays selected and its displayed firmware version refreshes.
+selected motor stays selected and its displayed firmware version refreshes,
+including in the motor list. No rescan is needed. Your limits and position
+reference are kept; review the limits again before starting calibration.
 
-## Open and refit recordings
+## Open, download, and delete recordings
 
-Recordings are saved automatically. In **Files**, enter a saved run folder and
-choose **Open** to view it or **Refit** to rerun fitting without moving hardware.
-Refit replaces analysis artifacts in that folder; copy the folder first if you
-want to preserve the earlier result.
+In **Files**, select a saved run or use **Open** to choose a recording folder.
+The report shows model, CAN ID and actuator UUID. This eight-byte hardware
+identity is recorded in `hardware.json` and `report.json`; the printed factory
+serial/barcode is not collected. Older runs without identity show “Not recorded”.
 
-Default locations:
+**Download** offers the entire run as a ZIP, individual training/validation CSVs,
+and calibration JSON when present. ZIPs include the original identity metadata;
+download filenames include model, CAN ID and UUID. The original CSV schema is
+preserved. **Show folder** opens the originals. **Refit recording** replaces the
+analysis artifacts using the original measured samples.
 
-| Data | Location |
-|---|---|
-| Recordings and results | `~/.local/share/motomind-motor-calib/runs/` |
-| Downloaded firmware | `~/.cache/motomind-motor-calib/firmware/` |
-
-`XDG_DATA_HOME` and `XDG_CACHE_HOME` override these base directories. Use
-**Copy folder path** for the current run. See [Simulation and exports](simulation.md)
-for the files to use in your robot model.
+Each saved run has a menu with downloads and **Delete run**. Deletion requires
+confirmation and permanently removes its calibration artifacts, bypassing the
+OS Trash. Unrelated files in a custom output folder are preserved. Incomplete
+runs also appear in the list and can be downloaded or deleted.
 
 ## Troubleshooting
 

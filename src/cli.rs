@@ -1,6 +1,7 @@
 //! Headless commands share the GUI's acquisition, manual control, and fitting code.
 use crate::{
-    bridge, can_admin, experiment, firmware, hardware, manual, pipeline, registers, types::*,
+    bridge, can_admin, engine, experiment, firmware, hardware, manual, paths, pipeline, registers,
+    types::*,
 };
 use anyhow::{Context, Result, ensure};
 use clap::{Args, Parser, Subcommand};
@@ -23,55 +24,18 @@ use std::{
     name = "motor-setup-tool",
     version,
     about = "Motomind motor calibration and setup",
-    long_about = "Motomind motor calibration and setup. Run without arguments to open the GUI.\nSubcommands run without a display. Results go to stdout as JSON; progress goes to stderr.",
-    args_conflicts_with_subcommands = true
+    long_about = "Motomind motor calibration and setup. Open the Electron app for the desktop interface.\nCommands run without a display. Results go to stdout as JSON; progress goes to stderr.",
+    arg_required_else_help = true
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Command>,
-    #[command(flatten)]
-    legacy: Legacy,
-}
-
-// Keep compatibility with earlier CLI and screenshot commands while rejecting
-// unknown arguments instead of accidentally opening the native UI.
-#[derive(Args)]
-struct Legacy {
-    #[arg(long, hide = true, group = "legacy_action")]
-    list_can: bool,
-    #[arg(long, hide = true, group = "legacy_action")]
-    self_check: bool,
-    #[arg(long, hide = true, group = "legacy_action")]
-    scan: Option<String>,
-    #[arg(long, hide = true, group = "legacy_action")]
-    firmware: Option<String>,
-    #[arg(long, hide = true, group = "legacy_action")]
-    update_firmware: Option<String>,
-    #[arg(long, hide = true, group = "legacy_action")]
-    analyze: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    motor_id: Option<u8>,
-    #[arg(long, hide = true)]
-    model: Option<String>,
-    /// Open a saved recording in the GUI.
-    #[arg(long)]
-    open: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    refit: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    connect: Option<String>,
-    #[arg(long, hide = true)]
-    screenshot: Option<PathBuf>,
-    #[arg(long, hide = true, requires = "screenshot", value_parser = ["light", "dark"])]
-    screenshot_theme: Option<String>,
-    #[arg(long, hide = true, requires = "screenshot", value_parser = ["calibrate", "test", "motor", "files"])]
-    screenshot_tab: Option<String>,
-    #[arg(long, hide = true, requires = "screenshot")]
-    screenshot_during_fit: bool,
+    command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Check the bundled MuJoCo runtime and application data directories.
+    SelfCheck,
     /// List, bring up, or restart a CAN interface at 1 Mbps.
     Can {
         #[command(subcommand)]
@@ -149,8 +113,11 @@ enum Command {
 
 #[derive(Subcommand)]
 enum RegisterCommand {
-    /// List documented persistent setup registers.
-    List,
+    /// List CAN register access and persistence for a motor model.
+    List {
+        #[arg(long, default_value = "RS-00")]
+        model: String,
+    },
     /// Read a register from a disabled motor.
     Read {
         #[command(flatten)]
@@ -188,8 +155,6 @@ fn register_index(text: &str) -> std::result::Result<u16, String> {
 enum CanCommand {
     /// List physical SocketCAN interfaces without sending frames.
     List,
-    /// List serial ports that can be used by SLCAN adapters.
-    SerialList,
     /// List GS-USB adapters available for direct USB access.
     UsbList,
     /// Bring a down interface up at 1 Mbps.
@@ -316,7 +281,7 @@ fn preset(model: &str) -> Result<Config> {
     let profile = Profile::presets()
         .into_iter()
         .find(|p| p.model == model)
-        .context("Supported models: RS-00 through RS-06")?;
+        .context("Supported models: RS-00 through RS-06, RS-10P")?;
     let mut config = Config {
         profile,
         ..Default::default()
@@ -489,11 +454,8 @@ fn detected(target: &Target) -> Result<(Config, hardware::DiscoveredMotor)> {
     Ok((config, motor))
 }
 
-pub fn dispatch() -> Result<bool> {
-    let args = Cli::parse();
-    let Some(command) = args.command else {
-        return Ok(false);
-    };
+pub fn dispatch() -> Result<()> {
+    let command = Cli::parse().command;
     let cancel = Arc::new(AtomicBool::new(false));
     let signal = cancel.clone();
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
@@ -501,34 +463,30 @@ pub fn dispatch() -> Result<bool> {
     if cancel.load(Ordering::Relaxed) {
         anyhow::bail!("Command cancelled; active motor control has stopped");
     }
-    result?;
-    Ok(true)
+    result
 }
 
 fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
     let progress = Progress::default();
     match command {
+        Command::SelfCheck => {
+            engine::self_check()?;
+            let run = bridge::new_run_dir()?;
+            let probe = run.join("package-check.json");
+            bridge::write_json(&probe, &json!({"mujoco": engine::VERSION}))?;
+            let _: serde_json::Value = bridge::read_json(&probe)?;
+            std::fs::remove_file(probe)?;
+            std::fs::remove_dir(run)?;
+            output(&json!({
+                "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION"),
+                "mujoco": engine::VERSION, "data": paths::data_dir()?,
+                "cache": paths::cache_dir()?, "locks": paths::lock_dir()?,
+                "interfaces": hardware::available_interfaces()?
+            }))
+        }
         Command::Can { command } => {
             match command {
                 CanCommand::List => {}
-                CanCommand::SerialList => {
-                    let mut ports = serialport::available_ports()?
-                        .into_iter()
-                        .map(|port| port.port_name)
-                        .filter(|name| {
-                            #[cfg(target_os = "linux")]
-                            if name
-                                .strip_prefix("/dev/ttyS")
-                                .is_some_and(|suffix| suffix.parse::<u32>().is_ok())
-                            {
-                                return false;
-                            }
-                            true
-                        })
-                        .collect::<Vec<_>>();
-                    ports.sort();
-                    return output(&ports);
-                }
                 CanCommand::UsbList => return output(&hardware::available_usb_adapters()?),
                 CanCommand::Up(args) => can_admin::up(&args.interface, false, args.auth, cancel)?,
                 CanCommand::Restart(args) => {
@@ -680,7 +638,7 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             output(&json!({"id":target.id,"firmware":version}))
         }
         Command::Register { command } => match command {
-            RegisterCommand::List => output(&registers::CATALOG),
+            RegisterCommand::List { model } => output(&registers::catalog(&model)?),
             RegisterCommand::Read { target, index } => {
                 let (config, _) = detected(&target)?;
                 output(&registers::read(&config, index)?)
@@ -795,6 +753,13 @@ mod tests {
     use clap::CommandFactory;
 
     #[test]
+    fn adapter_commands_only_expose_socketcan_and_direct_usb() {
+        assert!(Cli::try_parse_from(["tool", "can", "list"]).is_ok());
+        assert!(Cli::try_parse_from(["tool", "can", "usb-list"]).is_ok());
+        assert!(Cli::try_parse_from(["tool", "can", "serial-list"]).is_err());
+    }
+
+    #[test]
     fn requested_gui_config_keeps_advanced_fields_but_checks_motor_identity() {
         let detected = preset("RS-06").unwrap();
         let mut requested = detected.clone();
@@ -864,7 +829,7 @@ mod tests {
                 "--id",
                 "127",
                 "--index",
-                "0x2012",
+                "0x7010",
                 "--value",
                 "1",
                 "--uuid",
@@ -895,12 +860,21 @@ mod tests {
             ])
             .is_ok()
         );
-        assert!(Cli::try_parse_from(["tool", "--list-can"]).is_ok());
-        assert_eq!(register_index("0x2012").unwrap(), 0x2012);
+        assert!(Cli::try_parse_from(["tool", "self-check"]).is_ok());
+        assert_eq!(register_index("0x7010").unwrap(), 0x7010);
         assert!(register_index("0xzzzz").is_err());
-        assert!(
-            Cli::try_parse_from(["tool", "--screenshot=/tmp/a.png", "--screenshot-theme=dark"])
-                .is_ok()
+        for removed in [
+            "--list-can",
+            "--self-check",
+            "--scan=can0",
+            "--open=/tmp/run",
+            "--screenshot=/tmp/a.png",
+        ] {
+            assert!(Cli::try_parse_from(["tool", removed]).is_err());
+        }
+        assert_eq!(
+            Cli::try_parse_from(["tool"]).err().unwrap().kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
         for p in Profile::presets() {
             assert!(preset(&p.model).is_ok());

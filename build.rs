@@ -4,7 +4,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=MUJOCO_DYNAMIC_LINK_DIR");
     println!("cargo:rerun-if-env-changed=MUJOCO_DOWNLOAD_DIR");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib");
         if std::env::var("PROFILE").as_deref() == Ok("release") {
             return;

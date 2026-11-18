@@ -5,32 +5,30 @@
 
 ## Build and run
 
-Use Linux, Rust 1.95 or newer, and a C compiler/linker. CI pins Rust 1.98.1.
-On Ubuntu/Debian:
+Electron hosts the Motomind React frontend. The Rust backend provides the CLI,
+CAN control, calibration, and MuJoCo fitting; it has no standalone GUI.
+Use Rust 1.95 or newer, Node.js 22 or newer, and a C compiler/linker. CI pins
+Rust 1.98.1 for Linux checks. Install the pinned MuJoCo SDK as described in the
+[release guide](../packaging/README.md#build-locally).
 
 ```sh
-sudo apt-get install build-essential pkg-config libxkbcommon-x11-0 \
-  libxcb-xkb1 libgl1 libegl1 libwayland-client0
 ./scripts/setup.sh
-./scripts/run.sh
+cd electron
+npm ci
+npm start
 ```
 
-| Item | Behavior |
-|---|---|
-| Toolchain | `setup.sh` installs a workspace-local Rust if needed; `run.sh` selects it |
-| Dependencies | `Cargo.lock` pins crates; Cargo downloads matching MuJoCo to `.tools/mujoco/` |
-| Library loading | Development uses the download path; release builds need MuJoCo packaged beside the app |
-| App identity | Executable: `motor-setup-tool`; desktop ID: `com.motomind.MotorSetup` |
+`setup.sh` installs a workspace-local Rust toolchain if needed and builds the
+release backend. `npm start` builds the frontend and opens Electron. Development
+uses `target/release/motor-setup-tool`; `MOTOMIND_BACKEND` explicitly overrides
+that path. Packaged apps always use the bundled backend.
 
-Data, cache, CAN locks, and window settings retain their v0.1.0 locations.
-Keep the lock directory name so old and new binaries share bus ownership.
+For terminal use, `./scripts/run.sh --help` runs the same backend. Running it
+without arguments prints CLI help. To inspect recordings without hardware,
+open Electron and select a saved folder in **Files**.
 
-Opening the app does not start motor motion. Use a real saved run to work on
-results/UI without hardware:
-
-```sh
-./scripts/run.sh --open=/path/to/run
-```
+Data, cache, and CAN lock paths retain their v0.1.0 locations so desktop and CLI
+sessions contend for the same bus ownership. See the [CLI guide](cli.md).
 
 ## Checks
 
@@ -39,9 +37,13 @@ With Cargo on `PATH`:
 ```sh
 rustup component add rustfmt clippy
 ./scripts/check.sh
+cd electron
+npm run check
+npx playwright install chromium
+npm run test:ui
 ```
 
-If using the workspace-local toolchain, first set:
+For the workspace-local toolchain, first set:
 
 ```sh
 export CARGO_HOME="$PWD/.tools/cargo"
@@ -49,47 +51,42 @@ export RUSTUP_HOME="$PWD/.tools/rustup"
 export PATH="$CARGO_HOME/bin:$PATH"
 ```
 
-`check.sh` runs formatting, Clippy with warnings denied, and unit tests. These
-cover protocol, command limits, replay, fitting, acceptance, cancellation, and
-theme contrast without sending physical CAN frames. The ignored `vcalwatch`
-test needs an isolated virtual CAN interface.
+`check.sh` runs download-integrity checks, Rust formatting, Clippy with warnings
+denied, and unit tests. Frontend checks cover the controller, IPC arguments,
+recording files, updates, and production build. Browser interaction tests inject
+a test-only bridge and send no physical CAN frames.
 
 | Workflow | Trigger | Output |
 |---|---|---|
-| [Unit tests](../.github/workflows/tests.yml) | Main, pull request, manual | Checks in the Ubuntu build container |
+| [Unit tests](../.github/workflows/tests.yml) | Main, pull request, manual | Rust checks in the Ubuntu container; frontend build and interaction tests |
 | [Desktop release](../.github/workflows/release.yml) | Matching version tag | Linux DEB/RPM, macOS DMG, Windows EXE |
 
-For the same environment locally:
+For the Linux test environment locally:
 
 ```sh
-docker build -f packaging/Dockerfile -t motomind-packager .
+docker build -f packaging/Dockerfile -t motomind-tests .
 docker run --rm --user "$(id -u):$(id -g)" \
   -e CARGO_HOME=/work/.tools/ci-cargo -v "$PWD:/work" \
-  motomind-packager bash scripts/check-ci.sh
+  motomind-tests bash scripts/check-ci.sh
 ```
-
-The Test tab shares calibration's CAN lock and watchdog. Its worker renews a
-250 ms intent lease from UI frames. Releasing Jog commands zero speed; loss of
-UI authority disables the motor. Opening a view never enables it.
 
 ## Code map
 
 | Module | Responsibility |
 |---|---|
-| `app.rs`, `theme.rs` | UI, worker events, plots, shared appearance tokens |
-| `cli.rs`, `can_admin.rs` | Headless commands, signal cancellation, system authentication for CAN setup |
-| `manual.rs` | Live feedback, manual enable/jog, UI heartbeat and jog limits |
-| `hardware.rs` | SocketCAN discovery, acquisition, stop conditions, bus ownership |
-| `protocol.rs`, `firmware.rs` | Frame encoding/decoding and firmware transfer |
-| `types.rs`, `experiment.rs` | Profiles, configuration, motion generation, progress |
-| `fit.rs` | Training-only parameter estimation |
-| `engine.rs` | Native MuJoCo models and command-history replay |
-| `pipeline.rs` | Input validation, acceptance, reports, and exports |
-| `bridge.rs`, `paths.rs` | Artifact I/O and user directories |
+| `electron/src/` | Motomind React frontend, charts, and controller |
+| `electron/main.js`, `preload.js`, `backend.js` | Desktop window, IPC, and Rust process bridge |
+| `electron/recordings.js` | Recording metadata, downloads, and permanent deletion |
+| `cli.rs`, `can_admin.rs` | CLI, signals, and authenticated CAN setup |
+| `manual.rs` | Jog control, UI intent lease, and motor limits |
+| `hardware.rs`, `protocol.rs`, `firmware.rs`, `registers.rs` | CAN transport, motor protocol, OTA, and setup parameters |
+| `types.rs`, `experiment.rs` | Profiles, limits, and measurement plans |
+| `fit.rs`, `engine.rs`, `pipeline.rs` | Fitting, MuJoCo replay, validation, and exports |
+| `bridge.rs`, `paths.rs` | Artifact I/O and stable data directories |
 
-The UI sends work to a background worker. The motor loop owns timing and
-cancellation; rendering stays outside it. Recording and fitting emit typed
-progress events. Plots share `styled_plot` styling and legends.
+The Rust worker owns motor timing and the watchdog. Electron renews a 250 ms
+intent lease during manual control; focus loss, stale intent, or communication
+failure disables the motor. Opening a view never enables motion.
 
 ## Changes that affect results
 
@@ -112,32 +109,12 @@ replay behavior.
 
 ## Visual review
 
-Capture the native UI with a working desktop display:
+Run `npm run test:ui` in `electron/` for screenshots and interaction checks in
+light/dark themes and at narrow widths. Native window chrome and OS file dialogs
+also need an Electron smoke test. The Windows updater regression uses the
+`MOTOMIND_SMOKE_PATH` capture hook; it remains part of the packaged app.
 
-```sh
-./scripts/run.sh --open=/path/to/run --screenshot=/tmp/light.png --screenshot-theme=light
-./scripts/run.sh --open=/path/to/run --screenshot=/tmp/dark.png --screenshot-theme=dark
-```
-
-The capture process closes after saving. These commands only open saved data.
-Check graph legends, axis labels, units, clipping, and both theme palettes.
-For fitting progress, use a copy of a real run because refit rewrites artifacts:
-
-```sh
-./scripts/run.sh --refit=/path/to/copied/run \
-  --screenshot=/tmp/fitting.png --screenshot-during-fit
-```
-
-This captures the progress bar, then lets fitting finish before closing.
-Screenshot theme overrides affect only the capture process. System appearance
-comes from the XDG Settings portal over D-Bus, with the window system/egui
-fallback when unavailable. Fonts and branding are embedded; see
-[asset provenance and licenses](../assets/README.md).
-
-## CLI and compatibility
-
-See the [CLI guide](cli.md) for commands and scripting. GUI and CLI share the
-same CAN lock; only the host's `ip` command is elevated for CAN setup. Legacy
-options such as `--open`, `--refit`, and `--self-check` remain available in
-`./scripts/run.sh --help`. Use `--screenshot-tab=calibrate|test|motor|files`
-to capture a specific view; selecting Test starts no motion.
+To inspect real data manually, open a saved recording through **Files**. Use a
+copy when testing **Refit recording**, which replaces analysis artifacts.
+Appearance follows Electron's native system theme setting. Fonts and branding
+are bundled; see [asset provenance](../assets/README.md).

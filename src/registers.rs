@@ -1,4 +1,4 @@
-//! Documented persistent setup parameters shared by the supported RS manuals.
+//! Documented CAN setup parameters and read-only telemetry.
 //! Type 18 changes RAM; type 22 asks the motor to save persistent parameters.
 use crate::{
     hardware::{Bus, StopGuard},
@@ -6,174 +6,120 @@ use crate::{
     types::Config,
 };
 use anyhow::{Context, Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{thread, time::Duration};
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
     Float32,
     Uint8,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Choice {
     pub value: u8,
-    pub label: &'static str,
+    pub label: String,
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Register {
+    #[serde(deserialize_with = "deserialize_index")]
     pub index: u16,
-    pub name: &'static str,
-    pub symbol: &'static str,
+    pub name: String,
+    pub symbol: String,
     pub value_type: ValueType,
-    pub description: &'static str,
-    pub choices: &'static [Choice],
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub choices: Vec<Choice>,
+    pub readable: bool,
     pub writable: bool,
-    pub min: f64,
-    pub max: f64,
+    pub editable: bool,
+    pub persistence: Persistence,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub host_index: Option<String>,
+    pub protected_reason: Option<String>,
+    #[serde(default = "documented")]
+    pub availability: String,
+    #[serde(default, skip_serializing)]
+    overrides: std::collections::BTreeMap<String, RegisterOverride>,
 }
 
-// The July 2026 RS00–RS06 manuals agree on these indices and float32 types.
-// Limit registers are visible but not editable: the app must not persist
-// changes to the motor's own protection limits through a general editor.
-pub const CATALOG: &[Register] = &[
-    Register {
-        index: 0x2011,
-        name: "Current filter gain",
-        symbol: "cur_filter_gain",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 1.,
-    },
-    Register {
-        index: 0x2012,
-        name: "Current Kp",
-        symbol: "cur_kp",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2013,
-        name: "Current Ki",
-        symbol: "cur_ki",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2014,
-        name: "Speed Kp",
-        symbol: "spd_kp",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2015,
-        name: "Speed Ki",
-        symbol: "spd_ki",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2016,
-        name: "Position Kp",
-        symbol: "loc_kp",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2017,
-        name: "Speed filter gain",
-        symbol: "spd_filter_gain",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: true,
-        min: 0.,
-        max: 1.,
-    },
-    Register {
-        index: 0x2018,
-        name: "Speed limit",
-        symbol: "limit_spd",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: false,
-        min: 0.,
-        max: 200.,
-    },
-    Register {
-        index: 0x2019,
-        name: "Current limit",
-        symbol: "limit_cur",
-        value_type: ValueType::Float32,
-        description: "",
-        choices: &[],
-        writable: false,
-        min: 0.,
-        max: 23.,
-    },
-    // The host-computer 0x20xx aliases vary by model. The documented CAN aliases
-    // below are consistent; these are saved settings, unlike motion targets.
-    Register {
-        index: 0x7029,
-        name: "Power-on position range",
-        symbol: "zero_sta",
-        value_type: ValueType::Uint8,
-        description: "Select the position range used at power-on. Save, then power cycle to apply.",
-        choices: &[
-            Choice {
-                value: 0,
-                label: "0 · 0 to 2π",
-            },
-            Choice {
-                value: 1,
-                label: "1 · −π to π",
-            },
-        ],
-        writable: true,
-        min: 0.,
-        max: 1.,
-    },
-    Register {
-        index: 0x702B,
-        name: "Position offset",
-        symbol: "add_offset",
-        value_type: ValueType::Float32,
-        description: "Offset from the motor zero, in radians. Save, then power cycle to apply.",
-        choices: &[],
-        writable: true,
-        min: -7.,
-        max: 7.,
-    },
-];
+fn documented() -> String {
+    "documented".into()
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct RegisterOverride {
+    readable: Option<bool>,
+    writable: Option<bool>,
+    editable: Option<bool>,
+    persistence: Option<Persistence>,
+    availability: Option<String>,
+    protected_reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Persistence {
+    SaveToFlash,
+    Volatile,
+    Undocumented,
+}
+
+// CAN aliases, device permissions, editor policy and persistence share one catalog
+// with Electron. Host-tool function codes are metadata, never wire addresses.
+pub static CATALOG: std::sync::LazyLock<Vec<Register>> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!("../electron/register-catalog.json"))
+        .expect("valid built-in CAN register catalog")
+});
+
+pub fn catalog(model: &str) -> Result<Vec<Register>> {
+    ensure!(
+        crate::types::Profile::presets()
+            .iter()
+            .any(|profile| profile.model == model),
+        "Unknown motor model"
+    );
+    Ok(CATALOG.iter().map(|item| item.for_model(model)).collect())
+}
+
+fn deserialize_index<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<u16, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    u16::from_str_radix(value.trim_start_matches("0x"), 16).map_err(serde::de::Error::custom)
+}
 
 impl Register {
+    fn for_model(&self, model: &str) -> Self {
+        let mut item = self.clone();
+        if let Some(change) = self.overrides.get(model) {
+            if let Some(value) = change.readable {
+                item.readable = value;
+            }
+            if let Some(value) = change.writable {
+                item.writable = value;
+            }
+            if let Some(value) = change.editable {
+                item.editable = value;
+            }
+            if let Some(value) = change.persistence {
+                item.persistence = value;
+            }
+            if let Some(value) = &change.availability {
+                item.availability = value.clone();
+            }
+            if let Some(value) = &change.protected_reason {
+                item.protected_reason = Some(value.clone());
+            }
+        }
+        item.editable &=
+            item.readable && item.writable && item.persistence == Persistence::SaveToFlash;
+        item
+    }
     fn width(&self) -> usize {
         match self.value_type {
             ValueType::Float32 => 4,
@@ -199,12 +145,16 @@ impl Register {
     }
 
     fn encode(&self, value: f64) -> Result<[u8; 4]> {
+        let (min, max) = self
+            .min
+            .zip(self.max)
+            .context("No documented writable range")?;
         ensure!(
-            value.is_finite() && (self.min..=self.max).contains(&value),
+            value.is_finite() && (min..=max).contains(&value),
             "{} must be between {} and {}",
             self.symbol,
-            self.min,
-            self.max
+            min,
+            max
         );
         match self.value_type {
             ValueType::Float32 => Ok((value as f32).to_le_bytes()),
@@ -275,7 +225,11 @@ fn reading(index: u16, raw: [u8; 4], uuid: [u8; 8], save_acknowledged: bool) -> 
 }
 
 pub fn read(c: &Config, index: u16) -> Result<Reading> {
-    register(index)?;
+    ensure!(
+        register(index)?.for_model(&c.profile.model).readable,
+        "Register 0x{index:04X} is not documented as readable for {}",
+        c.profile.model
+    );
     let bus = Bus::open(c)?;
     let _guard = StopGuard(&bus);
     bus.stopped()?;
@@ -290,10 +244,10 @@ pub fn write(
     uuid: &str,
     expected_raw: &str,
 ) -> Result<Reading> {
-    let item = register(index)?;
+    let item = register(index)?.for_model(&c.profile.model);
     ensure!(
-        item.writable,
-        "Register 0x{index:04X} is read-only in this editor"
+        item.writable && item.editable && item.persistence == Persistence::SaveToFlash,
+        "Register 0x{index:04X} is protected or read-only in this editor"
     );
     let desired = item.encode(value)?;
     let expected_uuid = parse_hex::<8>(uuid, "Motor UUID")?;
@@ -345,8 +299,9 @@ mod tests {
         for index in [0x7005, 0x7006, 0x700A, 0x7016, 0x7028, 0x702D, 0xFFFF] {
             assert!(register(index).is_err());
         }
-        assert!(!register(0x2018).unwrap().writable);
-        assert!(!register(0x2019).unwrap().writable);
+        assert!(register(0x7017).unwrap().writable);
+        assert!(!register(0x7017).unwrap().editable);
+        assert!(!register(0x7018).unwrap().editable);
         assert!(register(0x7029).unwrap().writable);
         assert!(register(0x702B).unwrap().writable);
         let mut indices: Vec<_> = CATALOG.iter().map(|item| item.index).collect();
@@ -377,7 +332,48 @@ mod tests {
         assert!(item.encode(-7.01).is_err());
         assert!(item.encode(f64::NAN).is_err());
         assert!(item.decode(f32::NAN.to_le_bytes()).is_err());
-        assert!(register(0x2011).unwrap().encode(1.01).is_err());
+        assert!(register(0x7014).unwrap().encode(1.01).is_err());
+    }
+
+    #[test]
+    fn can_aliases_and_model_permissions_match_the_manuals() {
+        for (host, can) in [
+            (0x2011, 0x7014),
+            (0x2012, 0x7010),
+            (0x2013, 0x7011),
+            (0x2014, 0x701F),
+            (0x2015, 0x7020),
+            (0x2016, 0x701E),
+            (0x2017, 0x7021),
+            (0x2018, 0x7017),
+            (0x2019, 0x7018),
+        ] {
+            assert!(register(host).is_err());
+            assert_eq!(
+                register(can).unwrap().host_index.as_deref(),
+                Some(format!("0x{host:04X}").as_str())
+            );
+        }
+        for model in ["RS-05", "RS-06"] {
+            let items = catalog(model).unwrap();
+            let filter = items.iter().find(|r| r.index == 0x7021).unwrap();
+            assert!(filter.writable && !filter.readable && !filter.editable);
+        }
+        let rs01 = catalog("RS-01").unwrap();
+        for item in rs01.iter().filter(|r| [0x7029, 0x702B].contains(&r.index)) {
+            assert_eq!(item.availability, "not_documented");
+            assert!(!item.readable && !item.writable && !item.editable);
+        }
+        let rs10 = catalog("RS-10P").unwrap();
+        assert!(rs10.iter().find(|r| r.index == 0x7021).unwrap().editable);
+        assert!(catalog("RS-99").is_err());
+        for item in rs10
+            .iter()
+            .filter(|r| [0x7019, 0x701A, 0x701B, 0x701C].contains(&r.index))
+        {
+            assert!(item.readable && !item.writable && !item.editable);
+            assert_eq!(item.persistence, Persistence::Volatile);
+        }
     }
 
     #[test]

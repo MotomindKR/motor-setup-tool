@@ -1,51 +1,58 @@
 [
   {
     "model": "RS-00",
-    "version": "0.0.3.32",
-    "filename": "rs00-0.0.3.32.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs00-0.0.3.32.bin",
-    "sha256": "a889f1b027b53fd7b18bb6db5e7df1f97d4edd62d6ff9c8b5665293c1f9ffa80"
+    "version": "0.0.3.36",
+    "filename": "rs00_0.0.3.36.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs00_0.0.3.36.bin",
+    "sha256": "3be57f55cf83ae8079be3750e5bc3d1d2fe122e2264571eb9fad439be931c85f"
   },
   {
     "model": "RS-01",
-    "version": "0.1.3.18",
-    "filename": "rs01-0.1.3.18.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs01-0.1.3.18.bin",
-    "sha256": "b5b98892ead7f869f81800d8dcd453f6d371e876fe439e072c46c501ca6d3439"
+    "version": "0.1.3.21",
+    "filename": "rs01_0.1.3.21.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs01_0.1.3.21.bin",
+    "sha256": "38178440e2e773e3a9e71700ac7b9d416bc4475bfd940c6135d0a81c55322dd3"
   },
   {
     "model": "RS-02",
-    "version": "0.2.3.34",
-    "filename": "rs02-0.2.3.34.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs02-0.2.3.34.bin",
-    "sha256": "767e427cd1f952fd4e0a30427fb7d9bf8af2d4f2a0d183c03fc0aa04b8be97bd"
+    "version": "0.2.3.36",
+    "filename": "rs02_0.2.3.36.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs02_0.2.3.36.bin",
+    "sha256": "dd34de7a472f75fb39c34d8f98b15059dadb10d02e9f89ac648d87465e3cc263"
   },
   {
     "model": "RS-03",
-    "version": "0.3.1.42",
-    "filename": "rs03-0.3.1.42.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs03-0.3.1.42.bin",
-    "sha256": "aa8cdd5743c165a8d9b9487a1f3ade2a5b28047457a95448ef56b1836152d6fc"
+    "version": "0.3.1.50",
+    "filename": "rs03_0.3.1.50.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs03_0.3.1.50.bin",
+    "sha256": "76a46c5cd3c029043491faba74a4645e3ce5b9de52c962f2969e176314aeb34a"
   },
   {
     "model": "RS-04",
-    "version": "0.4.1.32",
-    "filename": "rs04-0.4.1.32.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs04-0.4.1.32.bin",
-    "sha256": "a907c03cfe9c9b16f3b6b047abc689d3c6ab00f7c4484ed4712f6c3ff0ba3c3e"
+    "version": "0.4.1.38",
+    "filename": "rs04_0.4.1.38.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs04_0.4.1.38.bin",
+    "sha256": "a90d83b81455639ddbcf270cc491faa74a354bccbdd7d4322f5cb937bf0351a5"
   },
   {
     "model": "RS-05",
-    "version": "0.5.0.14",
-    "filename": "rs05_0.5.0.14.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs05_0.5.0.14.bin",
-    "sha256": "e05502e115a014029c79f5ad052b6c8b1e1790b557763c8a42da0dc35b6d79be"
+    "version": "0.5.0.17",
+    "filename": "rs05_0.5.0.17.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs05_0.5.0.17.bin",
+    "sha256": "20a72fc80ab5c6da70ca684a76557b4e207c06f18a84eb119c4377981beb68ed"
   },
   {
     "model": "RS-06",
-    "version": "0.6.0.12",
-    "filename": "rs06_0.6.0.12.bin",
-    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs06_0.6.0.12.bin",
-    "sha256": "b752368a10d5212f4f9b526351cda4828b1e01f7b91092359b51e5268c87aa58"
+    "version": "0.6.0.18",
+    "filename": "rs06_0.6.0.18.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs06_0.6.0.18.bin",
+    "sha256": "1c13a3a660e531dadbc6053b47fa8f80fa8c651df225ea467005ac632f804c69"
+  },
+  {
+    "model": "RS-10P",
+    "version": "0.10.0.6",
+    "filename": "rs10_0.10.0.6.bin",
+    "url": "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/rs10_0.10.0.6.bin",
+    "sha256": "bc396bbd95f768b87743d836603cb4612566b62a72728171daccd3c04e194030"
   }
 ]

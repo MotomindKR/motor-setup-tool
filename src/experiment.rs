@@ -12,17 +12,6 @@ pub enum Experiment {
     Multisine,
     Steps,
 }
-impl Experiment {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Legacy => "Legacy steps",
-            Self::Mixed => "Calibration suite",
-            Self::SineSweep => "Sine sweep",
-            Self::Multisine => "Multisine",
-            Self::Steps => "Steps + coast",
-        }
-    }
-}
 pub fn legacy() -> Experiment {
     Experiment::Legacy
 }

@@ -1,0 +1,237 @@
+[
+  {
+    "index": "0x7010",
+    "name": "Current Kp",
+    "symbol": "cur_kp",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 200,
+    "host_index": "0x2012"
+  },
+  {
+    "index": "0x7011",
+    "name": "Current Ki",
+    "symbol": "cur_ki",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 200,
+    "host_index": "0x2013"
+  },
+  {
+    "index": "0x7014",
+    "name": "Current filter gain",
+    "symbol": "cur_filt_gain",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 1,
+    "host_index": "0x2011"
+  },
+  {
+    "index": "0x7017",
+    "name": "Speed limit",
+    "symbol": "limit_spd",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": false,
+    "persistence": "save_to_flash",
+    "min": null,
+    "max": null,
+    "host_index": "0x2018",
+    "protected_reason": "Protection limit; writes are disabled in this editor."
+  },
+  {
+    "index": "0x7018",
+    "name": "Current limit",
+    "symbol": "limit_cur",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": false,
+    "persistence": "save_to_flash",
+    "min": null,
+    "max": null,
+    "host_index": "0x2019",
+    "protected_reason": "Protection limit; writes are disabled in this editor."
+  },
+  {
+    "index": "0x7019",
+    "name": "Mechanical position",
+    "symbol": "mechPos",
+    "value_type": "float32",
+    "readable": true,
+    "writable": false,
+    "editable": false,
+    "persistence": "volatile",
+    "min": null,
+    "max": null
+  },
+  {
+    "index": "0x701A",
+    "name": "Filtered current",
+    "symbol": "iqf",
+    "value_type": "float32",
+    "readable": true,
+    "writable": false,
+    "editable": false,
+    "persistence": "volatile",
+    "min": null,
+    "max": null
+  },
+  {
+    "index": "0x701B",
+    "name": "Mechanical speed",
+    "symbol": "mechVel",
+    "value_type": "float32",
+    "readable": true,
+    "writable": false,
+    "editable": false,
+    "persistence": "volatile",
+    "min": null,
+    "max": null
+  },
+  {
+    "index": "0x701C",
+    "name": "Bus voltage",
+    "symbol": "VBUS",
+    "value_type": "float32",
+    "readable": true,
+    "writable": false,
+    "editable": false,
+    "persistence": "volatile",
+    "min": null,
+    "max": null
+  },
+  {
+    "index": "0x701E",
+    "name": "Position Kp",
+    "symbol": "loc_kp",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 200,
+    "host_index": "0x2016"
+  },
+  {
+    "index": "0x701F",
+    "name": "Speed Kp",
+    "symbol": "spd_kp",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 200,
+    "host_index": "0x2014"
+  },
+  {
+    "index": "0x7020",
+    "name": "Speed Ki",
+    "symbol": "spd_ki",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 200,
+    "host_index": "0x2015"
+  },
+  {
+    "index": "0x7021",
+    "name": "Speed filter gain",
+    "symbol": "spd_filt_gain",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 1,
+    "host_index": "0x2017",
+    "overrides": {
+      "RS-05": {
+        "readable": false,
+        "editable": false,
+        "protected_reason": "Write-only in this model’s CAN table; this editor requires readback before writing."
+      },
+      "RS-06": {
+        "readable": false,
+        "editable": false,
+        "protected_reason": "Write-only in this model’s CAN table; this editor requires readback before writing."
+      }
+    }
+  },
+  {
+    "index": "0x7029",
+    "name": "Power-on position range",
+    "symbol": "zero_sta",
+    "value_type": "uint8",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": 0,
+    "max": 1,
+    "description": "Save, then power cycle to apply.",
+    "choices": [
+      {
+        "value": 0,
+        "label": "0 · 0 to 2π"
+      },
+      {
+        "value": 1,
+        "label": "1 · −π to π"
+      }
+    ],
+    "overrides": {
+      "RS-01": {
+        "readable": false,
+        "writable": false,
+        "editable": false,
+        "availability": "not_documented",
+        "persistence": "undocumented",
+        "protected_reason": "Not listed in the RS-01 CAN table; support is not assumed."
+      }
+    }
+  },
+  {
+    "index": "0x702B",
+    "name": "Position offset",
+    "symbol": "add_offset",
+    "value_type": "float32",
+    "readable": true,
+    "writable": true,
+    "editable": true,
+    "persistence": "save_to_flash",
+    "min": -7,
+    "max": 7,
+    "description": "Offset from motor zero, in radians. Save, then power cycle to apply.",
+    "overrides": {
+      "RS-01": {
+        "readable": false,
+        "writable": false,
+        "editable": false,
+        "availability": "not_documented",
+        "persistence": "undocumented",
+        "protected_reason": "Not listed in the RS-01 CAN table; support is not assumed."
+      }
+    }
+  }
+]

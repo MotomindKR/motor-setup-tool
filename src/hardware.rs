@@ -1,4 +1,4 @@
-//! SocketCAN, serial SLCAN, and direct GS-USB transport for the RobStride protocol.
+//! SocketCAN and direct GS-USB transport for the RobStride protocol.
 use crate::{
     bridge,
     encoder::EncoderTracker,
@@ -13,9 +13,6 @@ use gsusbio::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use slcanio::{
-    AdapterProfile, Bitrate, CanId as SerialCanId, blocking::CanSocket as SerialCanSocket,
-};
 #[cfg(target_os = "linux")]
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Id, Socket, SocketOptions};
 use std::{
@@ -51,7 +48,6 @@ pub(crate) struct WatchdogPreflight {
 enum BusSocket {
     #[cfg(target_os = "linux")]
     SocketCan(CanSocket),
-    Slcan(Box<Mutex<Option<SerialCanSocket>>>),
     GsUsb(GsUsbTransport),
 }
 
@@ -278,52 +274,37 @@ fn gsusb_wire_frame(frame: &UsbCanFrame) -> Option<WireFrame> {
     }
 }
 
-struct SlcanConnection {
-    port: String,
-    baud: u32,
-    profile: AdapterProfile,
-}
-impl SlcanConnection {
-    fn parse(interface: &str) -> Result<Option<Self>> {
-        let Some(rest) = interface.strip_prefix("slcan:") else {
-            return Ok(None);
-        };
-        let mut parts = rest.splitn(3, ':');
-        let profile = match parts.next() {
-            Some("lawicel") => AdapterProfile::LawicelClassic,
-            Some("canable") => AdapterProfile::CanableFd,
-            _ => anyhow::bail!("SLCAN profile must be lawicel or canable"),
-        };
-        let baud = parts
-            .next()
-            .context("SLCAN UART speed is missing")?
-            .parse::<u32>()?;
-        ensure!(
-            (9_600..=3_000_000).contains(&baud),
-            "Invalid SLCAN UART speed"
-        );
-        let port = parts.next().context("SLCAN serial port is missing")?;
-        #[cfg(unix)]
-        ensure!(
-            port.starts_with("/dev/") && port.len() <= 256 && !port.contains('\0'),
-            "SLCAN port must be a device under /dev"
-        );
-        #[cfg(windows)]
-        ensure!(
-            port.len() <= 64
-                && port
-                    .to_ascii_uppercase()
-                    .strip_prefix("COM")
-                    .is_some_and(|number| number.parse::<u16>().is_ok_and(|value| value > 0)),
-            "SLCAN port must be a COM port"
-        );
-        Ok(Some(Self {
-            port: port.into(),
-            baud,
-            profile,
-        }))
+fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
+    match event {
+        UsbReceiveEvent::Frame(received) => {
+            let frame = received.frame;
+            if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
+                eprintln!(
+                    "GS-USB RX id={:08x} dlc={} data={:02x?}",
+                    frame.id().value(),
+                    frame.dlc(),
+                    frame.data()
+                );
+            }
+            Ok(gsusb_wire_frame(&frame))
+        }
+        UsbReceiveEvent::ErrorFrame { can_id, data, .. } => {
+            if let Some(reason) = bus_error_reason(can_id, &data) {
+                anyhow::bail!(
+                    "GS-USB {reason} (0x{can_id:08x}, {data:02x?}). Check wiring, termination, motor power and 1 Mbps bitrate"
+                );
+            }
+            if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
+                eprintln!("GS-USB CAN status 0x{can_id:08x} {data:02x?}");
+            }
+            Ok(None)
+        }
+        UsbReceiveEvent::Overflow { .. } => {
+            anyhow::bail!("GS-USB adapter receive overflow; check CAN bus traffic and wiring")
+        }
     }
 }
+
 pub(crate) fn lock_interface(interface: &str) -> Result<std::fs::File> {
     ensure!(
         !interface.is_empty()
@@ -365,32 +346,9 @@ impl Bus {
             );
             let socket = GsUsbTransport::open(device).context("Start GS-USB adapter at 1 Mbps; check USB access and whether another application owns it")?;
             (lock, BusSocket::GsUsb(socket))
-        } else if let Some(serial) = SlcanConnection::parse(&config.interface)? {
-            #[cfg(unix)]
-            let port = std::fs::canonicalize(&serial.port)
-                .with_context(|| format!("SLCAN serial port {} is unavailable", serial.port))?;
-            #[cfg(windows)]
-            let port = std::path::PathBuf::from(serial.port.to_ascii_uppercase());
-            #[cfg(unix)]
-            ensure!(
-                port.starts_with("/dev/"),
-                "SLCAN port must resolve under /dev"
-            );
-            let key = Sha256::digest(port.to_string_lossy().as_bytes());
-            let lock = lock_interface(&format!(
-                "slcan-{:02x}{:02x}{:02x}{:02x}",
-                key[0], key[1], key[2], key[3]
-            ))?;
-            let socket = SerialCanSocket::builder(serial.port.clone(), serial.baud)
-                .adapter(serial.profile)
-                .nominal_bitrate(Bitrate::Mbps1)
-                .timeout(Duration::from_millis(2))
-                .connect()
-                .with_context(|| format!("Open SLCAN adapter on {} at {} baud; check port access, adapter profile and CAN wiring", serial.port, serial.baud))?;
-            (lock, BusSocket::Slcan(Box::new(Mutex::new(Some(socket)))))
         } else {
             #[cfg(not(target_os = "linux"))]
-            anyhow::bail!("SocketCAN is only available on Linux; select an SLCAN serial port");
+            anyhow::bail!("Select a GS USB adapter; SocketCAN is only available on Linux");
             #[cfg(target_os = "linux")]
             {
                 let lock = lock_interface(&config.interface)?;
@@ -418,18 +376,6 @@ impl Bus {
                 socket.write_frame(&frame).with_context(|| {
                     format!("CAN transmit failed on {}. If the TX queue is full, frames are not draining: check CAN wiring, termination, motor power and matching bitrate, then reset the interface. Do not keep retrying the scan", self.config.interface)
                 })
-            }
-            BusSocket::Slcan(socket) => {
-                let frame = slcanio::CanFrame::classic(SerialCanId::extended(f.id)?, &f.data)?;
-                socket
-                    .lock()
-                    .expect("SLCAN socket lock poisoned")
-                    .as_mut()
-                    .context("SLCAN socket closed")?
-                    .send(frame)
-                    .context(
-                        "SLCAN transmit failed; check serial connection, adapter and CAN wiring",
-                    )
             }
             BusSocket::GsUsb(device) => {
                 let frame = UsbCanFrame::classic(UsbCanId::extended(f.id)?, &f.data)?;
@@ -472,56 +418,12 @@ impl Bus {
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
                 Err(e) => return Err(e).context("CAN receive failed"),
             },
-            BusSocket::Slcan(socket) => {
-                let frame = match socket
-                    .lock()
-                    .expect("SLCAN socket lock poisoned")
-                    .as_mut()
-                    .context("SLCAN socket closed")?
-                    .recv()
-                {
-                    Ok(frame) => frame,
-                    Err(slcanio::Error::Timeout) => return Ok(None),
-                    Err(error) => return Err(error).context("SLCAN receive failed"),
-                };
-                match frame.id() {
-                    SerialCanId::Extended(id) if frame.data().len() == 8 && !frame.is_remote() => {
-                        let mut data = [0; 8];
-                        data.copy_from_slice(frame.data());
-                        Some(WireFrame { id, data })
-                    }
-                    _ => None,
-                }
-            }
             BusSocket::GsUsb(device) => {
                 let event = match device.receive().context("GS-USB receive failed")? {
                     Some(event) => event,
                     None => return Ok(None),
                 };
-                match event {
-                    UsbReceiveEvent::Frame(received) => {
-                        let frame = received.frame;
-                        if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
-                            eprintln!(
-                                "GS-USB RX id={:08x} dlc={} data={:02x?}",
-                                frame.id().value(),
-                                frame.dlc(),
-                                frame.data()
-                            );
-                        }
-                        gsusb_wire_frame(&frame)
-                    }
-                    UsbReceiveEvent::ErrorFrame { can_id, data, .. } => {
-                        anyhow::bail!(
-                            "GS-USB CAN bus error 0x{can_id:08x} {data:02x?}; check wiring, termination, motor power and bitrate"
-                        )
-                    }
-                    UsbReceiveEvent::Overflow { .. } => {
-                        anyhow::bail!(
-                            "GS-USB adapter receive overflow; check CAN bus traffic and wiring"
-                        )
-                    }
-                }
+                gsusb_event_frame(event)?
             }
         };
         if let Some(wire) = &received
@@ -827,22 +729,18 @@ impl Bus {
 }
 impl Drop for Bus {
     fn drop(&mut self) {
-        if let BusSocket::GsUsb(device) = &self.socket {
-            device.close();
-        }
-        if let BusSocket::Slcan(socket) = &mut self.socket
-            && let Ok(slot) = socket.get_mut()
-            && let Some(socket) = slot.take()
-        {
-            let _ = socket.close();
+        match &self.socket {
+            BusSocket::GsUsb(device) => device.close(),
+            #[cfg(target_os = "linux")]
+            BusSocket::SocketCan(_) => {}
         }
     }
 }
 
-// Linux <linux/can/error.h>: decode bitfields ourselves because a frame can
-// contain several error classes simultaneously (as this adapter reports).
-#[cfg(target_os = "linux")]
+// SocketCAN and GS-USB use Linux <linux/can/error.h> on every OS.
+// Decode the bitfields together: recovery must not hide a simultaneous fault.
 fn bus_error_reason(bits: u32, data: &[u8]) -> Option<&'static str> {
+    let bits = bits & 0x1fff_ffff; // GS-USB includes the CAN_ERR_FLAG in can_id.
     let controller = data.get(1).copied().unwrap_or(0);
     let protocol = data.get(2).copied().unwrap_or(0);
     if bits & 0x40 != 0 {
@@ -861,9 +759,11 @@ fn bus_error_reason(bits: u32, data: &[u8]) -> Option<&'static str> {
         Some("CAN protocol error: received or transmitted an invalid bit/frame sequence")
     } else if bits & 0x91 != 0 {
         Some("CAN transceiver, bus or transmit timeout error")
+    } else if bits == 0 || bits & !0x306 != 0 || (bits & 0x04 != 0 && controller != 0x40) {
+        Some("CAN controller reported an unspecified or unknown error")
     } else {
-        // Arbitration loss and return-to-active/counter notifications alone
-        // are not physical faults.
+        // Only arbitration loss, restart, counters and return-to-active status
+        // are informational. They are never motor feedback.
         None
     }
 }
@@ -1160,13 +1060,6 @@ pub fn disable(c: &Config) -> Result<()> {
     );
     Ok(())
 }
-pub fn read_firmware(c: &Config) -> Result<String> {
-    let bus = Bus::open(c)?;
-    bus.stopped()?;
-    bus.firmware_version().context(
-        "Firmware version query received no valid reply; installed version remains unknown",
-    )
-}
 fn check_firmware_model(c: &Config, version: Option<&str>) -> Result<()> {
     let version = version.context("Firmware did not reply; scan again before calibration")?;
     let model = protocol::firmware_model(version)
@@ -1395,11 +1288,13 @@ pub fn acquire(
                         next += Duration::from_secs_f64(1. / c.sample_hz);
                     }
                     // Bounded receive drain keeps cancellation and deadline checks responsive.
+                    let mut drained = false;
                     for _ in 0..128 {
                         if Instant::now() >= next {
                             break;
                         }
                         let Some(f) = bus.receive()? else {
+                            drained = true;
                             break;
                         };
                         if let Some(fb) = protocol::feedback(&f, c.motor_id, c.host_id, &c.profile)
@@ -1417,7 +1312,7 @@ pub fn acquire(
                                 "Temperature limit reached"
                             );
                             ensure!(fb.velocity.abs() < c.speed_limit, "Speed limit reached");
-                            position = encoder.update(fb.position, elapsed).inspect_err(|error| {
+                            position = encoder.update_buffered(fb.position, elapsed).inspect_err(|error| {
                                 // Include the rejected frame: accepted samples alone
                                 // cannot distinguish a jump from a delivery-time burst.
                                 // Defer disk I/O until after the motor is stopped.
@@ -1441,6 +1336,9 @@ pub fn acquire(
                                 temperature: fb.temperature,
                             });
                         }
+                    }
+                    if drained {
+                        encoder.finish_batch();
                     }
                     if last_progress.elapsed() > Duration::from_millis(250) {
                         // Catch an incompatible wire profile during acquisition,
@@ -1486,6 +1384,76 @@ pub fn acquire(
 #[cfg(test)]
 mod diagnostics_tests {
     use super::*;
+    fn usb_error(can_id: u32, data: [u8; 8]) -> UsbReceiveEvent {
+        UsbReceiveEvent::ErrorFrame {
+            channel: 0,
+            can_id,
+            data,
+            timestamp: None,
+        }
+    }
+    #[test]
+    fn captured_gsusb_recovery_is_not_a_fault_or_motor_feedback() {
+        let recovery = usb_error(0x2000_0004, [0, 0x40, 0, 0, 0, 0, 0x7f, 1]);
+        assert!(gsusb_event_frame(recovery).unwrap().is_none());
+        let id = 0x0200_01fd;
+        let data = [1, 2, 3, 4, 5, 6, 7, 8];
+        let received = gsusb_event_frame(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
+            frame: UsbCanFrame::classic(UsbCanId::extended(id).unwrap(), &data).unwrap(),
+            channel: 0,
+            timestamp: None,
+        }))
+        .unwrap()
+        .unwrap();
+        assert_eq!(received.id, id);
+        assert_eq!(received.data, data);
+    }
+    #[test]
+    fn gsusb_informational_error_events_are_not_motor_feedback() {
+        for can_id in [0x2000_0002, 0x2000_0100, 0x2000_0200] {
+            assert!(
+                gsusb_event_frame(usb_error(can_id, [0; 8]))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    #[test]
+    fn gsusb_faults_and_mixed_recovery_frames_still_abort() {
+        for (bits, controller, protocol, expected) in [
+            (0x40, 0, 0, "BUS-OFF"),
+            (0x20, 0, 0, "acknowledgement"),
+            (0x08, 0, 0x08, "dominant bit"),
+            (0x08, 0, 0x10, "recessive bit"),
+            (0x08, 0, 0x02, "protocol error"),
+            (0x04, 0x20, 0, "ERROR-PASSIVE"),
+            (0x04, 0x08, 0, "warning"),
+            (0x04, 0x01, 0, "overflow"),
+            (0x04, 0x02, 0, "overflow"),
+            (0x10, 0, 0, "transceiver"),
+            (0x01, 0, 0, "timeout"),
+            (0x44, 0x40, 0, "BUS-OFF"),
+            (0x24, 0x40, 0, "acknowledgement"),
+            (0x04, 0x60, 0, "ERROR-PASSIVE"),
+            (0x04, 0, 0, "unknown"),
+            (0x04, 0x80, 0, "unknown"),
+            (0x400, 0, 0, "unknown"),
+        ] {
+            let can_id = 0x2000_0000 | bits;
+            let error =
+                gsusb_event_frame(usb_error(can_id, [0, controller, protocol, 0, 0, 0, 0, 0]))
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains(expected), "{error}");
+            assert!(error.contains(&format!("0x{can_id:08x}")), "{error}");
+        }
+        assert!(
+            gsusb_event_frame(UsbReceiveEvent::Overflow { channel: 0 })
+                .unwrap_err()
+                .to_string()
+                .contains("receive overflow")
+        );
+    }
     #[test]
     fn gsusb_address_and_frame_filter() {
         assert_eq!(gsusb_id("003", 79), "gsusb:303033:79");
@@ -1735,7 +1703,6 @@ mod diagnostics_tests {
             }
         }
     }
-    #[cfg(target_os = "linux")]
     #[test]
     fn captured_adapter_fault_reports_the_dominant_bit_failure() {
         // Observed gs_usb frame: 2000000C#000c080000006000.
@@ -1748,7 +1715,6 @@ mod diagnostics_tests {
                 .contains("acknowledgement")
         );
     }
-    #[cfg(target_os = "linux")]
     #[test]
     fn normal_arbitration_and_recovery_are_not_faults() {
         assert!(bus_error_reason(0x02, &[0; 8]).is_none());

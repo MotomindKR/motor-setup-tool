@@ -61,6 +61,7 @@ impl Profile {
             (35., 120., 200., 9., 48.),
             (1.8, 5.5, 480., 7.75, 48.),
             (11., 36., 480., 9., 48.),
+            (14., 42., 125., 25., 48.),
         ][i];
         Some(MotorSpec {
             rated_torque: rated,
@@ -70,26 +71,26 @@ impl Profile {
             rated_voltage: volts,
         })
     }
-    // Official model manuals dated 2026-07-13, private CAN types 1 and 2.
+    // Official manuals: RS-00–06 2026-07-13, RS-10P 2026-09-07; CAN types 1/2.
     // See docs/protocol.md for pinned sources. These are NOT rated limits.
     pub fn presets() -> Vec<Self> {
         [
-            (33., 14.),
-            (44., 17.),
-            (44., 17.),
-            (20., 60.),
-            (15., 120.),
-            (50., 5.5),
-            (50., 36.),
+            ("RS-00", 33., 14., 20260713),
+            ("RS-01", 44., 17., 20260713),
+            ("RS-02", 44., 17., 20260713),
+            ("RS-03", 20., 60., 20260713),
+            ("RS-04", 15., 120., 20260713),
+            ("RS-05", 50., 5.5, 20260713),
+            ("RS-06", 50., 36., 20260713),
+            ("RS-10P", 13., 42., 20260907),
         ]
         .iter()
-        .enumerate()
-        .map(|(i, &(v, t))| Self {
-            model: format!("RS-{i:02}"),
+        .map(|&(model, v, t, revision)| Self {
+            model: model.into(),
             position_range: 4. * std::f64::consts::PI,
             velocity_range: v,
             torque_range: t,
-            preset_revision: 20260713,
+            preset_revision: revision,
         })
         .collect()
     }
@@ -103,37 +104,6 @@ impl Profile {
     }
     pub fn uses_documented_ranges(&self) -> bool {
         self.documented().is_some_and(|p| self.same_ranges(&p))
-    }
-    /// One-time migration of known old built-in presets, never saved sessions.
-    /// Preserve custom settings, including later explicit overrides.
-    pub fn migrate_saved_preset(&mut self) -> bool {
-        if self.preset_revision != 0 {
-            return false;
-        }
-        let Some(latest) = self.documented() else {
-            return false;
-        };
-        let old = [
-            (50., 17.),
-            (44., 17.),
-            (44., 17.),
-            (50., 60.),
-            (15., 120.),
-            (33., 17.),
-            (20., 60.),
-        ];
-        let i: usize = self.model[3..].parse().unwrap();
-        let known = self.same_ranges(&latest)
-            || (self.position_range == latest.position_range
-                && (self.velocity_range, self.torque_range) == old[i]);
-        self.preset_revision = 20260713;
-        if known {
-            let changed = !self.same_ranges(&latest);
-            *self = latest;
-            changed
-        } else {
-            false
-        }
     }
 }
 
@@ -387,27 +357,7 @@ pub fn excitation(t: f64, velocity: f64, config: &Config, validation: bool) -> f
 mod tests {
     use super::*;
     #[test]
-    fn saved_legacy_presets_migrate_once_and_custom_ranges_are_preserved() {
-        let mut p = Profile::presets()[0].clone();
-        p.preset_revision = 0;
-        p.velocity_range = 50.;
-        p.torque_range = 17.;
-        assert!(p.migrate_saved_preset());
-        assert_eq!((p.velocity_range, p.torque_range), (33., 14.));
-        assert!(p.uses_documented_ranges());
-        // A subsequent deliberate override must not be migrated again.
-        p.velocity_range = 50.;
-        p.torque_range = 17.;
-        assert!(!p.migrate_saved_preset());
-        assert_eq!(p.velocity_range, 50.);
-        assert!(!p.uses_documented_ranges());
-        p.preset_revision = 0;
-        p.torque_range = 13.;
-        assert!(!p.migrate_saved_preset());
-        assert_eq!((p.velocity_range, p.torque_range), (50., 13.));
-    }
-    #[test]
-    fn july_2026_manual_ranges_match_all_models() {
+    fn official_manual_ranges_match_all_models() {
         let actual: Vec<_> = Profile::presets()
             .iter()
             .map(|p| (p.velocity_range, p.torque_range))
@@ -421,9 +371,36 @@ mod tests {
                 (20., 60.),
                 (15., 120.),
                 (50., 5.5),
-                (50., 36.)
+                (50., 36.),
+                (13., 42.)
             ]
         );
+    }
+    #[test]
+    fn rs10p_uses_its_own_specs_and_conservative_bench_limits() {
+        let p = Profile::presets()
+            .into_iter()
+            .find(|p| p.model == "RS-10P")
+            .unwrap();
+        let spec = p.spec().unwrap();
+        assert_eq!(
+            (
+                spec.rated_torque,
+                spec.peak_torque,
+                spec.no_load_rpm,
+                spec.gear_ratio,
+                spec.rated_voltage
+            ),
+            (14., 42., 125., 25., 48.)
+        );
+        let mut c = Config {
+            profile: p,
+            ..Config::default()
+        };
+        c.apply_spec_limits();
+        assert_eq!(c.torque_limit, 3.5);
+        assert_eq!(c.speed_limit, 5.8500000000000005);
+        assert!(c.validate().is_ok());
     }
     #[test]
     fn configuration_rejects_unsafe_and_nonfinite_values() {

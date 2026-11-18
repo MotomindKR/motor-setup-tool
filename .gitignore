@@ -12,4 +12,7 @@ __pycache__/
 /diagnostics/
 /electron/node_modules/
 /electron/.npm-cache/
+/electron/ui-dist/
+/electron/test-results/
+/electron/playwright-report/
 /dist-electron/
