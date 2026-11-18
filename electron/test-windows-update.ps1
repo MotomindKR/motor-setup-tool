@@ -52,6 +52,31 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     } elseif (-not $source.electron -or $source.target -ne $ExpectedVersion -or $source.updater -ne 'NsisUpdater') {
       throw 'The update did not use electron-updater from the packaged Electron app'
     }
+    if (-not $ExpectedError) {
+      # NSIS relaunches through the user's shell, which need not inherit the
+      # updating process's environment. Verify its automatic GUI restart, then
+      # close it normally and launch the installed app for the runtime UI check.
+      $restartDeadline = (Get-Date).AddSeconds(45)
+      $restarted = $null
+      while (-not $restarted -and (Get-Date) -lt $restartDeadline) {
+        $candidate = Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
+          $_.ExecutablePath -ieq $appExe -and $_.ProcessId -ne $source.pid -and $_.CommandLine -notmatch '\s--type='
+        } | Select-Object -First 1
+        if ($candidate) {
+          $gui = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+          if ($gui -and $gui.MainWindowHandle -ne 0) { $restarted = $gui }
+        }
+        if (-not $restarted) { Start-Sleep -Milliseconds 200 }
+      }
+      if (-not $restarted) { throw 'NSIS did not restart the installed app window' }
+      if (-not $restarted.CloseMainWindow() -or -not $restarted.WaitForExit(15000)) { throw 'The restarted app did not close normally' }
+      $env:MOTOMIND_SMOKE_PATH = $screenshot
+      $env:MOTOMIND_SMOKE_TAB = 'setup'
+      $smoke = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
+      if (-not $smoke.WaitForExit(30000) -or $smoke.ExitCode -ne 0) { throw 'The updated app runtime smoke check failed' }
+      Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
+      Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
+    }
     $deadline = (Get-Date).AddSeconds(150)
     while (-not (Test-Path "$screenshot.json")) {
       if ((Get-Date) -ge $deadline) { throw 'The updated app did not restart and report its runtime version' }
@@ -71,6 +96,13 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     Write-Output "Passed $Name : runtime=$($runtime.version)"
   } finally {
     Remove-Item Env:MOTOMIND_UPDATE_TEST_CONFIG -ErrorAction SilentlyContinue
+    Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
+    @{
+      launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
+      ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
+      processes = @(Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Select-Object ProcessId, ExecutablePath, CommandLine)
+    } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $caseDirectory 'installed-state.json')
     Copy-Item "$stateDirectory\update*" $caseDirectory -Force -ErrorAction SilentlyContinue
     Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
       $_.ExecutablePath -and $_.ExecutablePath.StartsWith($testRoot, [System.StringComparison]::OrdinalIgnoreCase)

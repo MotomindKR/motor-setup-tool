@@ -46,8 +46,10 @@ server.listen(0, '127.0.0.1', () => {
     window.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
-          process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
-          process.env.MOTOMIND_SMOKE_TAB = 'setup';
+          if (process.platform !== 'win32') {
+            process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
+            process.env.MOTOMIND_SMOKE_TAB = 'setup';
+          }
           await window.webContents.executeJavaScript(`(async () => {
             const update = await window.motorApp.checkUpdate();
             if (!update.installable) throw new Error('The packaged app did not offer installation');

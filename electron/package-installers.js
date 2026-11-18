@@ -32,19 +32,35 @@ const config = structuredClone(require('./builder.json'));
 config.directories.app = path.join(resources, 'app');
 config.extraResources = [{ from: path.join(resources, 'backend'), to: 'backend' }];
 config.electronVersion = require('electron/package.json').version;
+if (platform === 'linux') {
+  // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
+  // Set the public architecture once so metadata and existing clients agree.
+  config.linux.artifactName = 'motor-setup-tool-${version}-linux-' + arch + '.${ext}';
+}
+const buildEnv = { ...process.env };
+// GitHub expands missing secrets to empty strings; builder otherwise treats
+// an empty CSC_LINK as the current directory rather than "no certificate".
+for (const name of ['CSC_LINK', 'CSC_NAME', 'WIN_CSC_LINK']) {
+  if (!buildEnv[name]) delete buildEnv[name];
+}
 if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
   for (const name of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
     if (!process.env[name]) throw new Error(`macOS release auto-updates require Developer ID signing and notarization. Missing ${name}; see packaging/README.md.`);
   }
   config.forceCodeSigning = true;
   config.mac.notarize = true;
+} else if (platform === 'darwin' && !buildEnv.CSC_LINK && !buildEnv.CSC_NAME) {
+  config.mac.identity = '-';
+  // Ad-hoc test signatures have no Team ID for hardened library validation.
+  // Signed production builds keep the hardened runtime enabled.
+  config.mac.hardenedRuntime = false;
 }
 const configFile = path.join(root, 'dist-electron', 'installer-config.json');
 fs.writeFileSync(configFile, JSON.stringify(config));
 // A normal builder pack is required: --prepackaged skips signing and the
 // app-update.yml/elevation resources needed by the maintained updaters.
 const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg', 'zip'] : ['--win', 'nsis'];
-execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--config', configFile, ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, stdio: 'inherit' });
+execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--config', configFile, ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, env: buildEnv, stdio: 'inherit' });
 
 const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg', 'zip'] : ['exe'];
 for (const extension of extensions) {
