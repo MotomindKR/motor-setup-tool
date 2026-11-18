@@ -4,7 +4,8 @@
 ; both scopes are registered and uninstall the wrong copy.
 !macro customInit
   ${if} ${isUpdated}
-    !insertmacro GetDParameter $R0
+    ; initMultiUser has already applied /D and normalized NSIS path quoting.
+    StrCpy $R0 $INSTDIR
     ${if} $R0 != ""
       ReadRegStr $R1 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
       ReadRegStr $R2 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation

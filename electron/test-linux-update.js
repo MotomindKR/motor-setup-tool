@@ -34,7 +34,7 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
     const configFile = path.join(caseDirectory, 'request.json');
     await fs.writeFile(configFile, JSON.stringify({ installer, version: badChecksum ? '99.0.0' : version, directory: userData, screenshot, handoff, badChecksum }));
     const log = await fs.open(path.join(caseDirectory, 'app.log'), 'w');
-    const child = spawn(executable, ['--no-sandbox'], {
+    const child = spawn(executable, ['--no-sandbox', `--user-data-dir=${userData}`], {
       env: { ...process.env, MOTOMIND_UPDATE_TEST_CONFIG: configFile }, stdio: ['ignore', log.fd, log.fd],
     });
     await log.close();
@@ -60,6 +60,7 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
       assert.equal(runtime.backendReady, true);
       assert.equal(runtime.updateError, null);
       assert.equal((await fs.readFile(path.join(path.dirname(executable), 'resources', 'package-type'), 'utf8')).trim(), 'deb');
+      await assert.rejects(fs.access(path.join(userData, 'pending-update.json')), { code: 'ENOENT' });
     }
     console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${version}`);
   }
