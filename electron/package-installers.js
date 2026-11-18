@@ -36,6 +36,16 @@ if (platform === 'linux') {
   // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
   // Set the public architecture once so metadata and existing clients agree.
   config.linux.artifactName = 'motor-setup-tool-${version}-linux-' + arch + '.${ext}';
+  // Own the rule in the system rules directory instead of leaving it under
+  // /opt. Keep builder's desktop/sandbox/AppArmor hooks and append our reload.
+  const packageOptions = { fpm: [path.join(root, 'packaging', '70-motomind-gsusb.rules') + '=/usr/lib/udev/rules.d/70-motomind-gsusb.rules'] };
+  const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates', 'linux');
+  for (const [option, name] of [['afterInstall', 'after-install'], ['afterRemove', 'after-remove']]) {
+    const script = path.join(root, 'dist-electron', `linux-${name}.sh`);
+    fs.writeFileSync(script, fs.readFileSync(path.join(templates, `${name}.tpl`), 'utf8') + '\n' + fs.readFileSync(path.join(root, 'packaging', 'linux-udev.sh'), 'utf8'));
+    packageOptions[option] = script;
+  }
+  for (const target of ['deb', 'rpm']) config[target] = { ...config[target], ...packageOptions };
 }
 const buildEnv = { ...process.env };
 // GitHub expands missing secrets to empty strings; builder otherwise treats

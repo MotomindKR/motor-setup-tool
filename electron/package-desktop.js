@@ -57,9 +57,9 @@ if (process.platform === 'darwin') {
   }
 }
 if (process.platform === 'linux') {
-  const rules = path.join(output, 'packaging', '99-motomind-gsusb.rules');
+  const rules = path.join(output, 'packaging', '70-motomind-gsusb.rules');
   fs.mkdirSync(path.dirname(rules), { recursive: true });
-  fs.copyFileSync(path.join(root, 'packaging', '99-motomind-gsusb.rules'), rules);
+  fs.copyFileSync(path.join(root, 'packaging', '70-motomind-gsusb.rules'), rules);
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });

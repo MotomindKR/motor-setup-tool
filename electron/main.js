@@ -12,6 +12,8 @@ if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop')
 
 const root = path.resolve(__dirname, '..');
 const titleBarHeight = 40;
+// Leave the header's bottom border below the opaque native window controls.
+const titleBarOverlayHeight = process.platform === 'darwin' ? titleBarHeight : titleBarHeight - 1;
 const knownRuns = new Set();
 const selectedOutputs = new Set();
 const recentPathFile = () => path.join(app.getPath('userData'), 'recent-calibrations.json');
@@ -91,7 +93,7 @@ function createWindow() {
     backgroundColor: background,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     titleBarOverlay: {
-      height: titleBarHeight,
+      height: titleBarOverlayHeight,
       color: background,
       symbolColor: nativeTheme.shouldUseDarkColors ? '#fafafa' : '#171717',
     },
@@ -214,7 +216,7 @@ app.whenReady().then(async () => {
     if (process.platform !== 'darwin') window.setTitleBarOverlay({
       color: background,
       symbolColor: dark ? '#fafafa' : '#171717',
-      height: titleBarHeight,
+      height: titleBarOverlayHeight,
     });
   });
   ipcMain.handle('backend:preview', (event, config) => {

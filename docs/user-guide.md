@@ -45,13 +45,18 @@ This mode uses the GS USB
 protocol directly. On Linux, it temporarily detaches the `gs_usb` kernel
 driver; when returning to SocketCAN, click **Bring up CAN** again.
 
-On Linux, grant your desktop user USB access once, then reconnect the adapter:
+Linux DEB/RPM installers set up USB access for the active desktop user.
+Reconnect the adapter after installing, then refresh the adapter list.
+
+For a source or unpacked build, install the rule from the repository once:
 
 ```sh
-sudo install -m 0644 "/opt/Motor Setup Tool/packaging/99-motomind-gsusb.rules" /etc/udev/rules.d/
+sudo install -m 0644 packaging/70-motomind-gsusb.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 ```
 
+The rule grants access to the active local desktop session; an SSH-only session
+needs a separately configured USB access group.
 If **USB access denied** remains, reconnect the adapter after loading the rule.
 Refresh the list after reconnecting because its USB address may change.
 

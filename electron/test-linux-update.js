@@ -60,9 +60,18 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
       assert.equal(runtime.backendReady, true);
       assert.equal(runtime.updateError, null);
       assert.equal((await fs.readFile(path.join(path.dirname(executable), 'resources', 'package-type'), 'utf8')).trim(), 'deb');
+      const rule = '/usr/lib/udev/rules.d/70-motomind-gsusb.rules';
+      assert.deepEqual(await fs.readFile(rule), await fs.readFile(path.join(__dirname, '..', 'packaging', path.basename(rule))));
+      const stat = await fs.stat(rule);
+      assert.equal(stat.uid, 0);
+      assert.equal(stat.mode & 0o777, 0o644);
       await assert.rejects(fs.access(path.join(userData, 'pending-update.json')), { code: 'ENOENT' });
     }
     console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${version}`);
   }
+  const packageName = execFileSync('dpkg-deb', ['--field', installer, 'Package'], { encoding: 'utf8' }).trim();
+  execFileSync('dpkg', ['--remove', packageName], { stdio: 'inherit' });
+  await assert.rejects(fs.access('/usr/lib/udev/rules.d/70-motomind-gsusb.rules'), { code: 'ENOENT' });
+  console.log('USB rule installed by the update and removed with the package.');
   console.log(`Updater diagnostics: ${directory}`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

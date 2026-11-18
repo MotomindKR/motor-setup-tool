@@ -44,9 +44,22 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
+          sudo apt-get install -y rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
+          node electron/test-linux-package.js dist-electron/*-linux-*.deb dist-electron/*-linux-*.rpm
           gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
           sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
+      - name: Capture Linux window chrome
+        shell: bash
+        run: |
+          dpkg-deb --extract dist-electron/*-linux-*.deb "$RUNNER_TEMP/chrome-app"
+          xvfb-run -a node electron/capture-window-chrome.js "$RUNNER_TEMP/chrome-app/opt/Motor Setup Tool/motor-setup-tool" "$RUNNER_TEMP/window-chrome"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: window-chrome-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/window-chrome/*.png
+            ${{ runner.temp }}/window-chrome/*.json
   update:
     strategy:
       fail-fast: false
