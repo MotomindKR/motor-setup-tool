@@ -3,8 +3,11 @@
   "productName": "Motor Setup Tool",
   "directories": { "output": "../dist-electron/installers" },
   "asar": false,
-  "publish": null,
+  "publish": [{ "provider": "github", "owner": "MotomindKR", "repo": "motor-setup-tool" }],
+  "electronUpdaterCompatibility": ">=6.8.11",
+  "npmRebuild": false,
   "linux": {
+    "artifactName": "motor-setup-tool-${version}-linux-${arch}.${ext}",
     "category": "Utility",
     "icon": "../assets/icons/256.png",
     "executableName": "motor-setup-tool",
@@ -12,12 +15,17 @@
     "desktop": { "entry": { "Name": "Motor Setup Tool", "Comment": "Motomind motor setup and calibration" } }
   },
   "mac": {
-    "identity": null,
+    "target": ["dmg", "zip"],
+    "artifactName": "motor-setup-tool-${version}-darwin-${arch}.${ext}",
+    "hardenedRuntime": true,
+    "entitlements": "../packaging/entitlements.mac.plist",
+    "entitlementsInherit": "../packaging/entitlements.mac.plist",
+    "binaries": ["Contents/Resources/backend/motor-setup-tool", "Contents/Resources/backend/lib/libmujoco.3.12.0.dylib"],
     "icon": "../assets/icons/motor-setup-tool.icns",
     "category": "public.app-category.utilities"
   },
   "dmg": { "title": "Motor Setup Tool" },
-  "win": { "target": "nsis", "icon": "../assets/icons/motor-setup-tool.ico" },
+  "win": { "target": "nsis", "artifactName": "motor-setup-tool-${version}-win32-${arch}.${ext}", "icon": "../assets/icons/motor-setup-tool.ico" },
   "nsis": {
     "installerIcon": "../assets/icons/motor-setup-tool.ico",
     "uninstallerIcon": "../assets/icons/motor-setup-tool.ico",

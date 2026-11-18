@@ -14,29 +14,33 @@ permissions:
 
 jobs:
   update:
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm ci
+        working-directory: electron
       - uses: actions/download-artifact@v4
         with:
           name: installers-win32-x64
           run-id: ${{ inputs.installer_run }}
           github-token: ${{ github.token }}
           path: dist-electron
-      - name: Check PowerShell bootstrap modes
-        run: node electron/test-windows-bootstrap.js
       - name: Test update handoff, install scopes, and failure recovery
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download v0.1.15 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.15-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.15-win32-x64.exe'
+          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-win32-x64.exe' --dir "$env:RUNNER_TEMP"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.18-win32-x64.exe'
           $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
           $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
@@ -44,7 +48,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-update-diagnostics
+          name: windows-update-diagnostics-${{ matrix.os }}
           path: |
             ${{ runner.temp }}/motomind-update-tests/*/*.json
             ${{ runner.temp }}/motomind-update-tests/*/*.log

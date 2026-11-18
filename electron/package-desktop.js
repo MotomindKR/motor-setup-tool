@@ -63,13 +63,14 @@ if (process.platform === 'linux') {
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js', 'native-install.js', 'install-windows.ps1']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
 fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist'), { recursive: true });
 fs.copyFileSync(path.join(__dirname, 'node_modules', '@motomindkr', 'ui', 'THIRD_PARTY_NOTICES.md'), path.join(app, 'electron', 'ui-dist', 'THIRD_PARTY_NOTICES.md'));
 const pkg = require('./package.json');
-fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName }, null, 2));
+fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName, description: pkg.description, author: pkg.author, homepage: pkg.homepage, dependencies: { 'electron-updater': pkg.dependencies['electron-updater'] } }, null, 2));
+require('./runtime-dependencies').copyRuntimeDependencies(app);
 for (const relative of ['icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/OFL.txt', 'README.md']) {
   const target = path.join(app, 'assets', relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });

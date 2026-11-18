@@ -81,7 +81,24 @@ jobs:
         run: npm run check
       - name: Build desktop installers
         working-directory: electron
+        env:
+          CSC_LINK: ${{ matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && '1' || '0' }}
         run: npm run package:installers
+      - name: Test installed Linux updater
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1
+          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
+          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
       - name: Test Windows silent upgrade
         if: runner.os == 'Windows'
         shell: pwsh
@@ -89,8 +106,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download v0.1.15 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.15-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.15-win32-x64.exe'
+          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-win32-x64.exe' --dir "$env:RUNNER_TEMP"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.18-win32-x64.exe'
           $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
           $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
@@ -114,8 +131,11 @@ jobs:
             dist-electron/*.deb
             dist-electron/*.rpm
             dist-electron/*.dmg
+            dist-electron/*.zip
             dist-electron/*.exe
             dist-electron/*.sha256
+            dist-electron/*.yml
+            dist-electron/*.blockmap
 
   publish:
     name: Publish desktop installers
@@ -126,11 +146,18 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: electron
       - uses: actions/download-artifact@v4
         with:
           pattern: installers-*
           merge-multiple: true
           path: dist-electron
+      - name: Verify updater metadata
+        run: node electron/update-metadata.js dist-electron
       - name: Verify and publish
         working-directory: dist-electron
         env:
@@ -140,11 +167,12 @@ jobs:
         run: |
           cat ./*.sha256 > SHA256SUMS
           sha256sum -c SHA256SUMS
-          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 6
+          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) | wc -l)" -eq 7
+          for metadata in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do test -f "$metadata"; done
           notes="$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md"
           test -f "$notes"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes-file "$notes"
           fi
-          gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.exe SHA256SUMS --clobber
+          gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.zip ./*.exe ./*.yml ./*.blockmap SHA256SUMS --clobber
           gh release edit "$RELEASE_TAG" --draft=false

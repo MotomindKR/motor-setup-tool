@@ -27,10 +27,26 @@ if (platform === 'win32') {
   }
 }
 
-const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg'] : ['--win', 'nsis'];
-execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--prepackaged', prepackaged, '--config', path.join(__dirname, 'builder.json'), ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, stdio: 'inherit' });
+const resources = platform === 'darwin' ? path.join(prepackaged, 'Contents', 'Resources') : path.join(prepackaged, 'resources');
+const config = structuredClone(require('./builder.json'));
+config.directories.app = path.join(resources, 'app');
+config.extraResources = [{ from: path.join(resources, 'backend'), to: 'backend' }];
+config.electronVersion = require('electron/package.json').version;
+if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
+  for (const name of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
+    if (!process.env[name]) throw new Error(`macOS release auto-updates require Developer ID signing and notarization. Missing ${name}; see packaging/README.md.`);
+  }
+  config.forceCodeSigning = true;
+  config.mac.notarize = true;
+}
+const configFile = path.join(root, 'dist-electron', 'installer-config.json');
+fs.writeFileSync(configFile, JSON.stringify(config));
+// A normal builder pack is required: --prepackaged skips signing and the
+// app-update.yml/elevation resources needed by the maintained updaters.
+const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg', 'zip'] : ['--win', 'nsis'];
+execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--config', configFile, ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, stdio: 'inherit' });
 
-const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg'] : ['exe'];
+const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg', 'zip'] : ['exe'];
 for (const extension of extensions) {
   const matches = fs.readdirSync(installers).filter(name => name.endsWith(`.${extension}`));
   if (matches.length !== 1) throw new Error(`Expected one ${extension} installer, found ${matches.length}`);
@@ -42,3 +58,8 @@ for (const extension of extensions) {
   fs.writeFileSync(`${destination}.sha256`, `${digest}  ${name}\n`);
   console.log(`Release installer ${destination}`);
 }
+for (const name of fs.readdirSync(installers).filter(name => name.endsWith('.yml') || name.endsWith('.blockmap'))) {
+  fs.copyFileSync(path.join(installers, name), path.join(root, 'dist-electron', name));
+}
+const metadata = platform === 'darwin' ? 'latest-mac.yml' : platform === 'win32' ? 'latest.yml' : `latest-linux${arch === 'x64' ? '' : `-${arch}`}.yml`;
+require('./update-metadata').verifyMetadata(path.join(root, 'dist-electron'), [metadata], pkg.version);

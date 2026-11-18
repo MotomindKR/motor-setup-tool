@@ -6,7 +6,6 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const { Backend, backendPath } = require('./backend');
 const updater = require('./updater');
-const nativeInstall = require('./native-install');
 const recordings = require('./recordings');
 
 if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
@@ -34,6 +33,7 @@ let quitting = false;
 let checkedUpdate = null;
 let installingUpdate = false;
 let updateError = null;
+let managedUpdater = null;
 let recordingOperation = false;
 
 function send(event) {
@@ -161,8 +161,12 @@ app.whenReady().then(async () => {
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
-    updateError = await nativeInstall.readUpdateError(app);
+    updateError = await updater.readUpdateError(app);
   } catch { /* No previous update error. */ }
+  managedUpdater = updater.createUpdater(app, error => {
+    installingUpdate = false;
+    send({ type: 'updateFailure', message: error.message, version: app.getVersion() });
+  });
   try {
     backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
@@ -253,25 +257,28 @@ app.whenReady().then(async () => {
     assertSender(event);
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
-    checkedUpdate = await updater.check(app.getVersion());
-    const installMode = nativeInstall.mode(app);
-    return { available: checkedUpdate.available, version: checkedUpdate.version,
-      installable: checkedUpdate.installable && Boolean(installMode), installMode,
-      reason: checkedUpdate.installable && !installMode ? 'Install a packaged copy to update from the app.' : null };
+    if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
+    checkedUpdate = await managedUpdater.check();
+    return checkedUpdate;
   });
   ipcMain.handle('updates:install', async event => {
     assertSender(event);
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
-    if (!nativeInstall.mode(app)) throw new Error('Install a packaged copy to update from the app');
+    if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     installingUpdate = true;
     const release = checkedUpdate;
     const progress = message => window?.webContents.send('updates:progress', message);
+    let handedOff = false;
     try {
-      await updater.install(app, release, progress, file => nativeInstall.install(app, file, release.version, progress, filePath => shell.openPath(filePath)));
-    } finally { installingUpdate = false; }
+      await managedUpdater.install(release.version, progress, () => {
+        if (backend?.active) throw new Error('Stop the motor operation before installing an update');
+        if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
+      });
+      handedOff = true;
+    } finally { if (!handedOff) installingUpdate = false; }
   });
   ipcMain.handle('runs:list', async event => { assertSender(event); return listRuns(); });
   ipcMain.handle('runs:pick', async event => {

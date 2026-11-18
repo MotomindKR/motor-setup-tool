@@ -8,7 +8,8 @@ Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, and UI assets
 | macOS ARM64 | DMG |
 | Windows x64 | NSIS EXE |
 
-The release also contains `SHA256SUMS` for all six installers. There is no
+The release also contains a macOS ZIP for automatic updates, updater manifests
+(`latest*.yml`), block maps, and `SHA256SUMS` for all seven payloads. There is no
 AppImage or macOS x64 target. Windows ARM64 is omitted because MuJoCo 3.12.0
 does not publish a Windows ARM64 library.
 
@@ -41,11 +42,34 @@ combines the checksums into `SHA256SUMS`.
 
 ## Updates
 
-**Settings → Check for update** shows **Install** when the latest release has a
-matching installer and `SHA256SUMS`. It verifies the download before installing.
-On Linux, the app asks for system authorization, installs the DEB/RPM, and
-restarts. On Windows, it closes, updates the same installation folder and scope,
-checks both the launcher and UI versions, and restarts. System installations
-request Windows administrator authorization. A failed update opens Settings on
-restart; diagnostics are in `update.log` in the app's user data folder. On macOS, the DMG
-opens for manual installation. Updates wait for motor operations to end.
+All platforms use [electron-updater](https://www.electron.build/v26/docs/features/auto-update/):
+NSIS on Windows, Squirrel.Mac on macOS, and the DEB/RPM package-manager backends
+on Linux. Builder generates the installed `app-update.yml`, Linux package-type
+markers, release metadata, and Windows elevation helper. Installer builds use
+the normal builder packaging path so signing and these resources are included.
+
+Updates run only through **Settings → Check for update → Install update**.
+Automatic downloading and installation on ordinary app exit are disabled.
+The library validates download hashes and handles installation and restart.
+Motor activity blocks installation, including a second check after downloading.
+Diagnostics are in `update.log` in the app's user data folder; the restarted app
+verifies its version against `pending-update.json`.
+
+Existing Windows releases with the broken PowerShell updater need one manual
+installation to obtain the maintained updater. Switching NSIS to MSIX is not
+required; MSIX would need a trusted Windows signing certificate or Store setup.
+
+### macOS signing setup
+
+Production macOS auto-updates require Developer ID signing and notarization;
+ad-hoc builds cannot validate the production update flow. Configure these
+GitHub repository secrets before tagging a release:
+
+- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
+- `MAC_CSC_KEY_PASSWORD`: certificate password.
+- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
+
+Tagged macOS builds require signing and notarization and fail if setup is
+missing. Manual workflow runs and local builds can still build unsigned test
+artifacts. The macOS ZIP and `latest-mac.yml` must be published alongside the DMG.
+The first signed build must be installed manually over the existing ad-hoc app.
