@@ -74,6 +74,11 @@ GitHub repository secrets before tagging a release:
 - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
 
 Tagged macOS builds require signing and notarization and fail if setup is
-missing. Manual workflow runs and local builds can still build unsigned test
+missing. Manual workflow runs and local builds can still build ad-hoc test
 artifacts. The macOS ZIP and `latest-mac.yml` must be published alongside the DMG.
 The first signed build must be installed manually over the existing ad-hoc app.
+
+Sign the bundled MuJoCo library and Rust executable after all Mach-O changes,
+then sign the outer app. `codesign --deep` alone does not repair binaries under
+`Contents/Resources/backend`. Packaging verifies each signature separately and
+runs the final bundled backend's self-check without `DYLD_LIBRARY_PATH`.

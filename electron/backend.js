@@ -128,6 +128,12 @@ function backendPath(root, resourcesPath = null, override = process.env.MOTOMIND
   throw new Error('Rust backend missing. Build it with cargo build --release.');
 }
 
+function exitError(code, signal, stderr, name = 'Backend') {
+  const detail = stderr.trim();
+  if (signal) return new Error(`${name} terminated by ${signal}${detail ? `\n${detail}` : ''}`);
+  return new Error(detail || `${name} exited with status ${code}`);
+}
+
 class Backend {
   constructor(binary, emit) {
     this.binary = binary;
@@ -192,14 +198,14 @@ class Backend {
         this.emit({ type: 'finish', operation, ok: false });
         reject(error);
       });
-      child.on('close', code => {
+      child.on('close', (code, signal) => {
         if (settled) return;
         settled = true;
         this.active = null;
         this.emit({ type: 'finish', operation, ok: code === 0, cancelled: job.cancelRequested });
         if (job.cancelRequested) return resolve({ cancelled: true });
         if (code !== 0) {
-          reject(new Error(stderr.trim() || `Backend exited with status ${code}`));
+          reject(exitError(code, signal, stderr));
           return;
         }
         if (operation === 'manual') return resolve(null);
@@ -243,8 +249,8 @@ class Backend {
       child.stdout.on('data', chunk => { stdout += chunk; if (stdout.length > 2_000_000) child.kill('SIGTERM'); });
       child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
       child.on('error', reject);
-      child.on('close', code => {
-        if (code !== 0) return reject(new Error(stderr.trim() || 'Preview failed'));
+      child.on('close', (code, signal) => {
+        if (code !== 0) return reject(exitError(code, signal, stderr, 'Preview backend'));
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Invalid preview result')); }
       });
     });

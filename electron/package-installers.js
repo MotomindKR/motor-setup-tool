@@ -62,6 +62,18 @@ fs.writeFileSync(configFile, JSON.stringify(config));
 const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg', 'zip'] : ['--win', 'nsis'];
 execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--config', configFile, ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, env: buildEnv, stdio: 'inherit' });
 
+if (platform === 'darwin') {
+  const finalApp = path.join(installers, `mac-${arch}`, 'Motor Setup Tool.app');
+  const finalBackend = path.join(finalApp, 'Contents', 'Resources', 'backend');
+  for (const binary of [finalApp, path.join(finalBackend, 'motor-setup-tool'), path.join(finalBackend, 'lib', 'libmujoco.3.12.0.dylib')]) {
+    execFileSync('codesign', ['--verify', '--strict', binary]);
+  }
+  const runtimeEnv = { ...process.env };
+  delete runtimeEnv.DYLD_LIBRARY_PATH;
+  const result = JSON.parse(execFileSync(path.join(finalBackend, 'motor-setup-tool'), ['self-check'], { env: runtimeEnv, encoding: 'utf8', timeout: 30_000 }));
+  if (result.version !== pkg.version || result.mujoco !== '3.12.0') throw new Error('Final signed macOS backend self-check failed');
+}
+
 const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg', 'zip'] : ['exe'];
 for (const extension of extensions) {
   const matches = fs.readdirSync(installers).filter(name => name.endsWith(`.${extension}`));

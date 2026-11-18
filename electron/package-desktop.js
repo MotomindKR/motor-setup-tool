@@ -87,10 +87,21 @@ for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
 }
 const libraryKey = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : process.platform === 'win32' ? 'PATH' : 'LD_LIBRARY_PATH';
 const smokeEnv = { ...process.env, [libraryKey]: [path.join(backend, 'lib'), process.env[libraryKey]].filter(Boolean).join(path.delimiter) };
+if (process.platform === 'darwin') {
+  // install_name_tool changes MuJoCo's Mach-O headers and invalidates its
+  // signature. --deep on the outer app does not repair arbitrary Mach-O files
+  // under Resources: sign these explicitly, inside out, after all mutations.
+  for (const binary of [path.join(backend, 'lib', mujocoName), path.join(backend, backendName)]) {
+    execFileSync('codesign', ['--force', '--sign', '-', '--timestamp=none', binary]);
+  }
+  execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
+  for (const binary of [bundle, path.join(backend, backendName), path.join(backend, 'lib', mujocoName)]) {
+    execFileSync('codesign', ['--verify', '--strict', binary]);
+  }
+}
 const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
   throw new Error('Packaged backend self-check returned an unexpected version');
 }
-if (process.platform === 'darwin') execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
 
 console.log(`Built ${output}`);
