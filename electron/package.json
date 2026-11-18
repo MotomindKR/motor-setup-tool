@@ -11,7 +11,7 @@
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "check": "node --check main.js && node --check preload.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check update-metadata.js && node --check package-desktop.js && node --check package-installers.js && node --check build-icons.js && node --check set-windows-icon.mjs && node --test recordings.test.js backend.test.js updater.test.js src/controller.test.mjs && npm run build",
+    "check": "node --check main.js && node --check preload.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-desktop.js && node --check package-installers.js && node --check build-icons.js && node --check set-windows-icon.mjs && node --test recordings.test.js backend.test.js updater.test.js src/controller.test.mjs && npm run build",
     "test:ui": "playwright test",
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",

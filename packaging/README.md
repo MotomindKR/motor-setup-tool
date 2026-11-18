@@ -40,6 +40,11 @@ npm run package:installers
 Find installers and individual checksums in `dist-electron/`; publication
 combines the checksums into `SHA256SUMS`.
 
+Linux DEB/RPM packages own `70-motomind-gsusb.rules` in `/usr/lib/udev/rules.d`
+and reload udev rules after installation and removal. The rule grants the active
+desktop user access before systemd applies its device ACLs; reconnect the USB
+adapter after installing. No `plugdev` membership is required.
+
 ## Updates
 
 All platforms use [electron-updater](https://www.electron.build/v26/docs/features/auto-update/):

@@ -46,11 +46,11 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           node -e 'const fs=require("fs"); const cargo=fs.readFileSync("Cargo.toml","utf8").match(/^version = "([^"]+)"/m)[1]; const electron=require("./electron/package.json").version; if (cargo!==electron || process.env.RELEASE_TAG!==`v${cargo}`) process.exit(1)'
-      - name: Install Linux build libraries
+      - name: Install Linux build and desktop libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config fakeroot rpm
+          sudo apt-get install -y build-essential pkg-config fakeroot rpm xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
       - name: Install macOS MuJoCo SDK
         if: runner.os == 'macOS'
         shell: bash
@@ -89,6 +89,26 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
         run: npm run package:installers
+      - name: Check Linux USB permissions in DEB and RPM packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: node electron/test-linux-package.js dist-electron/*-linux-*.deb dist-electron/*-linux-*.rpm
+      - name: Capture Linux window chrome
+        if: runner.os == 'Linux'
+        shell: bash
+        run: xvfb-run -a node electron/capture-window-chrome.js "$PWD"/dist-electron/installers/linux*-unpacked/motor-setup-tool "$RUNNER_TEMP/window-chrome"
+      - name: Capture Windows window chrome
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: node electron/capture-window-chrome.js "$PWD/dist-electron/installers/win-unpacked/Motor Setup Tool.exe" "$env:RUNNER_TEMP/window-chrome"
+      - name: Upload native window screenshots
+        if: runner.os != 'macOS' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-chrome-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/window-chrome/*.png
+            ${{ runner.temp }}/window-chrome/*.json
       - name: Test installed Linux updater
         if: runner.os == 'Linux'
         shell: bash
@@ -96,7 +116,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
           gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
           sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
       - name: Test Windows silent upgrade
