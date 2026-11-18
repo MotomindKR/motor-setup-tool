@@ -41,6 +41,7 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
     const timer = setTimeout(() => child.kill(), 60_000);
     const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
     clearTimeout(timer);
+    if (code !== 0) console.error(await fs.readFile(path.join(caseDirectory, 'app.log'), 'utf8'));
     assert.equal(code, 0, `Packaged update handoff failed; see ${caseDirectory}`);
     const deadline = Date.now() + 30_000;
     let runtime;

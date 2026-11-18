@@ -53,23 +53,27 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
       throw 'The update did not use electron-updater from the packaged Electron app'
     }
     if (-not $ExpectedError) {
-      # NSIS relaunches through the user's shell, which need not inherit the
-      # updating process's environment. Verify its automatic GUI restart, then
-      # close it normally and launch the installed app for the runtime UI check.
-      $restartDeadline = (Get-Date).AddSeconds(45)
-      $restarted = $null
-      while (-not $restarted -and (Get-Date) -lt $restartDeadline) {
-        $candidate = Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
-          $_.ExecutablePath -ieq $appExe -and $_.ProcessId -ne $source.pid -and $_.CommandLine -notmatch '\s--type='
-        } | Select-Object -First 1
-        if ($candidate) {
-          $gui = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
-          if ($gui -and $gui.MainWindowHandle -ne 0) { $restarted = $gui }
-        }
-        if (-not $restarted) { Start-Sleep -Milliseconds 200 }
+      # Hosted runners have no logged-on Explorer shell for NSIS's
+      # ExecShellAsUser restart. Wait for the real installer to finish, then
+      # explicitly launch the installed GUI to verify its runtime and backend.
+      $installDeadline = (Get-Date).AddSeconds(60)
+      $installed = $false
+      while (-not $installed -and (Get-Date) -lt $installDeadline) {
+        try {
+          $launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
+          $ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
+          $installers = @(Get-CimInstance Win32_Process -Filter "Name = 'installer.exe'")
+          $installed = ($launcher -eq $Version -or $launcher -eq "$Version.0") -and $ui -eq $Version -and $installers.Count -eq 0
+        } catch { }
+        if (-not $installed) { Start-Sleep -Milliseconds 200 }
       }
-      if (-not $restarted) { throw 'NSIS did not restart the installed app window' }
-      if (-not $restarted.CloseMainWindow() -or -not $restarted.WaitForExit(15000)) { throw 'The restarted app did not close normally' }
+      if (-not $installed) { throw 'The NSIS update did not complete in the original installation directory' }
+      Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
+        $_.ExecutablePath -ieq $appExe -and $_.CommandLine -notmatch '\s--type='
+      } | ForEach-Object {
+        $gui = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+        if ($gui -and (-not $gui.CloseMainWindow() -or -not $gui.WaitForExit(15000))) { throw 'The updated app did not close normally' }
+      }
       $env:MOTOMIND_SMOKE_PATH = $screenshot
       $env:MOTOMIND_SMOKE_TAB = 'setup'
       $smoke = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru

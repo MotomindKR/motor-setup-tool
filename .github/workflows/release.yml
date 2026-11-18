@@ -96,7 +96,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
           gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
           sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
       - name: Test Windows silent upgrade

@@ -1,10 +1,10 @@
-name: Windows updater regression
+name: Installed updater regression
 
 on:
   workflow_dispatch:
     inputs:
       installer_run:
-        description: Workflow run containing the installers-win32-x64 artifact
+        description: Workflow run containing desktop installer artifacts
         required: true
         type: string
 
@@ -13,6 +13,40 @@ permissions:
   actions: read
 
 jobs:
+  linux-update:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-22.04
+          - platform: linux-arm64
+            os: ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: electron
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-${{ matrix.platform }}
+          run-id: ${{ inputs.installer_run }}
+          github-token: ${{ github.token }}
+          path: dist-electron
+      - name: Test installed DEB update and checksum rejection
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
+          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
+          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
   update:
     strategy:
       fail-fast: false
