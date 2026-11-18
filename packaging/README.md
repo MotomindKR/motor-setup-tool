@@ -49,6 +49,8 @@ markers, release metadata, and Windows elevation helper. Installer builds use
 the normal builder packaging path so signing and these resources are included.
 The NSIS `customInit` hook selects the registration matching the updater's
 installation directory, preserving user/system scope when both copies exist.
+Its supported process-check hook waits for other app/backend processes to close
+normally and aborts after 30 seconds; it never force-stops a motor operation.
 
 Updates run only through **Settings → Check for update → Install update**.
 Automatic downloading and installation on ordinary app exit are disabled.

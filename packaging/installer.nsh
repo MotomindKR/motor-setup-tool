@@ -23,3 +23,23 @@
     ${endif}
   ${endif}
 !macroend
+
+; The default NSIS check can force-stop processes. A motor backend may be
+; calibrating or flashing firmware, so wait for normal shutdown and abort
+; rather than terminating another app instance or a CLI motor operation.
+!macro customCheckAppRunning
+  StrCpy $R3 0
+  ${Do}
+    ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    ${nsProcess::FindProcess} "motor-setup-tool.exe" $R1
+    ${If} $R0 == 603
+    ${AndIf} $R1 == 603
+      ${Break}
+    ${EndIf}
+    ${If} $R3 >= 150
+      Abort "Close other app windows and stop motor operations before updating."
+    ${EndIf}
+    IntOp $R3 $R3 + 1
+    Sleep 200
+  ${Loop}
+!macroend

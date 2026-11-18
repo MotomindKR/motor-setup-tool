@@ -30,6 +30,8 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     foreach ($file in @('main.js', 'preload.js', 'updater.js', 'packaged-update-worker.js')) {
       Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $appRoot "electron\$file") -Force
     }
+    $runtimeModules = Join-Path $appRoot 'node_modules'
+    if (Test-Path -LiteralPath $runtimeModules) { Remove-Item -LiteralPath $runtimeModules -Recurse -Force }
     & node -e 'require(process.argv[1]).copyRuntimeDependencies(process.argv[2])' (Join-Path $PSScriptRoot 'runtime-dependencies.js') $appRoot
     if ($LASTEXITCODE -ne 0) { throw 'Could not stage updater runtime dependencies' }
     $manifestFile = Join-Path $appRoot 'package.json'
@@ -132,3 +134,22 @@ Test-Update 'unicode-user-directory' $specialDirectory $Installer $Version
 
 # A corrupt download must stay in the original app and show a useful error.
 Test-Update 'checksum-failure' $specialDirectory $Installer '99.0.0' 'checksum mismatch'
+
+# An installer must never force-stop a backend owned by another app/CLI.
+$safetyDirectory = Join-Path $specialDirectory 'safety-test'
+New-Item -ItemType Directory -Path $safetyDirectory -Force | Out-Null
+$sourceFile = Join-Path $testRoot 'backend-stub.cs'
+$stubFile = Join-Path $safetyDirectory 'motor-setup-tool.exe'
+Set-Content $sourceFile 'public class Program { public static void Main() { System.Threading.Thread.Sleep(120000); } }'
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe "/out:$stubFile" $sourceFile
+if ($LASTEXITCODE -ne 0) { throw 'Could not compile the harmless backend fixture' }
+$stub = Start-Process -FilePath $stubFile -PassThru
+try {
+  $blocked = Start-Process -FilePath $Installer -ArgumentList "/S --updated /D=$specialDirectory" -PassThru
+  if (-not $blocked.WaitForExit(45000)) { throw 'The installer did not stop after waiting for another backend' }
+  if ($blocked.ExitCode -eq 0) { throw 'The installer accepted an update while another backend was running' }
+  if ($stub.HasExited) { throw 'The installer terminated another motor backend' }
+  Write-Output 'Passed active-backend protection: installer aborted without stopping the backend'
+} finally {
+  if (-not $stub.HasExited) { $stub.Kill(); $stub.WaitForExit() }
+}
