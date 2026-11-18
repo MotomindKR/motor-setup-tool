@@ -65,17 +65,21 @@ required; MSIX would need a trusted Windows signing certificate or Store setup.
 
 ### macOS signing setup
 
-Production macOS auto-updates require Developer ID signing and notarization;
-ad-hoc builds cannot validate the production update flow. Configure these
-GitHub repository secrets before tagging a release:
+macOS auto-updates require Developer ID signing and notarization. Releases use
+ad-hoc signing until a certificate is configured; install those DMGs manually.
+If macOS blocks launch, open **System Settings → Privacy & Security → Open Anyway**
+after attempting to launch the app.
+
+Configure these GitHub repository secrets to enable Developer ID releases:
 
 - `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
 - `MAC_CSC_KEY_PASSWORD`: certificate password.
 - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
 
-Tagged macOS builds require signing and notarization and fail if setup is
-missing. Manual workflow runs and local builds can still build ad-hoc test
-artifacts. The macOS ZIP and `latest-mac.yml` must be published alongside the DMG.
+Once `MAC_CSC_LINK` is configured, tagged macOS builds require signing and
+notarization and fail if the remaining credentials are missing. Local builds
+and manual workflow runs without a certificate also use ad-hoc signing.
+The macOS ZIP and `latest-mac.yml` must be published alongside the DMG.
 The first signed build must be installed manually over the existing ad-hoc app.
 
 Sign the bundled MuJoCo library and Rust executable after all Mach-O changes,
