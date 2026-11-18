@@ -206,16 +206,17 @@ app.whenReady().then(async () => {
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
-  ipcMain.handle('window:setTheme', (event, theme) => {
+  ipcMain.handle('window:setTheme', (event, theme, caption) => {
     assertSender(event);
     if (!['system', 'light', 'dark'].includes(theme)) throw new Error('Unknown appearance');
+    if (caption !== undefined && (!caption || !/^#[0-9a-f]{6}$/i.test(caption.color) || !/^#[0-9a-f]{6}$/i.test(caption.symbolColor))) throw new Error('Invalid window colors');
     nativeTheme.themeSource = theme;
     const dark = nativeTheme.shouldUseDarkColors;
     const background = dark ? '#121212' : '#ffffff';
     window.setBackgroundColor(background);
     if (process.platform !== 'darwin') window.setTitleBarOverlay({
-      color: background,
-      symbolColor: dark ? '#fafafa' : '#171717',
+      color: caption?.color ?? background,
+      symbolColor: caption?.symbolColor ?? (dark ? '#fafafa' : '#171717'),
       height: titleBarOverlayHeight,
     });
   });

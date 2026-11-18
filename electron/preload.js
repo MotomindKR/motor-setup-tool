@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('motorApp', {
   platform: process.platform,
   smokeMode: Boolean(process.env.MOTOMIND_SMOKE_PATH),
-  setWindowTheme: theme => ipcRenderer.invoke('window:setTheme', theme),
+  setWindowTheme: (theme, caption) => ipcRenderer.invoke('window:setTheme', theme, caption),
   run: (operation, params) => ipcRenderer.invoke('backend:run', operation, params),
   cancel: () => ipcRenderer.invoke('backend:cancel'),
   manualIntent: value => ipcRenderer.invoke('backend:manualIntent', value),
