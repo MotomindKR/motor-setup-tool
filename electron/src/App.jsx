@@ -42,6 +42,7 @@ import { TestPage } from "./pages/Test.jsx";
 import { SetupPage } from "./pages/Setup.jsx";
 import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
+import { syncWindowTheme } from "./window-theme.mjs";
 
 const pages = {
   calibrate: {
@@ -89,10 +90,10 @@ function useTheme() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
-    window.motorApp?.setWindowTheme?.(choice)?.catch(() => {});
     try {
       localStorage.setItem("motomind-appearance", choice);
     } catch {}
+    return syncWindowTheme(window.motorApp, choice, theme);
   }, [theme, choice]);
   return { choice, setChoice };
 }

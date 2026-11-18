@@ -31,6 +31,8 @@ jobs:
           node-version: '22'
       - run: npm ci
         working-directory: electron
+      - run: npm run build
+        working-directory: electron
       - uses: actions/download-artifact@v4
         with:
           name: installers-${{ matrix.platform }}
@@ -52,7 +54,7 @@ jobs:
         shell: bash
         run: |
           dpkg-deb --extract dist-electron/*-linux-*.deb "$RUNNER_TEMP/chrome-app"
-          xvfb-run -a node electron/capture-window-chrome.js "$RUNNER_TEMP/chrome-app/opt/Motor Setup Tool/motor-setup-tool" "$RUNNER_TEMP/window-chrome"
+          xvfb-run -a node electron/capture-window-chrome.js "$RUNNER_TEMP/chrome-app/opt/Motor Setup Tool/motor-setup-tool" "$RUNNER_TEMP/window-chrome" --source
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -74,6 +76,8 @@ jobs:
           node-version: '22'
       - run: npm ci
         working-directory: electron
+      - run: npm run build
+        working-directory: electron
       - uses: actions/download-artifact@v4
         with:
           name: installers-win32-x64
@@ -92,6 +96,22 @@ jobs:
           $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
           if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
+      - name: Capture Windows window chrome
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
+          $location = Join-Path $env:RUNNER_TEMP 'chrome-app'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/S', '/currentuser', "/D=$location") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Chrome capture installation failed' }
+          node electron/capture-window-chrome.js "$location/Motor Setup Tool.exe" "$env:RUNNER_TEMP/window-chrome" --source
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome capture failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: window-chrome-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/window-chrome/*.png
+            ${{ runner.temp }}/window-chrome/*.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
