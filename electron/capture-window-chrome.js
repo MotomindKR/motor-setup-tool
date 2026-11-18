@@ -13,6 +13,7 @@ const { _electron } = require('playwright');
     const page = await application.firstWindow();
     await page.locator('.app-header').waitFor();
     for (const theme of ['Light', 'Dark']) {
+      await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setBounds({ x: 10, y: 10, width: 1000, height: 700 }));
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
       await page.getByRole('combobox', { name: 'Appearance', exact: true }).click();
       await page.getByRole('option', { name: theme, exact: true }).click();
