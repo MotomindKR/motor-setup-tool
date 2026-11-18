@@ -12,7 +12,7 @@ const rule = '/usr/lib/udev/rules.d/70-motomind-gsusb.rules';
 const bytes = fs.readFileSync(path.join(__dirname, '..', 'packaging', path.basename(rule)));
 const run = (command, args) => execFileSync(command, args, { encoding: 'utf8', maxBuffer: 4_000_000 });
 const listing = run('dpkg-deb', ['--contents', deb]);
-assert.match(listing.split('\n').find(line => line.endsWith(`.${rule}`)) || '', /^-rw-r--r--\s+root\/root\s/);
+assert.match(listing.split('\n').find(line => line.endsWith(`.${rule}`)) || '', /^-rw-r--r--\s+(root\/root|0\/0)\s/);
 const controls = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-deb-controls-'));
 try {
   run('dpkg-deb', ['--control', deb, controls]);

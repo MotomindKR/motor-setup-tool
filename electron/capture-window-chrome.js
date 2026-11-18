@@ -32,11 +32,13 @@ const { _electron } = require('playwright');
             overlay: navigator.windowControlsOverlay.getTitlebarAreaRect().toJSON(),
             border: getComputedStyle(document.querySelector('.app-header')).borderBottomWidth,
           }));
-          const png = await application.evaluate(async ({ BrowserWindow, desktopCapturer }) => {
+          const png = await application.evaluate(async ({ BrowserWindow, desktopCapturer, screen }) => {
             const window = BrowserWindow.getAllWindows()[0];
             const { width, height } = window.getBounds();
-            const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width, height } });
-            const source = sources.find(item => item.id === window.getMediaSourceId());
+            // Xvfb has no window manager to provide the native window list.
+            const linux = process.platform === 'linux';
+            const sources = await desktopCapturer.getSources({ types: [linux ? 'screen' : 'window'], thumbnailSize: linux ? screen.getPrimaryDisplay().size : { width, height } });
+            const source = linux ? sources[0] : sources.find(item => item.id === window.getMediaSourceId());
             if (!source || source.thumbnail.isEmpty()) throw new Error('Native window capture unavailable');
             return source.thumbnail.toPNG().toString('base64');
           });
