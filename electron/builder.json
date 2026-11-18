@@ -27,6 +27,7 @@
   "dmg": { "title": "Motor Setup Tool" },
   "win": { "target": "nsis", "artifactName": "motor-setup-tool-${version}-win32-${arch}.${ext}", "icon": "../assets/icons/motor-setup-tool.ico" },
   "nsis": {
+    "include": "../packaging/installer.nsh",
     "installerIcon": "../assets/icons/motor-setup-tool.ico",
     "uninstallerIcon": "../assets/icons/motor-setup-tool.ico",
     "oneClick": false,

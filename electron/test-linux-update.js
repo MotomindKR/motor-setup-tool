@@ -59,6 +59,7 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
     } else {
       assert.equal(runtime.backendReady, true);
       assert.equal(runtime.updateError, null);
+      assert.equal((await fs.readFile(path.join(path.dirname(executable), 'resources', 'package-type'), 'utf8')).trim(), 'deb');
     }
     console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${version}`);
   }

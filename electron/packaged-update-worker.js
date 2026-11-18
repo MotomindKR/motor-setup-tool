@@ -36,6 +36,9 @@ server.listen(0, '127.0.0.1', () => {
     provider: 'generic', url: `http://127.0.0.1:${server.address().port}`,
     updaterCacheDirName: `motomind-updater-test-${process.pid}`,
   }));
+  if (process.platform === 'linux') {
+    fs.writeFileSync(path.join(process.resourcesPath, 'package-type'), extension.slice(1));
+  }
   const native = require('electron-updater').autoUpdater;
   native.disableDifferentialDownload = true;
   native.on('update-downloaded', () => fs.writeFileSync(config.handoff, JSON.stringify({

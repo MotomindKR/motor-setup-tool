@@ -131,4 +131,4 @@ Install-Previous '/currentuser' $specialDirectory
 Test-Update 'unicode-user-directory' $specialDirectory $Installer $Version
 
 # A corrupt download must stay in the original app and show a useful error.
-Test-Update 'checksum-failure' $userDirectory $Installer '99.0.0' 'checksum mismatch'
+Test-Update 'checksum-failure' $specialDirectory $Installer '99.0.0' 'checksum mismatch'
