@@ -28,6 +28,10 @@ const { _electron } = require('playwright');
       });
     }
     async function capture(theme, width, state) {
+      if (state !== 'restored') await page.waitForFunction(selector => {
+        const elements = [...document.querySelectorAll(selector)];
+        return elements.length > 0 && elements.every(element => getComputedStyle(element).opacity === '1');
+      }, backdrops);
       await settle();
       const name = `${process.platform}-${theme.toLowerCase()}-${width}-${state}`;
       const geometry = await page.evaluate(selector => ({
