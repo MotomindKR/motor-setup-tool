@@ -22,10 +22,10 @@ const { _electron } = require('playwright');
     await page.locator('.app-header').waitFor();
     const backdrops = '[data-slot="dialog-overlay"], [data-slot="sheet-overlay"]';
     async function settle() {
-      await page.evaluate(async selector => {
-        await Promise.all([...document.querySelectorAll(selector)].flatMap(element => element.getAnimations()).map(animation => animation.finished.catch(() => {})));
+      await page.evaluate(async () => {
+        await Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' && animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      }, backdrops);
+      });
     }
     async function capture(theme, width, state) {
       await settle();
