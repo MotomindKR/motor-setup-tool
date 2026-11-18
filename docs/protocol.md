@@ -68,6 +68,13 @@ overflow, and unknown error classes abort; a recovery flag cannot mask them.
 
 ## Calibration preflight and stopping
 
+Standstill requires at least five Reset-mode replies spanning 100 ms, with
+position varying by at most 0.003 rad and median signed speed below 0.15 rad/s.
+This tolerates isolated speed-report noise while checking actual encoder motion,
+including position wraparound. Stop requests are repeated while the shaft settles,
+for up to one second before settings changes or five seconds between calibration
+traces. Missing replies and CAN faults still abort the operation.
+
 Before excitation, the app reads back operation mode `0x7005 = 0` and command
 watchdog `0x7028 = 2000` raw ticks. A zero-torque enable must return fault-free
 Reset within 300 ms without commands. Periodic type-24 status enables this

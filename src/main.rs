@@ -12,6 +12,7 @@ mod paths;
 mod pipeline;
 mod protocol;
 mod registers;
+mod stationary;
 mod types;
 
 fn main() -> anyhow::Result<()> {

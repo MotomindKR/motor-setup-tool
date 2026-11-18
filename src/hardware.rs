@@ -3,6 +3,7 @@ use crate::{
     bridge,
     encoder::EncoderTracker,
     protocol::{self, Feedback, WireFrame},
+    stationary::StationaryCheck,
     types::*,
 };
 use anyhow::{Context, Result, ensure};
@@ -716,15 +717,40 @@ impl Bus {
         ))
     }
     pub(crate) fn stopped(&self) -> Result<Feedback> {
-        self.flush()?;
-        self.stop()?;
-        let fb = self.feedback(Duration::from_millis(100))?;
-        ensure!(fb.mode == 0, "Motor did not acknowledge stopped mode");
+        self.wait_until_stopped(Duration::from_secs(1), None)
+    }
+    fn wait_until_stopped(
+        &self,
+        timeout: Duration,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Feedback> {
+        let start = Instant::now();
+        let mut check = StationaryCheck::new(self.config.profile.position_range);
+        let mut last_mode = None;
+        while start.elapsed() < timeout {
+            ensure!(
+                !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)),
+                "Operation cancelled"
+            );
+            self.flush()?;
+            self.stop()?;
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            let fb = self.feedback(remaining.min(Duration::from_millis(100)))?;
+            last_mode = Some(fb.mode);
+            check.observe(&fb, start.elapsed());
+            if check.is_stationary() {
+                return Ok(fb);
+            }
+            thread::sleep(Duration::from_millis(20).min(timeout.saturating_sub(start.elapsed())));
+        }
         ensure!(
-            fb.velocity.abs() < 0.15,
-            "Shaft is still moving; wait before changing settings"
+            last_mode == Some(0),
+            "Motor did not acknowledge stopped mode"
         );
-        Ok(fb)
+        anyhow::bail!("Could not confirm a stationary shaft; keep it still and retry")
     }
 }
 impl Drop for Bus {
@@ -933,7 +959,7 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
     let period = Duration::from_secs(1) / SAMPLE_HZ;
     let bus = Bus::open(c)?;
     let _guard = StopGuard(&bus);
-    let initial = bus.stopped()?;
+    let initial = bus.wait_until_stopped(Duration::from_secs(1), Some(cancel))?;
     ensure!(
         initial.faults == 0,
         "Motor reported faults before timing check"
@@ -943,6 +969,9 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
     let mut send_call = Vec::with_capacity(SAMPLES);
     let mut command_interval = Vec::with_capacity(SAMPLES - 1);
     let mut previous_start: Option<Instant> = None;
+    let monitoring_start = Instant::now();
+    let mut stationary = StationaryCheck::new(c.profile.position_range);
+    stationary.observe(&initial, Duration::ZERO);
     let mut next = Instant::now();
     for _ in 0..SAMPLES {
         ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
@@ -962,8 +991,9 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
             if let Some(frame) = bus.receive()?
                 && let Some(status) = protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile)
             {
+                stationary.observe(&status, monitoring_start.elapsed());
                 ensure!(
-                    status.mode == 0 && status.faults == 0 && status.velocity.abs() < 0.15,
+                    status.mode == 0 && status.faults == 0 && !stationary.motion_detected(),
                     "Motor left stopped mode, moved, or reported a fault during timing check"
                 );
                 round_trip.push(started.elapsed().as_micros() as u64);
@@ -1211,19 +1241,7 @@ pub fn acquire(
                 "Waiting for the shaft to stop",
             ));
             // Stop, wait for a stationary shaft, then clear command state before enable.
-            bus.stop()?;
-            let settle_deadline = Instant::now() + Duration::from_secs(5);
-            let initial = loop {
-                thread::sleep(Duration::from_millis(50));
-                ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
-                if let Ok(fb) = bus.stopped() {
-                    break fb;
-                }
-                ensure!(
-                    Instant::now() < settle_deadline,
-                    "Motor did not settle after disable"
-                );
-            };
+            let initial = bus.wait_until_stopped(Duration::from_secs(5), Some(cancel))?;
             ensure!(
                 initial.faults == 0,
                 "Motor fault bits: 0x{:02x}",
