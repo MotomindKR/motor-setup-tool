@@ -4,7 +4,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const [deb, rpm] = process.argv.slice(2);
@@ -23,12 +22,11 @@ try {
     assert.match(script, /apparmor/);
   }
 } finally { fs.rmSync(controls, { recursive: true, force: true }); }
-const files = run('rpm', ['-qp', '--qf', '[%{FILENAMES}\t%{FILEDIGESTS}\t%{FILEMODES:octal}\n]', rpm]);
+const files = run('rpm', ['-qp', '--qf', '[%{FILENAMES}\t%{FILEMODES:octal}\n]', rpm]);
 const entry = files.split('\n').map(line => line.split('\t')).find(([name]) => name === rule);
 assert.ok(entry, 'RPM must own the USB permission rule');
-const algorithm = run('rpm', ['-qp', '--qf', '%{FILEDIGESTALGO}', rpm]).trim();
-const digest = crypto.createHash({ 1: 'md5', 8: 'sha256', 10: 'sha512' }[algorithm]).update(bytes).digest('hex');
-assert.equal(entry[1], digest, 'RPM rule bytes must match the source rule');
-assert.equal(Number.parseInt(entry[2], 8) & 0o777, 0o644);
+const payload = execFileSync('bash', ['-o', 'pipefail', '-c', 'rpm2cpio "$1" | cpio --quiet -i --to-stdout "./usr/lib/udev/rules.d/70-motomind-gsusb.rules" "usr/lib/udev/rules.d/70-motomind-gsusb.rules"', 'rpm-rule', rpm]);
+assert.deepEqual(payload, bytes, 'RPM rule bytes must match the source rule');
+assert.equal(Number.parseInt(entry[1], 8) & 0o777, 0o644);
 assert.equal(run('rpm', ['-qp', '--scripts', rpm]).match(/udevadm control --reload-rules/g)?.length, 2);
 console.log('DEB/RPM own the USB rule and preserve desktop hooks with udev reloads.');
