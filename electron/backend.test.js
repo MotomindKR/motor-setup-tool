@@ -130,3 +130,26 @@ test('backend selection never falls back from a missing bundle or release to ano
   assert.equal(backendPath(directory, null, debug), debug);
   assert.throws(() => backendPath(directory, null, release), /Rust backend missing/);
 });
+
+test('backend signal exits report the signal and stderr instead of status null', { skip: process.platform === 'win32' }, async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-backend-signal-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const binary = path.join(directory, 'backend');
+  fs.writeFileSync(binary, "#!/bin/sh\nprintf 'fixture error\\n' >&2\nkill -TERM $$\n", { mode: 0o755 });
+  const backend = new Backend(binary, () => {});
+  await assert.rejects(backend.run('interfaces'), /Backend terminated by SIGTERM[\s\S]*fixture error/);
+  assert.equal(backend.active, null);
+  await assert.rejects(backend.preview({}), /Preview backend terminated by SIGTERM[\s\S]*fixture error/);
+});
+
+test('requested cancellation remains a cancelled result after signal termination', { skip: process.platform === 'win32' }, async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-backend-cancel-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const binary = path.join(directory, 'backend');
+  fs.writeFileSync(binary, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+  const backend = new Backend(binary, () => {});
+  const result = backend.run('interfaces');
+  backend.cancel();
+  assert.deepEqual(await result, { cancelled: true });
+  assert.equal(backend.active, null);
+});

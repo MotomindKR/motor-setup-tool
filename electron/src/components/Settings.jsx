@@ -58,9 +58,7 @@ export function Settings({ s, a, appearance, c }) {
           {s.updateCandidate && (
             <Button onClick={a.installUpdate} disabled={c.busy}>
               <ArrowDownToLine />
-              {s.updateCandidate.installMode === "mac-dmg"
-                ? "Open DMG"
-                : "Install update"}
+              Install update
             </Button>
           )}
         </DialogFooter>

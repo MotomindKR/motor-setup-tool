@@ -27,10 +27,54 @@ if (platform === 'win32') {
   }
 }
 
-const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg'] : ['--win', 'nsis'];
-execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--prepackaged', prepackaged, '--config', path.join(__dirname, 'builder.json'), ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, stdio: 'inherit' });
+const resources = platform === 'darwin' ? path.join(prepackaged, 'Contents', 'Resources') : path.join(prepackaged, 'resources');
+const config = structuredClone(require('./builder.json'));
+config.directories.app = path.join(resources, 'app');
+config.extraResources = [{ from: path.join(resources, 'backend'), to: 'backend' }];
+config.electronVersion = require('electron/package.json').version;
+if (platform === 'linux') {
+  // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
+  // Set the public architecture once so metadata and existing clients agree.
+  config.linux.artifactName = 'motor-setup-tool-${version}-linux-' + arch + '.${ext}';
+}
+const buildEnv = { ...process.env };
+// GitHub expands missing secrets to empty strings; builder otherwise treats
+// an empty CSC_LINK as the current directory rather than "no certificate".
+for (const name of ['CSC_LINK', 'CSC_NAME', 'WIN_CSC_LINK']) {
+  if (!buildEnv[name]) delete buildEnv[name];
+}
+if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
+  for (const name of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
+    if (!process.env[name]) throw new Error(`macOS release auto-updates require Developer ID signing and notarization. Missing ${name}; see packaging/README.md.`);
+  }
+  config.forceCodeSigning = true;
+  config.mac.notarize = true;
+} else if (platform === 'darwin' && !buildEnv.CSC_LINK && !buildEnv.CSC_NAME) {
+  config.mac.identity = '-';
+  // Ad-hoc test signatures have no Team ID for hardened library validation.
+  // Signed production builds keep the hardened runtime enabled.
+  config.mac.hardenedRuntime = false;
+}
+const configFile = path.join(root, 'dist-electron', 'installer-config.json');
+fs.writeFileSync(configFile, JSON.stringify(config));
+// A normal builder pack is required: --prepackaged skips signing and the
+// app-update.yml/elevation resources needed by the maintained updaters.
+const targets = platform === 'linux' ? ['--linux', 'deb', 'rpm'] : platform === 'darwin' ? ['--mac', 'dmg', 'zip'] : ['--win', 'nsis'];
+execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--config', configFile, ...targets, `--${arch}`, '--publish', 'never'], { cwd: __dirname, env: buildEnv, stdio: 'inherit' });
 
-const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg'] : ['exe'];
+if (platform === 'darwin') {
+  const finalApp = path.join(installers, `mac-${arch}`, 'Motor Setup Tool.app');
+  const finalBackend = path.join(finalApp, 'Contents', 'Resources', 'backend');
+  for (const binary of [finalApp, path.join(finalBackend, 'motor-setup-tool'), path.join(finalBackend, 'lib', 'libmujoco.3.12.0.dylib')]) {
+    execFileSync('codesign', ['--verify', '--strict', binary]);
+  }
+  const runtimeEnv = { ...process.env };
+  delete runtimeEnv.DYLD_LIBRARY_PATH;
+  const result = JSON.parse(execFileSync(path.join(finalBackend, 'motor-setup-tool'), ['self-check'], { env: runtimeEnv, encoding: 'utf8', timeout: 30_000 }));
+  if (result.version !== pkg.version || result.mujoco !== '3.12.0') throw new Error('Final signed macOS backend self-check failed');
+}
+
+const extensions = platform === 'linux' ? ['deb', 'rpm'] : platform === 'darwin' ? ['dmg', 'zip'] : ['exe'];
 for (const extension of extensions) {
   const matches = fs.readdirSync(installers).filter(name => name.endsWith(`.${extension}`));
   if (matches.length !== 1) throw new Error(`Expected one ${extension} installer, found ${matches.length}`);
@@ -42,3 +86,8 @@ for (const extension of extensions) {
   fs.writeFileSync(`${destination}.sha256`, `${digest}  ${name}\n`);
   console.log(`Release installer ${destination}`);
 }
+for (const name of fs.readdirSync(installers).filter(name => name.endsWith('.yml') || name.endsWith('.blockmap'))) {
+  fs.copyFileSync(path.join(installers, name), path.join(root, 'dist-electron', name));
+}
+const metadata = platform === 'darwin' ? 'latest-mac.yml' : platform === 'win32' ? 'latest.yml' : `latest-linux${arch === 'x64' ? '' : `-${arch}`}.yml`;
+require('./update-metadata').verifyMetadata(path.join(root, 'dist-electron'), [metadata], pkg.version);

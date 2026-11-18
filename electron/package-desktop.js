@@ -63,13 +63,14 @@ if (process.platform === 'linux') {
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js', 'native-install.js', 'install-windows.ps1']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
 fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist'), { recursive: true });
 fs.copyFileSync(path.join(__dirname, 'node_modules', '@motomindkr', 'ui', 'THIRD_PARTY_NOTICES.md'), path.join(app, 'electron', 'ui-dist', 'THIRD_PARTY_NOTICES.md'));
 const pkg = require('./package.json');
-fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName }, null, 2));
+fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName, description: pkg.description, author: pkg.author, homepage: pkg.homepage, dependencies: { 'electron-updater': pkg.dependencies['electron-updater'] } }, null, 2));
+require('./runtime-dependencies').copyRuntimeDependencies(app);
 for (const relative of ['icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/OFL.txt', 'README.md']) {
   const target = path.join(app, 'assets', relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -86,10 +87,21 @@ for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
 }
 const libraryKey = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : process.platform === 'win32' ? 'PATH' : 'LD_LIBRARY_PATH';
 const smokeEnv = { ...process.env, [libraryKey]: [path.join(backend, 'lib'), process.env[libraryKey]].filter(Boolean).join(path.delimiter) };
+if (process.platform === 'darwin') {
+  // install_name_tool changes MuJoCo's Mach-O headers and invalidates its
+  // signature. --deep on the outer app does not repair arbitrary Mach-O files
+  // under Resources: sign these explicitly, inside out, after all mutations.
+  for (const binary of [path.join(backend, 'lib', mujocoName), path.join(backend, backendName)]) {
+    execFileSync('codesign', ['--force', '--sign', '-', '--timestamp=none', binary]);
+  }
+  execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
+  for (const binary of [bundle, path.join(backend, backendName), path.join(backend, 'lib', mujocoName)]) {
+    execFileSync('codesign', ['--verify', '--strict', binary]);
+  }
+}
 const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
   throw new Error('Packaged backend self-check returned an unexpected version');
 }
-if (process.platform === 'darwin') execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
 
 console.log(`Built ${output}`);
