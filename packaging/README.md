@@ -18,8 +18,9 @@ does not publish a Windows ARM64 library.
 1. Match versions in `Cargo.toml` and `electron/package.json`; update both
    lockfiles and commit.
 2. Let [unit tests](../.github/workflows/tests.yml) pass on `main`.
-3. Push `vX.Y.Z`. The [release workflow](../.github/workflows/release.yml)
-   builds all four variants, verifies checksums, and publishes the release.
+3. Write the changes in `docs/releases/vX.Y.Z.md` and push `vX.Y.Z`. The
+   [release workflow](../.github/workflows/release.yml) builds all four variants,
+   verifies checksums, and adds installer links to the release notes.
 
 ## Build locally
 
