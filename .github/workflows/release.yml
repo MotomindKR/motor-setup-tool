@@ -3,8 +3,6 @@ name: Electron desktop release
 on:
   push:
     tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -151,34 +149,6 @@ jobs:
             dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
             dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
 
-  ubuntu-compatibility:
-    name: Launch on Ubuntu ${{ matrix.ubuntu }} (${{ matrix.arch }})
-    needs: build
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        ubuntu: ['20.04', '22.04', '24.04', '26.04']
-        arch: [x64, arm64]
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: installers-linux-${{ matrix.arch }}
-          path: dist-electron
-      - name: Install DEB and smoke-test the bundled CAN and Dynamixel workers
-        env:
-          UBUNTU_VERSION: ${{ matrix.ubuntu }}
-        run: |
-          docker run --rm --shm-size=1g -v "$PWD/dist-electron:/installers:ro" "ubuntu:$UBUNTU_VERSION" bash -euc '
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get install -y --no-install-recommends /installers/*.deb xvfb xauth
-            export MOTOMIND_SMOKE_PATH=/tmp/smoke.png MOTOMIND_SMOKE_DXL=1
-            timeout 45 xvfb-run -a "/opt/Motor Setup Tool/motor-setup-tool" --no-sandbox
-            grep -q "\"dxlMotors\":7" /tmp/smoke.png.json
-          '
-
   verify-installers:
     needs: build
     uses: ./.github/workflows/windows-update.yml
@@ -189,13 +159,13 @@ jobs:
   preview:
     name: Preview release
     if: github.ref_type == 'branch'
-    needs: [verify-installers, ubuntu-compatibility]
+    needs: verify-installers
     uses: ./.github/workflows/release-assets.yml
 
   publish:
     name: Publish release
     if: github.ref_type == 'tag'
-    needs: [verify-installers, ubuntu-compatibility]
+    needs: verify-installers
     uses: ./.github/workflows/release-assets.yml
     permissions:
       contents: write

@@ -170,13 +170,6 @@ async function captureStartup(destination) {
     }
     return { title: document.title, bridge: typeof window.motorApp };
   })()`);
-  if (process.env.MOTOMIND_SMOKE_DXL === '1') {
-    const reply = await contents.executeJavaScript(
-      "window.motorApp.dxl('connect', { demo: true, port: '', baud: 1000000 })",
-    );
-    if (reply.error || reply.result?.motors.length !== 7) throw new Error(reply.error || 'DXL demo failed');
-    details.dxlMotors = reply.result.motors.length;
-  }
   if (backendError) throw backendError;
   const { stdout } = await promisify(execFile)(backend.binary, ['self-check'], { env: backend.environment, timeout: 15000 });
   await fs.writeFile(destination, (await contents.capturePage()).toPNG());

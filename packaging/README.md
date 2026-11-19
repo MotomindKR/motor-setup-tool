@@ -23,10 +23,6 @@ does not publish a Windows ARM64 library.
    [release workflow](../.github/workflows/release.yml) builds all four variants,
    verifies checksums, and adds installer links to the release notes.
 
-Linux releases are built natively on Ubuntu 22.04 for x64 and ARM64.
-The [release workflow](../.github/workflows/release.yml) lists the Ubuntu
-versions used to test the packaged app.
-
 A manual release workflow run on a branch exercises both upgrade directions on
 Windows and Linux DEB. It installs the previous stable release, updates to the
 candidate, then uses the candidate to install a disposable next patch.
