@@ -1,3 +1,5 @@
+import { displayAngle } from "./format.mjs";
+
 const operationNames = {
   interfaces: "Checking interfaces",
   usbAdapters: "Checking USB adapters",
@@ -311,6 +313,17 @@ export function createController(bridge, env = {}) {
     });
     return true;
   }
+  function applyConfig(config) {
+    set({ config, reviewed: false, jogSpeed: Math.min(Number(s.jogSpeed), maxJogSpeed(config)) });
+    schedulePreview();
+  }
+  function inputRadians() {
+    const value = s.referenceInput.trim();
+    return value ? Number(value) * (s.referenceUnit === "deg" ? Math.PI / 180 : 1) : NaN;
+  }
+  function referenceInput(radians, unit) {
+    return Number.isFinite(radians) ? String(Number(displayAngle(radians, unit).toPrecision(12))) : "";
+  }
   function schedulePreview() {
     clearTimeout(previewTimer);
     const request = ++sequence;
@@ -447,9 +460,7 @@ export function createController(bridge, env = {}) {
         if (epoch !== connectionEpoch) return;
         set({
           referenceAngle: angle,
-          referenceInput: String(
-            s.referenceUnit === "deg" ? (angle * 180) / Math.PI : angle,
-          ),
+          referenceInput: String(displayAngle(angle, s.referenceUnit)),
         });
       } catch (error) {
         if (epoch !== connectionEpoch) return;
@@ -675,21 +686,10 @@ export function createController(bridge, env = {}) {
       const config = baseline
         ? { ...s.config, baseline: { ...s.config.baseline, [key]: numeric } }
         : { ...s.config, [key]: numeric };
-      set({
-        config,
-        reviewed: false,
-        jogSpeed: Math.min(Number(s.jogSpeed), maxJogSpeed(config)),
-      });
-      schedulePreview();
+      applyConfig(config);
     },
     restorePreset() {
-      if (!s.preset || flags().busy) return;
-      set({
-        config: s.preset,
-        reviewed: false,
-        jogSpeed: Math.min(Number(s.jogSpeed), maxJogSpeed(s.preset)),
-      });
-      schedulePreview();
+      if (s.preset && !flags().busy) applyConfig(s.preset);
     },
     review: (value) => {
       if (!flags().busy) set({ reviewed: value });
@@ -796,31 +796,11 @@ export function createController(bridge, env = {}) {
     },
     setReferenceInput: (value) => set({ referenceInput: value }),
     setReferenceUnit(unit) {
-      const radians =
-        Number(s.referenceInput) *
-        (s.referenceUnit === "deg" ? Math.PI / 180 : 1);
-      set({
-        referenceUnit: unit,
-        referenceInput:
-          s.referenceInput.trim() && Number.isFinite(radians)
-            ? String(
-                Number(
-                  (radians * (unit === "deg" ? 180 / Math.PI : 1)).toPrecision(
-                    12,
-                  ),
-                ),
-              )
-            : "",
-      });
+      set({ referenceUnit: unit, referenceInput: referenceInput(inputRadians(), unit) });
     },
     zero(test = false) {
       if (!flags().zero) return;
-      const angle = test
-        ? 0
-        : s.referenceInput.trim()
-          ? Number(s.referenceInput) *
-            (s.referenceUnit === "deg" ? Math.PI / 180 : 1)
-          : NaN;
+      const angle = test ? 0 : inputRadians();
       if (!Number.isFinite(angle) || Math.abs(angle) > 100) {
         notice("Reference angle must be within ±100 rad.", true);
         return;
@@ -838,13 +818,7 @@ export function createController(bridge, env = {}) {
           if (s.motor !== motor) return;
           set({
             referenceAngle: angle,
-            referenceInput: String(
-              Number(
-                (
-                  angle * (s.referenceUnit === "deg" ? 180 / Math.PI : 1)
-                ).toPrecision(12),
-              ),
-            ),
+            referenceInput: referenceInput(angle, s.referenceUnit),
           });
           notice("Motor zero and display angle saved.");
         },

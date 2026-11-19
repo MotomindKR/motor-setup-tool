@@ -34,7 +34,7 @@ import {
   NumericInput,
 } from "../ui.jsx";
 import { numberText, registerValueText } from "../controller.mjs";
-import { conciseNumber } from "../format.mjs";
+import { conciseNumber, displayAngle } from "../format.mjs";
 
 function RegisterPanel({ s, a, c }) {
   const access = (r) =>
@@ -227,8 +227,8 @@ export function SetupPage({ s, a, c }) {
               label="Display angle"
               type="number"
               step="any"
-              min={s.referenceUnit === "deg" ? (-100 * 180) / Math.PI : -100}
-              max={s.referenceUnit === "deg" ? (100 * 180) / Math.PI : 100}
+              min={displayAngle(-100, s.referenceUnit)}
+              max={displayAngle(100, s.referenceUnit)}
               value={s.referenceInput}
               onValueChange={a.setReferenceInput}
               disabled={c.busy}
