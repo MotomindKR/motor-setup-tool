@@ -46,8 +46,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
           node electron/test-linux-package.js dist-electron/*-linux-*.deb dist-electron/*-linux-*.rpm
-          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
-          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.22-${{ matrix.platform }}.deb" "$PWD"/dist-electron/*-${{ matrix.platform }}.deb
+          installer=("$PWD"/dist-electron/*-${{ matrix.platform }}.deb)
+          previous=$(python3 packaging/previous-installer.py "${installer[@]}")
+          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$previous" "${installer[@]}"
       - name: Capture Linux window chrome
         shell: bash
         run: |
@@ -86,9 +87,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.22-win32-x64.exe'
-          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
+          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File).FullName
+          $oldInstaller = python packaging/previous-installer.py $installer
+          if ($LASTEXITCODE -ne 0) { throw 'Previous installer download failed' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer
           if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
       - name: Capture Windows window chrome

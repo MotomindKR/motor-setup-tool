@@ -293,6 +293,7 @@ app.whenReady().then(async () => {
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
+    if (checkedUpdate.releasePage) return shell.openExternal(checkedUpdate.releasePage);
     installingUpdate = true;
     const release = checkedUpdate;
     const progress = message => window?.webContents.send('updates:progress', message);

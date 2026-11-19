@@ -73,7 +73,8 @@ required; MSIX would need a trusted Windows signing certificate or Store setup.
 ### macOS signing setup
 
 macOS auto-updates require Developer ID signing and notarization. Releases use
-ad-hoc signing until a certificate is configured; install those DMGs manually.
+ad-hoc signing until a certificate is configured. On these builds, **Open download page**
+opens the available release so users can install its DMG.
 If macOS blocks launch, open **System Settings → Privacy & Security → Open Anyway**
 after attempting to launch the app.
 

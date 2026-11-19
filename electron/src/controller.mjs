@@ -1048,7 +1048,10 @@ export function createController(bridge, env = {}) {
     },
     async installUpdate() {
       if (flags().busy || s.checkingUpdate || !s.updateResult?.available) return;
-      set({ installingUpdate: true, updateMessage: "Downloading update…" });
+      set({
+        installingUpdate: true,
+        updateMessage: s.updateResult.releasePage ? "" : "Downloading update…",
+      });
       try {
         await bridge.installUpdate();
       } catch (error) {

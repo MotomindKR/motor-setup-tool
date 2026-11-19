@@ -33,6 +33,16 @@ jobs:
       MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
     steps:
       - uses: actions/checkout@v4
+      - name: Verify upstream firmware images
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          jq -er '.[] | [.url, .sha256] | @tsv' src/firmware_catalog.json |
+            while read -r url digest; do
+              echo "Checking ${url##*/}"
+              curl -fsSL --retry 3 --max-time 60 "$url" -o "$RUNNER_TEMP/firmware.bin"
+              echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
+            done
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -116,8 +126,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
-          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.22-${{ matrix.platform }}.deb" "$PWD"/dist-electron/*-${{ matrix.platform }}.deb
+          installer=("$PWD"/dist-electron/*-${{ matrix.platform }}.deb)
+          previous=$(python3 packaging/previous-installer.py "${installer[@]}")
+          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$previous" "${installer[@]}"
       - name: Test Windows silent upgrade
         if: runner.os == 'Windows'
         shell: pwsh
@@ -125,9 +136,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.22-win32-x64.exe'
-          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
+          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File).FullName
+          $oldInstaller = python packaging/previous-installer.py $installer
+          if ($LASTEXITCODE -ne 0) { throw 'Previous installer download failed' }
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer
           if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
       - name: Upload Windows update diagnostics

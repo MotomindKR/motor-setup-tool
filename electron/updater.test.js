@@ -7,7 +7,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { ManagedUpdater, createUpdater, readUpdateError } = require('./updater');
 
-async function fixture(t) {
+async function fixture(t, manualUpdateReleases) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-updater-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const native = new EventEmitter();
@@ -16,7 +16,7 @@ async function fixture(t) {
   native.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: { version: '0.1.20' } });
   native.downloadUpdate = async () => { calls.push('download'); native.emit('download-progress', { percent: 42.4 }); };
   native.quitAndInstall = (...args) => calls.push(args);
-  const updater = new ManagedUpdater(native, app);
+  const updater = new ManagedUpdater(native, app, undefined, manualUpdateReleases);
   return { directory, native, calls, app, updater, pending: path.join(directory, 'pending-update.json') };
 }
 
@@ -30,6 +30,17 @@ test('update availability follows the maintained updater, including rollout elig
   native.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '0.1.20' } });
   assert.deepEqual(await updater.check(), { available: false, version: '0.1.20' });
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
+});
+
+test('an ad-hoc Mac build offers the checked release page and cannot start a native install', async t => {
+  const { updater, native, calls } = await fixture(t, 'https://github.com/MotomindKR/motor-setup-tool/releases');
+  assert.deepEqual(await updater.check(), {
+    available: true, version: '0.1.20', releasePage: 'https://github.com/MotomindKR/motor-setup-tool/releases/tag/v0.1.20',
+  });
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
+  assert.deepEqual(calls, []);
+  native.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '0.1.19' } });
+  assert.equal((await updater.check()).releasePage, undefined);
 });
 
 test('only the checked release can be installed; progress and restart use the native updater', async t => {
