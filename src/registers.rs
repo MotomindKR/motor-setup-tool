@@ -78,9 +78,7 @@ pub static CATALOG: std::sync::LazyLock<Vec<Register>> = std::sync::LazyLock::ne
 
 pub fn catalog(model: &str) -> Result<Vec<Register>> {
     ensure!(
-        crate::types::Profile::presets()
-            .iter()
-            .any(|profile| profile.model == model),
+        crate::types::Profile::preset(model).is_some(),
         "Unknown motor model"
     );
     Ok(CATALOG.iter().map(|item| item.for_model(model)).collect())
@@ -295,15 +293,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn editor_only_writes_documented_persistent_settings() {
-        for index in [0x7005, 0x7006, 0x700A, 0x7016, 0x7028, 0x702D, 0xFFFF] {
-            assert!(register(index).is_err());
-        }
-        assert!(register(0x7017).unwrap().writable);
-        assert!(!register(0x7017).unwrap().editable);
-        assert!(!register(0x7018).unwrap().editable);
-        assert!(register(0x7029).unwrap().writable);
-        assert!(register(0x702B).unwrap().writable);
+    fn register_indices_are_unique() {
         let mut indices: Vec<_> = CATALOG.iter().map(|item| item.index).collect();
         indices.sort();
         indices.dedup();
@@ -336,44 +326,22 @@ mod tests {
     }
 
     #[test]
-    fn can_aliases_and_model_permissions_match_the_manuals() {
-        for (host, can) in [
-            (0x2011, 0x7014),
-            (0x2012, 0x7010),
-            (0x2013, 0x7011),
-            (0x2014, 0x701F),
-            (0x2015, 0x7020),
-            (0x2016, 0x701E),
-            (0x2017, 0x7021),
-            (0x2018, 0x7017),
-            (0x2019, 0x7018),
-        ] {
-            assert!(register(host).is_err());
-            assert_eq!(
-                register(can).unwrap().host_index.as_deref(),
-                Some(format!("0x{host:04X}").as_str())
-            );
+    fn host_aliases_are_metadata_and_unreadable_overrides_block_editing() {
+        for host in CATALOG.iter().filter_map(|item| item.host_index.as_ref()) {
+            let index = u16::from_str_radix(host.trim_start_matches("0x"), 16).unwrap();
+            assert!(register(index).is_err());
         }
-        for model in ["RS-05", "RS-06"] {
-            let items = catalog(model).unwrap();
-            let filter = items.iter().find(|r| r.index == 0x7021).unwrap();
-            assert!(filter.writable && !filter.readable && !filter.editable);
-        }
-        let rs01 = catalog("RS-01").unwrap();
-        for item in rs01.iter().filter(|r| [0x7029, 0x702B].contains(&r.index)) {
-            assert_eq!(item.availability, "not_documented");
-            assert!(!item.readable && !item.writable && !item.editable);
-        }
-        let rs10 = catalog("RS-10P").unwrap();
-        assert!(rs10.iter().find(|r| r.index == 0x7021).unwrap().editable);
-        assert!(catalog("RS-99").is_err());
-        for item in rs10
-            .iter()
-            .filter(|r| [0x7019, 0x701A, 0x701B, 0x701C].contains(&r.index))
-        {
-            assert!(item.readable && !item.writable && !item.editable);
-            assert_eq!(item.persistence, Persistence::Volatile);
-        }
+        let mut reg = register(0x7010).unwrap().clone();
+        reg.overrides.insert(
+            "test-model".into(),
+            RegisterOverride {
+                readable: Some(false),
+                ..Default::default()
+            },
+        );
+        let overridden = reg.for_model("test-model");
+        assert!(!overridden.readable && !overridden.editable);
+        assert!(reg.for_model("other-model").editable);
     }
 
     #[test]

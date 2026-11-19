@@ -1,50 +1,19 @@
 # CAN register audit
 
-Audited against the official Classic CAN manuals on 2026-11-18. These are
-device permissions; the app exposes a smaller set of editable setup parameters.
-Firmware can lag the manual, so a documented parameter may still be rejected
-by older firmware. No physical motor or flash writes were used for this audit.
-
 ## Addresses and storage
 
-The host computer's **function codes** and the Type 17/18 **CAN indices** are
-different namespaces. The old editor sent `0x2011`–`0x2019` as CAN indices.
-Use the aliases below. This does not mean every `0x20xx` address is invalid:
-the vendor SDK also defines a direct mechanical-offset index at `0x2005`.
+Use `motor-setup-tool register list --model RS-00` for the addresses, access
+permissions, and persistence supported by the editor. Rust and Electron use
+the same model overrides. [Register catalog](../electron/register-catalog.json)
 
-| Parameter | CAN index | Host function code | Type | Device access | Storage |
-|---|---|---|---|---|---|
-| Current Kp | `0x7010` | `0x2012` | float32 | R/W | Save with Type 22 |
-| Current Ki | `0x7011` | `0x2013` | float32 | R/W | Save with Type 22 |
-| Current filter gain | `0x7014` | `0x2011` | float32 | R/W | Save with Type 22 |
-| Speed limit | `0x7017` | `0x2018` | float32 | R/W | Save with Type 22 |
-| Current limit | `0x7018` | `0x2019` | float32 | R/W | Save with Type 22 |
-| Position Kp | `0x701E` | `0x2016` | float32 | R/W | Save with Type 22 |
-| Speed Kp | `0x701F` | `0x2014` | float32 | R/W | Save with Type 22 |
-| Speed Ki | `0x7020` | `0x2015` | float32 | R/W | Save with Type 22 |
-| Speed filter gain | `0x7021` | `0x2017` | float32 | R/W; RS-05/06: W only | Save with Type 22 |
-| Power-on position range | `0x7029` | Varies by model | uint8 | R/W; RS-01: omitted | Save with Type 22; power cycle |
-| Position offset | `0x702B` | Varies by model | float32 | R/W; RS-01: omitted | Save with Type 22; power cycle |
+Host function codes and Classic CAN indices are separate address spaces. For
+example, the host's current Kp setting maps to CAN index `0x7010`. Type 17
+reads an index and Type 18 writes RAM. Type 22 saves **all pending persistent
+settings**. Power cycle and read back the value to verify nonvolatile storage.
 
-Type 18 changes RAM and is lost on power loss. The manual says Type 22 saves
-settings corresponding to host function codes beginning `0x20`. It is a
-**global parameter save**, not a save of one index: it can also commit other
-pending persistent settings. A save acknowledgement and RAM readback do not
-prove nonvolatile storage; power cycle and read again to verify it.
-
-The app distinguishes `readable`, `writable`, `editable`, `persistence`, and
-model-specific availability in one shared catalog. Protection limits are R/W
-on the device but **protected in this editor**. Four telemetry indices are
-read only and live. RS-05/06 write-only speed filters are protected because
-the editor requires a previous-value read and verified readback. RS-01 zero
-range/offset are disabled because its CAN table omits them; SDK-wide presence
-is not taken as proof of support on that model.
-
-Gain bounds are 0–200 and filter bounds 0–1 in the host tables. Zero range is
-0 or 1; offset is −7 to 7 radians. Protection limits differ by model: for
-example RS-00's CAN table limits speed to 33 rad/s and current to 16 A, while
-RS-10P uses 13 rad/s and 19 A. Generic host-table example values are not used
-as universal limits or defaults.
+The editor requires both a prior read and a verified readback. This rules out
+write-only settings. Protection limits and live motion targets also stay outside
+the editor's write path.
 
 ## Complete single-parameter CAN table
 
@@ -115,22 +84,7 @@ older and does not include RS-10P; model scaling follows the model manuals.
 
 ## RS-10P support
 
-The September 7 manual documents the same Classic CAN extended-frame protocol
-and parameter types as the existing models. Type 1/2 scaling is ±4π rad,
-±13 rad/s, and ±42 Nm (PDF p.39). Kp/Kd fields use 0–500 and 0–5; calibration
-commands both as zero. Ratings are 14 Nm continuous with the specified heatsink,
-42 Nm peak, 125 rpm no load, 25:1 gearing, 48 V (PDF pp.8–11).
-
-Discovery recognizes the official firmware family `0.10.x.y` as RS-10P.
-The vendor's [V26.05.19 release](https://github.com/RobStride/Product_Information/releases/tag/V26.05.19)
-now contains `rs10_0.10.0.6.bin` (the asset uses `rs10`, not `rs10p`). The
-downloaded 98,300-byte image was checked against the release SHA-256:
-`bc396bbd95f768b87743d836603cb4612566b62a72728171daccd3c04e194030`.
-
-The profile uses the existing bench policy: 3.5 Nm torque cutoff and
-5.85 rad/s speed cutoff, with the same watchdog and travel protections.
-This adds discovery, calibration/plans, test/jog, setup registers, recordings,
-and the verified firmware catalog entry. It covers the vendor's private
-Classic CAN protocol at 1 Mbps. CAN-FD, CANopen and the separate standard-ID
-MIT protocol are not implemented. Hardware operation on a physical RS-10P
-has not been verified.
+The RS-10P uses the vendor's private Classic CAN protocol. Its September manual
+documents wire scaling on page 39 and output-side ratings on pages 8–11.
+Discovery uses firmware family `0.10.x.y`. The firmware catalog records the
+vendor's `rs10` asset name. Physical RS-10P operation remains unverified.

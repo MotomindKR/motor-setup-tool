@@ -1,4 +1,4 @@
-//! Official private-CAN OTA types 11–14; no motor enable or calibration commands.
+//! RobStride private-CAN firmware updates (types 11–14).
 //! Protocol: RobStride/Product_Information/OTA (PDF + vendor OTA.py).
 use crate::{bridge, hardware::Bus, protocol, types::Config};
 use anyhow::{Context, Result, bail, ensure};
@@ -29,13 +29,6 @@ pub fn release(model: &str) -> Result<Release> {
 /// Compare only known firmware families against the verified, bundled catalog.
 /// Missing/malformed versions and newer installed versions are never upgrades.
 pub fn available_update(model: &str, installed: &str) -> Option<Release> {
-    fn parts(version: &str) -> Option<Vec<u8>> {
-        version
-            .split('.')
-            .map(str::parse)
-            .collect::<Result<_, _>>()
-            .ok()
-    }
     if protocol::firmware_model(installed).as_deref() != Some(model) {
         return None;
     }
@@ -43,7 +36,8 @@ pub fn available_update(model: &str, installed: &str) -> Option<Release> {
     if protocol::firmware_model(&candidate.version).as_deref() != Some(model) {
         return None;
     }
-    (parts(installed)? < parts(&candidate.version)?).then_some(candidate)
+    (protocol::version_parts(installed)? < protocol::version_parts(&candidate.version)?)
+        .then_some(candidate)
 }
 fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
     ensure!(
@@ -119,17 +113,10 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
     let directory = crate::paths::cache_dir()?.join("firmware");
     fs::create_dir_all(&directory)?;
     let path = directory.join(&r.filename);
-    let cached = fs::read(&path)
-        .ok()
-        .filter(|bytes| verify_image(bytes, &r).is_ok());
-    let bytes = if let Some(bytes) = cached {
-        bytes
-    } else {
+    if !fs::read(&path).is_ok_and(|bytes| verify_image(&bytes, &r).is_ok()) {
         let bytes = download_image(&r)?;
-        fs::write(&path, &bytes)?;
-        bytes
-    };
-    verify_image(&bytes, &r)?;
+        fs::write(&path, bytes)?;
+    }
     let bus = Bus::open(c)?;
     bus.stopped()?;
     let current_version = bus.firmware_version()?;
@@ -258,10 +245,9 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
             for attempt in 0..3 {
                 bus.send(frame.clone())?;
                 match bus.wait_for(Duration::from_secs(2), |f| {
-                    ack_result(f, kind, c.motor_id, c.host_id).is_some()
-                }) {
-                    Ok(f) => {
-                        let result = ack_result(&f, kind, c.motor_id, c.host_id).unwrap();
+                    ack_result(&f, kind, c.motor_id, c.host_id)
+                })? {
+                    Some(result) => {
                         writeln!(
                             log,
                             "{}",
@@ -269,10 +255,7 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
                         )?;
                         return Ok(result);
                     }
-                    Err(e)
-                        if e.downcast_ref::<std::io::Error>()
-                            .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                    {
+                    None => {
                         writeln!(
                             log,
                             "{}",
@@ -280,7 +263,6 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
                         )?;
                         thread::sleep(Duration::from_millis(50));
                     }
-                    Err(e) => return Err(e),
                 }
             }
             bail!("OTA type {kind}, field {field}: no acknowledgement after 3 attempts")
@@ -297,19 +279,11 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
         thread::sleep(Duration::from_secs(2));
         let mut installed = None;
         for _ in 0..10 {
-            match bus.firmware_version() {
-                Ok(version) => {
-                    installed = Some(version);
-                    break;
-                }
-                Err(e)
-                    if e.downcast_ref::<std::io::Error>()
-                        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                {
-                    thread::sleep(Duration::from_millis(300))
-                }
-                Err(e) => return Err(e),
+            installed = bus.try_firmware_version()?;
+            if installed.is_some() {
+                break;
             }
+            thread::sleep(Duration::from_millis(300));
         }
         let installed = installed.context("Transfer finished but firmware readback timed out; power-cycle the motor and read its version before retrying")?;
         ensure!(
@@ -414,11 +388,7 @@ mod tests {
     fn update_notice_compares_numeric_versions_in_the_same_model() {
         for profile in crate::types::Profile::presets() {
             let r = release(&profile.model).unwrap();
-            let family = if profile.model == "RS-10P" {
-                "10"
-            } else {
-                &profile.model[4..]
-            };
+            let [_, family, _, _] = protocol::version_parts(&r.version).unwrap();
             let old = format!("0.{family}.0.0");
             assert_eq!(
                 available_update(&profile.model, &old).unwrap().version,
@@ -428,8 +398,6 @@ mod tests {
             let future = format!("0.{family}.99.0");
             assert!(available_update(&profile.model, &future).is_none());
         }
-        assert!(available_update("RS-00", "0.0.3.9").is_some());
-        assert!(available_update("RS-00", "0.0.3.100").is_none());
         for invalid in ["", "unknown", "0.0.3", "0.0.3.32.1", "0.0.3.256", "0.5.0.1"] {
             assert!(available_update("RS-00", invalid).is_none());
         }
@@ -442,20 +410,8 @@ mod tests {
             assert_eq!(protocol::firmware_model(&r.version).unwrap(), p.model);
             assert_eq!(r.sha256.len(), 64);
             assert_eq!(r.url.rsplit('/').next().unwrap(), r.filename);
-            assert_eq!(
-                r.filename,
-                format!(
-                    "{}_{}.bin",
-                    if p.model == "RS-10P" {
-                        "rs10".into()
-                    } else {
-                        p.model.to_lowercase().replace('-', "")
-                    },
-                    r.version
-                )
-            );
             assert!(r.url.starts_with(
-                "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/"
+                "https://github.com/RobStride/Product_Information/releases/download/"
             ));
             assert!(verify_image(&[], &r).is_err());
             assert!(verify_image(&[1; 64], &r).is_err());

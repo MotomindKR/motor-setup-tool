@@ -18,11 +18,26 @@ use sha2::{Digest, Sha256};
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Id, Socket, SocketOptions};
 use std::{
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
     sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
+
+enum BusEvent {
+    Empty,
+    Filtered,
+    Frame(WireFrame),
+}
+
+fn drain_queue(mut next: impl FnMut() -> Result<BusEvent>) -> Result<()> {
+    for _ in 0..4096 {
+        if matches!(next()?, BusEvent::Empty) {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("CAN receive queue did not drain before the next request")
+}
 
 pub struct Bus {
     _lock: std::fs::File,
@@ -389,7 +404,7 @@ impl Bus {
             }
         }
     }
-    pub(crate) fn receive(&self) -> Result<Option<WireFrame>> {
+    fn next_event(&self) -> Result<BusEvent> {
         let received = match &self.socket {
             #[cfg(target_os = "linux")]
             BusSocket::SocketCan(socket) => match socket.read_frame() {
@@ -401,7 +416,7 @@ impl Bus {
                                 self.config.interface
                             );
                         }
-                        return Ok(None);
+                        return Ok(BusEvent::Filtered);
                     }
                     if let Id::Extended(id) = f.id()
                         && f.data().len() == 8
@@ -416,13 +431,13 @@ impl Bus {
                         None
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(BusEvent::Empty),
                 Err(e) => return Err(e).context("CAN receive failed"),
             },
             BusSocket::GsUsb(device) => {
                 let event = match device.receive().context("GS-USB receive failed")? {
                     Some(event) => event,
-                    None => return Ok(None),
+                    None => return Ok(BusEvent::Empty),
                 };
                 gsusb_event_frame(event)?
             }
@@ -437,71 +452,60 @@ impl Bus {
                 faults & 2 != 0
             );
         }
-        Ok(received)
+        Ok(received.map_or(BusEvent::Filtered, BusEvent::Frame))
+    }
+    pub(crate) fn receive(&self) -> Result<Option<WireFrame>> {
+        match self.next_event()? {
+            BusEvent::Frame(frame) => Ok(Some(frame)),
+            BusEvent::Empty | BusEvent::Filtered => Ok(None),
+        }
     }
     pub(crate) fn flush(&self) -> Result<()> {
-        // Bounded even on a busy CAN bus.
-        for _ in 0..4096 {
-            if self.receive()?.is_none() {
-                break;
-            }
-        }
-        Ok(())
+        drain_queue(|| self.next_event())
     }
-    pub(crate) fn wait_for(
+    pub(crate) fn wait_for<T>(
         &self,
         timeout: Duration,
-        accept: impl Fn(&WireFrame) -> bool,
-    ) -> Result<WireFrame> {
+        decode: impl Fn(WireFrame) -> Option<T>,
+    ) -> Result<Option<T>> {
         let end = Instant::now() + timeout;
         while Instant::now() < end {
-            if let Some(f) = self.receive()?
-                && accept(&f)
-            {
-                return Ok(f);
+            if let Some(value) = self.receive()?.and_then(&decode) {
+                return Ok(Some(value));
             }
             thread::sleep(Duration::from_micros(200));
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "No matching response before CAN deadline",
-        )
-        .into())
+        Ok(None)
     }
     pub(crate) fn ping(&self, id: u8, timeout: Duration) -> Result<[u8; 8]> {
-        self.flush()?;
-        self.send(protocol::frame(0, self.config.host_id as u16, id))?;
-        // Type-0 replies use destination 0xFE (some firmware uses host ID).
-        let f = self.wait_for(timeout, |f| {
-            f.id >> 24 == 0
-                && (f.id >> 8) as u16 == id as u16
-                && [0xfe, self.config.host_id].contains(&(f.id as u8))
-        })?;
-        Ok(f.data)
+        self.probe(id, timeout)?
+            .context("No identity response before CAN deadline")
     }
     fn probe(&self, id: u8, timeout: Duration) -> Result<Option<[u8; 8]>> {
-        match self.ping(id, timeout) {
-            Ok(uuid) => Ok(Some(uuid)),
-            Err(e)
-                if e.downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-            {
-                Ok(None)
-            }
-            Err(e) => Err(e),
-        }
+        self.flush()?;
+        self.send(protocol::frame(0, self.config.host_id as u16, id))?;
+        // Type-0 replies use destination 0xFE or the host ID, depending on firmware.
+        self.wait_for(timeout, |f| {
+            (f.id >> 24 == 0
+                && (f.id >> 8) as u16 == id as u16
+                && [0xfe, self.config.host_id].contains(&(f.id as u8)))
+            .then_some(f.data)
+        })
     }
     pub(crate) fn read_parameter(&self, index: u16) -> Result<[u8; 4]> {
         self.flush()?;
         let mut f = protocol::frame(17, self.config.host_id as u16, self.config.motor_id);
         f.data[..2].copy_from_slice(&index.to_le_bytes());
         self.send(f)?;
-        let f = self.wait_for(Duration::from_millis(100), |f| {
-            f.id >> 24 == 17
-                && (f.id >> 8) as u8 == self.config.motor_id
-                && f.id as u8 == self.config.host_id
-                && f.data[..2] == index.to_le_bytes()
-        })?;
+        let f = self
+            .wait_for(Duration::from_millis(100), |f| {
+                (f.id >> 24 == 17
+                    && (f.id >> 8) as u8 == self.config.motor_id
+                    && f.id as u8 == self.config.host_id
+                    && f.data[..2] == index.to_le_bytes())
+                .then_some(f)
+            })?
+            .context("No parameter response before CAN deadline")?;
         ensure!(
             (f.id >> 16) & 0xff == 0,
             "Motor rejected parameter read 0x{index:04x}: status=0x{:02x}",
@@ -510,16 +514,20 @@ impl Bus {
         Ok(f.data[4..].try_into().unwrap())
     }
     pub(crate) fn firmware_version(&self) -> Result<String> {
+        self.try_firmware_version()?
+            .context("No firmware version response before CAN deadline")
+    }
+    pub(crate) fn try_firmware_version(&self) -> Result<Option<String>> {
         self.flush()?;
         self.send(protocol::version_request(
             self.config.host_id,
             self.config.motor_id,
         ))?;
-        let f = self.wait_for(Duration::from_millis(200), |f| {
-            protocol::firmware_version(f, self.config.motor_id, self.config.host_id).is_some()
-        })?;
-        let v = protocol::firmware_version(&f, self.config.motor_id, self.config.host_id).unwrap();
-        Ok(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]))
+        self.wait_for(Duration::from_millis(200), |f| {
+            let [a, b, c, d] =
+                protocol::firmware_version(&f, self.config.motor_id, self.config.host_id)?;
+            Some(format!("{a}.{b}.{c}.{d}"))
+        })
     }
     pub(crate) fn write_parameter(&self, index: u16, value: [u8; 4]) -> Result<()> {
         self.write_parameter_sized(index, value, 4)
@@ -543,25 +551,18 @@ impl Bus {
         Ok(())
     }
     pub(crate) fn feedback(&self, timeout: Duration) -> Result<Feedback> {
-        let f = self.wait_for(timeout, |f| {
+        self.wait_for(timeout, |f| {
             protocol::feedback(
-                f,
+                &f,
                 self.config.motor_id,
                 self.config.host_id,
                 &self.config.profile,
             )
-            .is_some()
-        })?;
-        Ok(protocol::feedback(
-            &f,
-            self.config.motor_id,
-            self.config.host_id,
-            &self.config.profile,
-        )
-        .unwrap())
+        })?
+        .context("No motor feedback before CAN deadline")
     }
     pub(crate) fn enable_zero_torque(&self, cancel: &AtomicBool) -> Result<Feedback> {
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         self.flush()?;
         // Consume the zero-command reply before enable. Merely flushing right
         // after send can race a reply still in flight and mistake Reset for
@@ -575,7 +576,7 @@ impl Bus {
             stopped.faults
         );
         self.flush()?;
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         self.send(protocol::frame(
             3,
             self.config.host_id as u16,
@@ -585,7 +586,7 @@ impl Bus {
         let mut next_poll = Instant::now() + Duration::from_millis(5);
         let mut last = None;
         while Instant::now() < deadline {
-            ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+            crate::cancel::check(cancel)?;
             if let Some(f) = self.receive()?
                 && let Some(fb) = protocol::feedback(
                     &f,
@@ -634,7 +635,7 @@ impl Bus {
             bus.read_parameter(0x7005)?[0] == 0,
             "Failed to select torque/operation mode"
         );
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         bus.send(protocol::active_reporting(c.host_id, c.motor_id, true))?;
         let _reporting = ActiveReportingGuard(bus);
         bus.enable_zero_torque(cancel)
@@ -647,7 +648,7 @@ impl Bus {
         let mut quiet_frames = Vec::new();
         let mut quiet_frames_omitted = 0;
         while watchdog_start.elapsed() < Duration::from_millis(300) {
-            ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+            crate::cancel::check(cancel)?;
             if let Some(frame) = bus.receive()? {
                 let elapsed = watchdog_start.elapsed();
                 if frame.id as u8 == c.motor_id {
@@ -728,10 +729,9 @@ impl Bus {
         let mut check = StationaryCheck::new(self.config.profile.position_range);
         let mut last_mode = None;
         while start.elapsed() < timeout {
-            ensure!(
-                !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)),
-                "Operation cancelled"
-            );
+            if let Some(flag) = cancel {
+                crate::cancel::check(flag)?;
+            }
             self.flush()?;
             self.stop()?;
             let remaining = timeout.saturating_sub(start.elapsed());
@@ -974,7 +974,7 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
     stationary.observe(&initial, Duration::ZERO);
     let mut next = Instant::now();
     for _ in 0..SAMPLES {
-        ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+        crate::cancel::check(cancel)?;
         while Instant::now() < next {
             thread::sleep(Duration::from_micros(50));
         }
@@ -987,7 +987,7 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
         send_call.push(started.elapsed().as_micros() as u64);
         let deadline = started + FEEDBACK_DEADLINE;
         loop {
-            ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+            crate::cancel::check(cancel)?;
             if let Some(frame) = bus.receive()?
                 && let Some(status) = protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile)
             {
@@ -1027,30 +1027,22 @@ pub fn scan(
     let mut bus = Bus::open(c)?;
     let mut found = Vec::new();
     for id in 1..=254 {
-        ensure!(!cancel.load(Ordering::Relaxed), "Scan cancelled");
+        crate::cancel::check(cancel)?;
         if id != c.host_id
             && let Some(uuid) = bus.probe(id, Duration::from_millis(20))?
         {
             bus.config.motor_id = id;
-            let (firmware, issue) = match bus.firmware_version() {
-                Ok(version) => (Some(version), None),
-                Err(e)
-                    if e.downcast_ref::<std::io::Error>()
-                        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                {
-                    (
-                        None,
-                        Some("Firmware did not reply. Check motor power and scan again.".into()),
-                    )
-                }
-                Err(e) => return Err(e),
-            };
+            let firmware = bus.try_firmware_version()?;
             let model = firmware.as_deref().and_then(protocol::firmware_model);
-            let issue = issue.or_else(|| {
-                model
-                    .is_none()
-                    .then(|| "Unknown firmware family. Check firmware with Motor Studio.".into())
-            });
+            let issue = match (&firmware, &model) {
+                (None, _) => {
+                    Some("Firmware did not reply. Check motor power and scan again.".into())
+                }
+                (Some(_), None) => {
+                    Some("Unknown firmware family. Check firmware with Motor Studio.".into())
+                }
+                _ => None,
+            };
             found.push(DiscoveredMotor {
                 id,
                 uuid,
@@ -1156,7 +1148,6 @@ pub fn acquire(
     dir: &Path,
     cancel: &AtomicBool,
     progress: impl Fn(WorkProgress),
-    motor_state: impl Fn(bool),
 ) -> Result<()> {
     c.validate()?;
     progress(WorkProgress::recording(0., "Checking motor and watchdog"));
@@ -1166,34 +1157,25 @@ pub fn acquire(
     let initial = bus
         .stopped()
         .context("Motor did not answer the initial stop request")?;
-    motor_state(false);
     ensure!(initial.faults == 0, "Motor has active faults");
     ensure!(
         initial.temperature < c.temperature_limit,
         "Motor is too hot"
     );
     let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
-    let firmware = match bus.firmware_version() {
-        Ok(version) => Some(version),
-        Err(e)
-            if e.downcast_ref::<std::io::Error>()
-                .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-        {
-            None
-        }
-        Err(e) => return Err(e),
-    };
+    let firmware = bus.try_firmware_version()?;
     bridge::write_json(
         &dir.join("hardware.json"),
         &serde_json::json!({
             "motor_id": c.motor_id, "uuid": uuid, "firmware_version": firmware,
             "reference_angle_rad": c.reference_angle_rad,
             "profile": c.profile, "uses_documented_ranges": c.profile.uses_documented_ranges(),
-            "documentation": "RobStride model manuals 2026-07-13; private CAN types 1 and 2"
+            "documentation": "RobStride model manuals, private CAN types 1 and 2",
+            "specification_revision": c.profile.manual_revision()
         }),
     )?;
     check_firmware_model(c, firmware.as_deref())?;
-    let preflight = bus.watchdog_preflight(cancel, &motor_state)?;
+    let preflight = bus.watchdog_preflight(cancel, |_| {})?;
     let expired = &preflight.feedback;
     bridge::write_json(
         &dir.join("watchdog_preflight.json"),
@@ -1254,7 +1236,6 @@ pub fn acquire(
             let enabled = bus
                 .enable_zero_torque(cancel)
                 .context("Acquisition could not enable motor at zero torque")?;
-            motor_state(true);
             let start = Instant::now();
             let duration = if validation {
                 c.validation_seconds
@@ -1283,7 +1264,7 @@ pub fn acquire(
             let mut exciter = crate::experiment::Exciter::new(c, validation);
             let result = (|| -> Result<()> {
                 while start.elapsed().as_secs_f64() < duration {
-                    ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+                    crate::cancel::check(cancel)?;
                     ensure!(
                         last_feedback.elapsed() < Duration::from_millis(50),
                         "Feedback stale for 50 ms"
@@ -1380,7 +1361,6 @@ pub fn acquire(
                 Ok(())
             })();
             bus.stop()?;
-            motor_state(false);
             if let Some(feedback) = rejected_feedback {
                 let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
             }
@@ -1402,6 +1382,25 @@ pub fn acquire(
 #[cfg(test)]
 mod diagnostics_tests {
     use super::*;
+    #[test]
+    fn flushing_passes_filtered_events_and_preserves_transport_errors() {
+        let mut events = [
+            BusEvent::Filtered,
+            BusEvent::Frame(protocol::frame(2, 0, 1)),
+            BusEvent::Empty,
+        ]
+        .into_iter();
+        drain_queue(|| Ok(events.next().unwrap())).unwrap();
+        assert!(events.next().is_none());
+
+        let mut events = [Ok(BusEvent::Filtered), Err(anyhow::anyhow!("bus off"))].into_iter();
+        assert_eq!(
+            drain_queue(|| events.next().unwrap())
+                .unwrap_err()
+                .to_string(),
+            "bus off"
+        );
+    }
     fn usb_error(can_id: u32, data: [u8; 8]) -> UsbReceiveEvent {
         UsbReceiveEvent::ErrorFrame {
             channel: 0,
@@ -1592,7 +1591,7 @@ mod diagnostics_tests {
     #[test]
     fn firmware_family_mismatch_blocks_before_calibration() {
         let mut c = Config {
-            profile: Profile::presets()[0].clone(),
+            profile: Profile::preset("RS-00").unwrap(),
             ..Default::default()
         };
         assert!(check_firmware_model(&c, Some("0.0.3.32")).is_ok());
@@ -1601,7 +1600,7 @@ mod diagnostics_tests {
             .to_string();
         assert!(error.contains("RS-05") && error.contains("RS-00"));
         assert!(error.contains("no calibration motion started"));
-        c.profile = Profile::presets()[5].clone();
+        c.profile = Profile::preset("RS-05").unwrap();
         assert!(check_firmware_model(&c, Some("0.5.0.14")).is_ok());
         assert!(protocol::firmware_model("1.5.0.14").is_none());
         assert!(protocol::firmware_model("invalid").is_none());
@@ -1649,6 +1648,7 @@ mod diagnostics_tests {
     #[test]
     #[ignore = "requires an isolated vcan interface named vcalwatch"]
     fn virtual_enable_handshake_handles_reset_reply_fault_and_timeout() {
+        use std::sync::atomic::Ordering;
         // Never allow this active mock-motor test to open a physical interface.
         let device = std::fs::canonicalize("/sys/class/net/vcalwatch").unwrap();
         assert!(device.starts_with("/sys/devices/virtual/net"));

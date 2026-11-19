@@ -1,14 +1,13 @@
 //! MuJoCo-rs simulation. Each replay compiles its own model so constant-inertia
-//! caches cannot retain a previous armature value. No Python or subprocesses.
+//! caches cannot retain a previous armature value.
 #[cfg(test)]
 use crate::protocol;
 use crate::types::*;
 use anyhow::{Result, ensure};
 use mujoco_rs::prelude::{MjData, MjModel};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 pub const TIMESTEP: f64 = 0.001;
-pub const VERSION: &str = "3.12.0";
 pub const STRIBECK_SPEED: f64 = 0.1;
 pub fn self_check() -> Result<()> {
     let p = Config::default().baseline;
@@ -29,9 +28,9 @@ pub fn friction_at_speed(p: &Parameters, velocity: f64) -> f64 {
 pub fn xml(p: &Parameters) -> String {
     format!(
         r#"<mujoco model="bare_motor_calibration">
-  <option timestep="0.001" gravity="0 0 0" integrator="implicitfast"/>
+  <option timestep="{TIMESTEP}" gravity="0 0 0" integrator="implicitfast"/>
   <custom><numeric name="static_friction" data="{}"/>
-    <numeric name="stribeck_speed" data="0.1"/>
+    <numeric name="stribeck_speed" data="{STRIBECK_SPEED}"/>
     <numeric name="effective_delay" data="{}"/></custom>
   <worldbody>
     <body name="output_shaft">
@@ -107,7 +106,7 @@ pub fn replay(trace: &Trace, p: &Parameters, cancel: &AtomicBool) -> Result<Vec<
     };
     let mut result = vec![[initial.position, initial.velocity]];
     for s in &trace.samples[1..] {
-        ensure!(!cancel.load(Ordering::Relaxed), "Replay cancelled");
+        crate::cancel::check(cancel)?;
         advance(&mut d, s.t, &trace.commands, p, &mut index, &mut torque);
         ensure!(
             d.qpos()[0].is_finite() && d.qvel()[0].is_finite(),
@@ -140,12 +139,12 @@ pub fn demo_trace(
     let mut index = 0;
     let mut torque = 0.;
     let mut exciter = crate::experiment::Exciter::new(c, validation);
-    // Deterministic synthetic sensor noise; no external random runtime needed.
+    // Deterministic sensor noise keeps the identification fixture reproducible.
     let noise = |i: usize| {
         ((i as f64 * 12.9898 + if validation { 8. } else { 3. }).sin() * 43758.5453).fract()
     };
     for i in 0..=(duration / dt) as usize {
-        ensure!(!cancel.load(Ordering::Relaxed), "Demo cancelled");
+        crate::cancel::check(cancel)?;
         let t = i as f64 * dt;
         trace.samples.push(Sample {
             t,

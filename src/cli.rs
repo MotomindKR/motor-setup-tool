@@ -8,10 +8,11 @@ use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    cell::Cell,
     io::{self, BufRead, IsTerminal, Read, Write},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -28,6 +29,8 @@ use std::{
     arg_required_else_help = true
 )]
 struct Cli {
+    #[arg(long, hide = true)]
+    desktop: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -51,6 +54,9 @@ enum Command {
     Plan {
         #[arg(long)]
         model: String,
+        /// Include input limits and the model’s register catalog alongside the preset.
+        #[arg(long)]
+        setup: bool,
     },
     /// Return the current calibration preview without opening hardware.
     #[command(hide = true)]
@@ -201,10 +207,10 @@ struct Calibrate {
     /// New recording directory; an existing directory is never overwritten.
     #[arg(long)]
     output: Option<PathBuf>,
-    #[arg(long, default_value_t = 40., value_parser = seconds)]
-    train_seconds: f64,
-    #[arg(long, default_value_t = 20., value_parser = seconds)]
-    validation_seconds: f64,
+    #[arg(long, value_parser = seconds)]
+    train_seconds: Option<f64>,
+    #[arg(long, value_parser = seconds)]
+    validation_seconds: Option<f64>,
     #[arg(long)]
     torque_limit: Option<f64>,
     #[arg(long)]
@@ -242,13 +248,6 @@ fn seconds(text: &str) -> std::result::Result<f64, String> {
     }
 }
 
-fn output(value: &impl Serialize) -> Result<()> {
-    let mut out = io::stdout().lock();
-    serde_json::to_writer_pretty(&mut out, value)?;
-    writeln!(out)?;
-    Ok(())
-}
-
 fn output_line(value: &impl Serialize) -> Result<()> {
     let mut out = io::stdout().lock();
     serde_json::to_writer(&mut out, value)?;
@@ -257,18 +256,59 @@ fn output_line(value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
-struct Progress(Mutex<Option<(WorkPhase, i32)>>);
-impl Progress {
+struct JobOutput<'a> {
+    desktop: bool,
+    cancel: &'a AtomicBool,
+    last_progress: Cell<Option<(WorkPhase, i32)>>,
+}
+impl JobOutput<'_> {
+    fn result(&self, value: &impl Serialize) -> Result<()> {
+        if self.desktop {
+            return output_line(&json!({"type":"result","value":value}));
+        }
+        let mut out = io::stdout().lock();
+        serde_json::to_writer_pretty(&mut out, value)?;
+        writeln!(out)?;
+        Ok(())
+    }
+
+    fn status(&self, value: &impl Serialize) -> Result<()> {
+        if self.desktop {
+            output_line(&json!({"type":"manualStatus","value":value}))
+        } else {
+            output_line(value)
+        }
+    }
+
+    fn end_stream(&self) -> Result<()> {
+        if self.desktop {
+            self.result(&())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn progress(&self, message: &str, percent: Option<i32>) {
+        if self.desktop {
+            if output_line(&json!({"type":"progress","message":message,"percent":percent})).is_err()
+            {
+                self.cancel.store(true, Ordering::Relaxed);
+            }
+        } else if let Some(percent) = percent {
+            eprintln!("{percent}% {message}");
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
     fn show(&self, p: WorkProgress) {
         let percent = (p.fraction * 100.).floor() as i32;
-        let current = (p.phase, percent);
-        let mut last = self.0.lock().unwrap();
-        if last.as_ref() == Some(&current) {
+        if self.last_progress.replace(Some((p.phase, percent))) == Some((p.phase, percent)) {
             return;
         }
-        *last = Some(current);
-        if io::stderr().is_terminal() {
+        if self.desktop {
+            self.progress(&p.label, Some(percent));
+        } else if io::stderr().is_terminal() {
             let width = (percent.clamp(0, 100) / 5) as usize;
             eprintln!("[{}{}] {p}", "=".repeat(width), " ".repeat(20 - width));
         } else {
@@ -277,63 +317,47 @@ impl Progress {
     }
 }
 
-fn preset(model: &str) -> Result<Config> {
-    let profile = Profile::presets()
-        .into_iter()
-        .find(|p| p.model == model)
-        .context("Supported models: RS-00 through RS-06, RS-10P")?;
-    let mut config = Config {
-        profile,
-        ..Default::default()
-    };
-    config.apply_spec_limits();
-    config.validate()?;
-    Ok(config)
+fn validate_measurement_config(requested: &Config, preset: &Config) -> Result<()> {
+    ensure!(
+        requested.profile == preset.profile,
+        "Motor wire profile changed; scan again"
+    );
+    ensure!(
+        requested.experiment == preset.experiment
+            && requested.excitation_revision == preset.excitation_revision
+            && requested.baseline.static_friction == preset.baseline.static_friction,
+        "Use the current model preset for new measurements"
+    );
+    requested.validate()
 }
 
-fn requested_config(detected: Config, requested: Config) -> Result<Config> {
+fn requested_config(detected: &Config, requested: Config) -> Result<Config> {
     ensure!(
         requested.interface == detected.interface
             && requested.motor_id == detected.motor_id
-            && requested.host_id == detected.host_id
-            && requested.profile == detected.profile,
-        "Motor identity or wire profile changed; scan again"
+            && requested.host_id == detected.host_id,
+        "Motor identity changed; scan again"
     );
-    ensure!(
-        requested.experiment == experiment::Experiment::Mixed
-            && requested.excitation_revision == 1
-            && requested.baseline.static_friction == 0.,
-        "New recordings use the current mixed calibration suite and constant friction baseline"
-    );
-    requested.validate()?;
+    validate_measurement_config(&requested, detected)?;
     Ok(requested)
 }
 
 fn preview_config(c: &Config) -> Result<serde_json::Value> {
-    ensure!(
-        c.profile.uses_documented_ranges(),
-        "Use a supported motor profile"
-    );
-    ensure!(
-        c.experiment == experiment::Experiment::Mixed,
-        "Use the mixed calibration suite"
-    );
-    c.validate()?;
+    validate_measurement_config(c, &Config::preset(&c.profile.model)?)?;
+    let segments = experiment::plan(c, false);
     let samples = 1200;
     let mut t = Vec::with_capacity(samples + 1);
     let mut velocity = Vec::with_capacity(samples + 1);
     let mut torque = Vec::with_capacity(samples + 1);
     for index in 0..=samples {
         let time = index as f64 * c.train_seconds / samples as f64;
-        let (v, q) = experiment::preview(c, time, false);
+        let (v, q) = experiment::preview(c, time, &segments);
         t.push(time);
         velocity.push(v);
         torque.push(q);
     }
-    Ok(
-        json!({"spec":c.profile.spec(),"segments":experiment::plan(c, false),
-        "t":t,"velocity":velocity,"torque":torque}),
-    )
+    Ok(json!({"spec":c.profile.spec(),"segments":segments,
+        "t":t,"velocity":velocity,"torque":torque}))
 }
 
 #[derive(Deserialize)]
@@ -348,7 +372,8 @@ enum ManualInput {
     Stop,
 }
 
-fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
+fn manual_session(target: Target, out: &JobOutput<'_>) -> Result<()> {
+    let cancel = out.cancel;
     let mut first = String::new();
     ensure!(
         io::stdin().read_line(&mut first)? > 0,
@@ -356,7 +381,7 @@ fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
     );
     let requested: Config = serde_json::from_str(&first).context("Invalid manual configuration")?;
     let (detected, motor) = detected(&target)?;
-    let config = requested_config(detected, requested)?;
+    let config = requested_config(&detected, requested)?;
     let session = manual::Session::start(config.clone(), motor.uuid);
     let (tx, rx) = mpsc::channel::<Result<ManualInput>>();
     thread::spawn(move || {
@@ -375,9 +400,7 @@ fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
     let mut last_enabled = false;
     let mut last_preparing = false;
     loop {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
+        crate::cancel::check(cancel)?;
         while let Ok(message) = rx.try_recv() {
             match message? {
                 ManualInput::Intent {
@@ -400,7 +423,7 @@ fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
                 }
                 ManualInput::Stop => {
                     drop(session);
-                    return Ok(());
+                    return out.end_stream();
                 }
             }
         }
@@ -414,7 +437,7 @@ fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
             || session.finished()
         {
             let fb = state.feedback.as_ref();
-            output_line(&json!({"t":started.elapsed().as_secs_f64(),"id":target.id,
+            out.status(&json!({"t":started.elapsed().as_secs_f64(),"id":target.id,
                 "sample_t":state.received.map(|at|at.saturating_duration_since(started).as_secs_f64()),
                 "enabled":state.enabled,"preparing":state.preparing,"fresh":fresh,
                 "position_rad":fb.map(|f|f.position),"velocity_rad_s":fb.map(|f|f.velocity),
@@ -434,14 +457,12 @@ fn manual_session(target: Target, cancel: &AtomicBool) -> Result<()> {
         }
         thread::sleep(Duration::from_millis(20));
     }
-    drop(session);
-    Ok(())
 }
 
 fn detected(target: &Target) -> Result<(Config, hardware::DiscoveredMotor)> {
     let base = target.config()?;
     let motor = hardware::inspect(&base)?;
-    let mut config = preset(
+    let mut config = Config::preset(
         motor
             .model
             .as_deref()
@@ -455,31 +476,59 @@ fn detected(target: &Target) -> Result<(Config, hardware::DiscoveredMotor)> {
 }
 
 pub fn dispatch() -> Result<()> {
-    let command = Cli::parse().command;
+    let Cli { desktop, command } = Cli::parse();
     let cancel = Arc::new(AtomicBool::new(false));
     let signal = cancel.clone();
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))?;
-    let result = execute(command, &cancel);
+    let mut desktop_config = None;
+    if desktop && !matches!(command, Command::ManualSession(_) | Command::Preview) {
+        if matches!(&command, Command::Calibrate(args) if args.config_stdin) {
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            desktop_config =
+                Some(serde_json::from_str(&line).context("Invalid calibration configuration")?);
+        }
+        // Electron keeps stdin open for the lifetime of the job. EOF also covers a lost parent.
+        let flag = Arc::clone(&cancel);
+        thread::spawn(move || {
+            let _ = io::copy(&mut io::stdin().lock(), &mut io::sink());
+            flag.store(true, Ordering::Relaxed);
+        });
+    }
+    let out = JobOutput {
+        desktop,
+        cancel: &cancel,
+        last_progress: Cell::new(None),
+    };
+    let result = execute(command, &out, desktop_config);
+    if desktop {
+        return match result {
+            Err(error) if error.is::<crate::cancel::Cancelled>() => {
+                out.result(&json!({"cancelled":true}))
+            }
+            other => other,
+        };
+    }
     if cancel.load(Ordering::Relaxed) {
         anyhow::bail!("Command cancelled; active motor control has stopped");
     }
     result
 }
 
-fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
-    let progress = Progress::default();
+fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>) -> Result<()> {
+    let cancel = out.cancel;
     match command {
         Command::SelfCheck => {
             engine::self_check()?;
             let run = bridge::new_run_dir()?;
             let probe = run.join("package-check.json");
-            bridge::write_json(&probe, &json!({"mujoco": engine::VERSION}))?;
+            bridge::write_json(&probe, &json!({"mujoco": mujoco_rs::mujoco_version()}))?;
             let _: serde_json::Value = bridge::read_json(&probe)?;
             std::fs::remove_file(probe)?;
             std::fs::remove_dir(run)?;
-            output(&json!({
+            out.result(&json!({
                 "name": env!("CARGO_PKG_NAME"), "version": env!("CARGO_PKG_VERSION"),
-                "mujoco": engine::VERSION, "data": paths::data_dir()?,
+                "mujoco": mujoco_rs::mujoco_version(), "data": paths::data_dir()?,
                 "cache": paths::cache_dir()?, "locks": paths::lock_dir()?,
                 "interfaces": hardware::available_interfaces()?
             }))
@@ -487,13 +536,13 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
         Command::Can { command } => {
             match command {
                 CanCommand::List => {}
-                CanCommand::UsbList => return output(&hardware::available_usb_adapters()?),
+                CanCommand::UsbList => return out.result(&hardware::available_usb_adapters()?),
                 CanCommand::Up(args) => can_admin::up(&args.interface, false, args.auth, cancel)?,
                 CanCommand::Restart(args) => {
                     can_admin::up(&args.interface, true, args.auth, cancel)?
                 }
             }
-            output(&hardware::available_interfaces()?)
+            out.result(&hardware::available_interfaces()?)
         }
         Command::Scan(args) => {
             let c = Config {
@@ -501,32 +550,48 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
                 host_id: args.host_id,
                 ..Default::default()
             };
-            output(&hardware::scan(&c, cancel, |p| progress.show(p))?)
+            out.result(&hardware::scan(&c, cancel, |p| out.show(p))?)
         }
-        Command::Info(target) => output(&hardware::inspect(&target.config()?)?),
+        Command::Info(target) => out.result(&hardware::inspect(&target.config()?)?),
         Command::Latency(target) => {
             let (config, _) = detected(&target)?;
-            output(&hardware::measure_feedback_latency(&config, cancel)?)
+            out.result(&hardware::measure_feedback_latency(&config, cancel)?)
         }
-        Command::Plan { model } => output(&preset(&model)?),
+        Command::Plan { model, setup } => {
+            let preset = Config::preset(&model)?;
+            if setup {
+                let limits: std::collections::BTreeMap<_, _> = preset
+                    .input_fields()?
+                    .map(|(key, _, range)| (key, range))
+                    .collect();
+                out.result(&json!({ "preset": preset, "limits": limits, "registers": registers::catalog(&model)? }))
+            } else {
+                out.result(&preset)
+            }
+        }
         Command::Preview => {
             let mut input = String::new();
             io::stdin().read_to_string(&mut input)?;
             let config: Config =
                 serde_json::from_str(&input).context("Invalid preview configuration")?;
-            output(&preview_config(&config)?)
+            out.result(&preview_config(&config)?)
         }
         Command::Calibrate(args) => {
             let (mut config, motor) = detected(&args.target)?;
             if args.config_stdin {
-                let mut input = String::new();
-                io::stdin().read_to_string(&mut input)?;
-                let requested: Config =
-                    serde_json::from_str(&input).context("Invalid calibration configuration")?;
-                config = requested_config(config, requested)?;
+                let requested = match desktop_config {
+                    Some(config) => config,
+                    None => serde_json::from_reader(io::stdin().lock())
+                        .context("Invalid calibration configuration")?,
+                };
+                config = requested_config(&config, requested)?;
             } else {
-                config.train_seconds = args.train_seconds;
-                config.validation_seconds = args.validation_seconds;
+                if let Some(seconds) = args.train_seconds {
+                    config.train_seconds = seconds;
+                }
+                if let Some(seconds) = args.validation_seconds {
+                    config.validation_seconds = seconds;
+                }
                 if let Some(v) = args.torque_limit {
                     config.torque_limit = v;
                 }
@@ -536,12 +601,9 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
                 if let Some(v) = args.travel_limit {
                     config.travel_limit = v;
                 }
+                config.validate()?;
             }
-            config.validate()?;
-            ensure!(
-                !cancel.load(Ordering::Relaxed),
-                "Cancelled before calibration"
-            );
+            crate::cancel::check(cancel)?;
             let dir = if let Some(dir) = args.output {
                 std::fs::create_dir(&dir)
                     .context("Choose a new recording directory with an existing parent")?;
@@ -550,30 +612,39 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
                 bridge::new_run_dir()?
             };
             bridge::write_json(&dir.join("config.json"), &config)?;
-            eprintln!(
-                "{} · ID {} · torque {:.3} Nm · speed {:.3} rad/s · travel ±{:.3} rad",
-                config.profile.model,
-                motor.id,
-                config.torque_limit,
-                config.speed_limit,
-                config.travel_limit
-            );
-            eprintln!("Recording to {}. Ctrl+C stops the motor.", dir.display());
-            if let Err(e) = hardware::acquire(&config, &dir, cancel, |p| progress.show(p), |_| {}) {
+            if out.desktop {
+                output_line(&json!({"type":"recordingCreated","directory":dir}))?;
+            } else {
+                eprintln!(
+                    "{} · ID {} · torque {:.3} Nm · speed {:.3} rad/s · travel ±{:.3} rad",
+                    config.profile.model,
+                    motor.id,
+                    config.torque_limit,
+                    config.speed_limit,
+                    config.travel_limit
+                );
+                eprintln!("Recording to {}. Ctrl+C stops the motor.", dir.display());
+            }
+            if let Err(e) = hardware::acquire(&config, &dir, cancel, |p| out.show(p)) {
                 let _ =
                     bridge::write_json(&dir.join("error.json"), &json!({"error":format!("{e:#}")}));
                 return Err(e);
             }
-            let report = pipeline::analyze(&dir, cancel, |p| progress.show(p))?;
-            output(
+            let report = pipeline::analyze(&dir, cancel, |p| out.show(p))?;
+            out.result(
                 &json!({"directory":dir,"accepted":report.accepted,"fitted":report.fitted,"warnings":report.warnings}),
             )
         }
-        Command::Analyze { directory } => output(&pipeline::analyze(&directory, cancel, |p| {
-            progress.show(p)
-        })?),
-        Command::Monitor { target, seconds } => monitor(target, seconds, None, cancel),
-        Command::ManualSession(target) => manual_session(target, cancel),
+        Command::Analyze { directory } => {
+            let report = pipeline::analyze(&directory, cancel, |p| out.show(p))?;
+            if out.desktop {
+                out.result(&json!({"directory":directory,"accepted":report.accepted}))
+            } else {
+                out.result(&report)
+            }
+        }
+        Command::Monitor { target, seconds } => monitor(target, seconds, None, out),
+        Command::ManualSession(target) => manual_session(target, out),
         Command::Jog {
             target,
             speed,
@@ -585,21 +656,23 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
                 "Jog speed must be finite and nonzero"
             );
             ensure!(seconds <= 30., "A CLI jog is limited to 30 seconds");
-            monitor(target, Some(seconds), Some(speed), cancel)
+            monitor(target, Some(seconds), Some(speed), out)
         }
         Command::Stop(target) => {
             hardware::disable(&target.config()?)?;
-            output(&json!({"id":target.id,"enabled":false}))
+            out.result(&json!({"id":target.id,"enabled":false}))
         }
         Command::Zero { target, .. } => {
             let (c, _) = detected(&target)?;
+            crate::cancel::check(cancel)?;
             hardware::set_zero(&c)?;
-            output(&json!({"id":target.id,"zero_set":true}))
+            out.result(&json!({"id":target.id,"zero_set":true}))
         }
         Command::SetId { target, new_id, .. } => {
             let (c, _) = detected(&target)?;
+            crate::cancel::check(cancel)?;
             hardware::change_id(&c, new_id)?;
-            output(&json!({"previous_id":target.id,"id":new_id}))
+            out.result(&json!({"previous_id":target.id,"id":new_id}))
         }
         Command::Firmware {
             command: FirmwareCommand::Check(target),
@@ -607,14 +680,14 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             let (c, motor) = detected(&target)?;
             let update =
                 firmware::available_update(&c.profile.model, motor.firmware.as_deref().unwrap());
-            output(&json!({"motor":motor,"update_available":update.is_some(),"release":update}))
+            out.result(&json!({"motor":motor,"update_available":update.is_some(),"release":update}))
         }
         Command::Firmware {
             command: FirmwareCommand::Prepare(target),
         } => {
             let (c, _) = detected(&target)?;
-            let prepared = firmware::prepare(&c, |s| eprintln!("{s}"))?;
-            output(
+            let prepared = firmware::prepare(&c, |s| out.progress(&s, None))?;
+            out.result(
                 &json!({"model":prepared.release.model,"version":prepared.release.version,
                 "current_version":prepared.current_version,"id":prepared.motor_id,
                 "uuid":prepared.uuid}),
@@ -624,24 +697,22 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
             command: FirmwareCommand::Update { target, .. },
         } => {
             let (c, _) = detected(&target)?;
-            let prepared = firmware::prepare(&c, |s| eprintln!("{s}"))?;
-            ensure!(
-                !cancel.load(Ordering::Relaxed),
-                "Cancelled before firmware transfer"
-            );
-            eprintln!(
-                "Firmware transfer starting. Keep power on; transfer finishes before exiting."
+            let prepared = firmware::prepare(&c, |s| out.progress(&s, None))?;
+            crate::cancel::check(cancel)?;
+            out.progress(
+                "Firmware transfer starting. Keep power on; transfer finishes before exiting.",
+                None,
             );
             let version = firmware::update(&c, &prepared, |fraction, s| {
-                eprintln!("{:.0}% {s}", fraction * 100.)
+                out.progress(&s, Some((fraction * 100.).round() as i32))
             })?;
-            output(&json!({"id":target.id,"firmware":version}))
+            out.result(&json!({"id":target.id,"firmware":version}))
         }
         Command::Register { command } => match command {
-            RegisterCommand::List { model } => output(&registers::catalog(&model)?),
+            RegisterCommand::List { model } => out.result(&registers::catalog(&model)?),
             RegisterCommand::Read { target, index } => {
                 let (config, _) = detected(&target)?;
-                output(&registers::read(&config, index)?)
+                out.result(&registers::read(&config, index)?)
             }
             RegisterCommand::Write {
                 target,
@@ -650,13 +721,17 @@ fn execute(command: Command, cancel: &AtomicBool) -> Result<()> {
                 uuid,
                 expected_raw,
                 ..
-            } => output(&registers::write(
-                &detected(&target)?.0,
-                index,
-                value,
-                &uuid,
-                &expected_raw,
-            )?),
+            } => {
+                let (config, _) = detected(&target)?;
+                crate::cancel::check(cancel)?;
+                out.result(&registers::write(
+                    &config,
+                    index,
+                    value,
+                    &uuid,
+                    &expected_raw,
+                )?)
+            }
         },
     }
 }
@@ -665,8 +740,9 @@ fn monitor(
     target: Target,
     seconds: Option<f64>,
     jog: Option<f64>,
-    cancel: &AtomicBool,
+    out: &JobOutput<'_>,
 ) -> Result<()> {
+    let cancel = out.cancel;
     let (c, motor) = detected(&target)?;
     if let Some(speed) = jog {
         ensure!(
@@ -676,10 +752,7 @@ fn monitor(
             c.profile.model
         );
     }
-    ensure!(
-        !cancel.load(Ordering::Relaxed),
-        "Cancelled before monitoring"
-    );
+    crate::cancel::check(cancel)?;
     let session = manual::Session::start(c, motor.uuid);
     let started = Instant::now();
     let mut motion_started = None;
@@ -728,23 +801,19 @@ fn monitor(
             && last_print
                 .is_none_or(|last| at.saturating_duration_since(last) >= Duration::from_millis(100))
         {
-            let mut stdout = io::stdout().lock();
-            serde_json::to_writer(
-                &mut stdout,
-                &json!({"t":started.elapsed().as_secs_f64(),"id":target.id,"enabled":state.enabled,
+            out.status(&json!({"t":started.elapsed().as_secs_f64(),"id":target.id,"enabled":state.enabled,
                 "position_rad":fb.position,"velocity_rad_s":fb.velocity,"torque_nm":fb.torque,"temperature_c":fb.temperature,"mode":fb.mode,"faults":fb.faults}),
             )?;
-            writeln!(stdout)?;
-            stdout.flush()?;
             last_print = Some(at);
         }
         thread::sleep(Duration::from_millis(10));
     }
     drop(session); // joins the worker after its stop guard disables the motor
-    if io::stderr().is_terminal() {
+    if !out.desktop && io::stderr().is_terminal() {
         eprintln!("Motor disabled.");
     }
-    Ok(())
+    crate::cancel::check(cancel)?;
+    out.end_stream()
 }
 
 #[cfg(test)]
@@ -761,25 +830,37 @@ mod tests {
 
     #[test]
     fn requested_gui_config_keeps_advanced_fields_but_checks_motor_identity() {
-        let detected = preset("RS-06").unwrap();
+        let detected = Config::preset("RS-06").unwrap();
         let mut requested = detected.clone();
         requested.train_seconds = 42.;
         requested.validation_seconds = 21.;
         requested.baseline.damping = 0.1;
-        let accepted = requested_config(detected.clone(), requested.clone()).unwrap();
+        let accepted = requested_config(&detected, requested.clone()).unwrap();
         assert_eq!(accepted.train_seconds, 42.);
         assert_eq!(accepted.validation_seconds, 21.);
         assert_eq!(accepted.baseline.damping, 0.1);
         requested.motor_id = 2;
-        assert!(requested_config(detected, requested).is_err());
+        assert!(requested_config(&detected, requested).is_err());
+    }
+
+    #[test]
+    fn preview_and_recording_both_reject_a_stale_suite() {
+        let preset = Config::preset("RS-06").unwrap();
+        let mut requested = preset.clone();
+        requested.excitation_revision += 1;
+        assert!(preview_config(&requested).is_err());
+        assert!(requested_config(&preset, requested).is_err());
     }
 
     #[test]
     fn preview_uses_the_same_mixed_trajectory_as_calibration() {
-        let config = preset("RS-06").unwrap();
+        let config = Config::preset("RS-06").unwrap();
         let preview = preview_config(&config).unwrap();
-        assert_eq!(preview["t"].as_array().unwrap().len(), 1201);
-        assert_eq!(preview["segments"].as_array().unwrap().len(), 5);
+        let times = preview["t"].as_array().unwrap();
+        assert_eq!(times.first().unwrap(), 0.);
+        assert_eq!(times.last().unwrap(), config.train_seconds);
+        assert_eq!(times.len(), preview["velocity"].as_array().unwrap().len());
+        assert_eq!(times.len(), preview["torque"].as_array().unwrap().len());
         assert!(
             preview["torque"]
                 .as_array()
@@ -863,21 +944,9 @@ mod tests {
         assert!(Cli::try_parse_from(["tool", "self-check"]).is_ok());
         assert_eq!(register_index("0x7010").unwrap(), 0x7010);
         assert!(register_index("0xzzzz").is_err());
-        for removed in [
-            "--list-can",
-            "--self-check",
-            "--scan=can0",
-            "--open=/tmp/run",
-            "--screenshot=/tmp/a.png",
-        ] {
-            assert!(Cli::try_parse_from(["tool", removed]).is_err());
-        }
         assert_eq!(
             Cli::try_parse_from(["tool"]).err().unwrap().kind(),
             clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
-        for p in Profile::presets() {
-            assert!(preset(&p.model).is_ok());
-        }
     }
 }

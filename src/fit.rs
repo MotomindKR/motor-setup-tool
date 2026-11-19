@@ -2,7 +2,7 @@
 use crate::{engine, types::*};
 use anyhow::{Context, Result, ensure};
 use nalgebra::{DMatrix, DVector, Matrix3, Matrix4, Vector3, Vector4};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 pub fn validate(session: &Session) -> Result<()> {
     ensure!(
@@ -168,7 +168,7 @@ fn seed(trace: &Trace, cancel: &AtomicBool, progress: &impl Fn(f32)) -> Result<(
     let mut best: Option<(f64, Parameters, f64)> = None;
     for delay_step in 0..=50 {
         progress(delay_step as f32 / 51.);
-        ensure!(!cancel.load(Ordering::Relaxed), "Fit cancelled");
+        crate::cancel::check(cancel)?;
         let delay = delay_step as f64 * 0.001;
         let mut index = 0;
         let mut torque = 0.;
@@ -404,7 +404,7 @@ fn refine(
             iteration as f32 / 80.,
             format!("{label} · iteration {} / 80", iteration + 1),
         );
-        ensure!(!cancel.load(Ordering::Relaxed), "Fit cancelled");
+        crate::cancel::check(cancel)?;
         let mut jac = Vec::new();
         for col in 0..4 {
             let h = 0.001_f64.max(x[col].abs() * 0.001);
