@@ -220,6 +220,30 @@ def test_failed_backup_prevents_eeprom_writes(setup, monkeypatch):
     assert bus.writes == []
 
 
+@pytest.mark.parametrize("blocked_id", [30, 31])
+def test_commit_preflight_failure_keeps_verified_bus_usable(setup, monkeypatch, blocked_id):
+    bus, service = setup
+    read = bus.read
+
+    def read_with_timeout(motor_id, address, size):
+        if motor_id == blocked_id and address == 146 and service.backup_dir.exists():
+            raise DeviceError("temperature timeout")
+        return read(motor_id, address, size)
+
+    monkeypatch.setattr(bus, "read", read_with_timeout)
+    with pytest.raises(DeviceError, match="temperature timeout"):
+        service.set_direction([30, 31], True)
+    assert not service.faulted
+    assert bus.writes == ([(30, 10, 1, 1)] if blocked_id == 31 else [])
+    journal = json.loads(next(service.backup_dir.glob("*.json")).read_text())
+    assert journal["status"] == "failed"
+    assert journal["changes"][0]["status"] == ("verified" if blocked_id == 31 else "pending")
+
+    monkeypatch.setattr(bus, "read", read)
+    service.set_direction([30, 31], True)
+    assert bus.writes == [(30, 10, 1, 1), (31, 10, 1, 1)]
+
+
 def test_partial_write_timeout_is_journaled_and_not_rolled_back(setup, monkeypatch):
     bus, service = setup
     original = bus.write
@@ -347,6 +371,44 @@ def test_torque_off_and_no_automatic_torque_on(setup):
     service.torque_off([30, 31])
     service.close()
     assert bus.writes == [(30, 64, 1, 0), (31, 64, 1, 0)]
+
+
+def test_torque_off_succeeds_without_telemetry_even_while_writes_are_locked(setup, monkeypatch):
+    bus, service = setup
+    bus.registers[30][64] = 1
+    service.faulted = True
+    read = bus.read
+
+    def read_with_timeout(motor_id, address, size):
+        if address == 146:
+            raise DeviceError("temperature timeout")
+        return read(motor_id, address, size)
+
+    monkeypatch.setattr(bus, "read", read_with_timeout)
+    with pytest.raises(DeviceError, match="temperature timeout"):
+        service.read_state(30)
+    service.torque_off([30])
+    assert bus.writes == [(30, 64, 1, 0)]
+    assert bus.read(30, 64, 1) == 0
+    assert service.faulted
+
+
+def test_torque_off_rejects_unknown_models_and_requires_readback(setup, monkeypatch):
+    bus, service = setup
+    bus.registers[30][0] = 999
+    bus.registers[31][64] = 1
+    write = bus.write
+
+    def ignore_torque_off_on_31(motor_id, *args):
+        if motor_id != 31:
+            write(motor_id, *args)
+
+    monkeypatch.setattr(bus, "write", ignore_torque_off_on_31)
+    with pytest.raises(DeviceError) as error:
+        service.torque_off([30, 31, 32])
+    assert "ID 30: 지원하지 않는 모델" in str(error.value)
+    assert "ID 31: 토크 OFF 확인 실패" in str(error.value)
+    assert bus.writes == [(32, 64, 1, 0)]
 
 
 @pytest.mark.parametrize("address,size,value", [(64, 1, 1), (116, 4, 2048), (7, 2, 1),

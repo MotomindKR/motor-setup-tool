@@ -89,6 +89,7 @@ def test_ping_error_is_not_treated_as_free_id(setup, monkeypatch):
 
 def test_target_occupation_is_rechecked_before_write(setup, monkeypatch):
     bus, service = setup
+    original_ping = bus.ping
     calls = []
     def ping(motor_id):
         calls.append(motor_id)
@@ -97,6 +98,9 @@ def test_target_occupation_is_rechecked_before_write(setup, monkeypatch):
     with pytest.raises(DeviceError, match="직전에 사용 중"):
         service.set_id(30, 40)
     assert calls == [40, 40] and bus.writes == []
+    assert not service.faulted
+    monkeypatch.setattr(bus, "ping", original_ping)
+    assert service.set_id(30, 40).state.motor_id == 40
 
 
 def test_source_config_change_during_id_setup_prevents_write(setup, monkeypatch):

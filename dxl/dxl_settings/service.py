@@ -142,14 +142,18 @@ class SettingsService:
     def close(self) -> None:
         self.transport.close()
 
-    def read_state(self, motor_id: int) -> MotorState:
+    def _read_supported_model(self, motor_id: int) -> int:
         if type(motor_id) is not int or not 0 <= motor_id <= 252:
             raise DeviceError("모터 ID는 0~252여야 합니다.")
-        r = lambda address, size=1: self.transport.read(motor_id, address, size)
-        model = r(0, 2)
+        model = self.transport.read(motor_id, 0, 2)
         if model not in MODELS:
             # Do not interpret unknown models with the XL330 register map.
             raise DeviceError(f"ID {motor_id}: 지원하지 않는 모델 {model}")
+        return model
+
+    def read_state(self, motor_id: int) -> MotorState:
+        model = self._read_supported_model(motor_id)
+        r = lambda address, size=1: self.transport.read(motor_id, address, size)
         return MotorState(
             motor_id, model, r(6), r(10), r(OPERATING_MODE_ADDRESS), signed(r(20, 4), 32),
             r(52, 4), r(48, 4), r(64), r(68), r(70),
@@ -268,6 +272,7 @@ class SettingsService:
         journal.update(operation="id", status="prepared", old_id=motor_id,
                        new_id=new_id, changes=[change])
         atomic_json(path, journal)
+        write_unverified = False
         try:
             now = self.read_state(motor_id)
             self._editable((now,))
@@ -278,6 +283,7 @@ class SettingsService:
                 raise DeviceError(f"ID {new_id}가 저장 직전에 사용 중으로 확인되었습니다.")
             change.update(before=asdict(now), status="writing")
             atomic_json(path, journal)
+            write_unverified = True
             self.transport.write(motor_id, 7, 1, new_id)
             time.sleep(0.05)
             after = self.read_state(new_id)
@@ -292,18 +298,23 @@ class SettingsService:
             change["old_id_response"] = old_response
             if old_response is not None:
                 raise DeviceError(f"이전 ID {motor_id}가 여전히 응답합니다. 중복 ID/연결을 확인하세요.")
+            write_unverified = False
             change["status"] = "verified"
             journal["status"] = "verified"
             atomic_json(path, journal)
         except Exception as exc:
-            self.faulted = True
+            if write_unverified:
+                self.faulted = True
+                recovery = (f"ID {motor_id} → {new_id}가 이미 적용되었을 수 있습니다. "
+                            "추가 저장 없이 재연결 후 모터 검색으로 확인하세요.")
+            else:
+                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
             journal.update(status="failed", error=str(exc))
             try:
                 atomic_json(path, journal)
             except OSError:
                 pass
-            raise DeviceError(f"ID 저장 중단: {exc}\nID {motor_id} → {new_id}가 이미 적용되었을 수 있습니다. "
-                              f"추가 저장 없이 재연결 후 모터 검색으로 확인하세요.\n백업: {path}") from exc
+            raise DeviceError(f"ID 저장 중단: {exc}\n{recovery}\n백업: {path}") from exc
         return IdChangeResult(motor_id, after, path)
 
     def set_1mbps(self, motor_id: int) -> tuple[Path | None, MotorState]:
@@ -338,13 +349,15 @@ class SettingsService:
                        changes=[change], timings_ms=timings)
         atomic_json(path, journal)
         record_step("initial_checks_and_backup")
-        attempted = False
+        write_unverified = False
+        adapter_speed_restored = False
         try:
             try:
                 transport.set_baud(TARGET_BAUD)
                 occupied = transport.ping(motor_id)
             finally:
                 transport.set_baud(old_baud)
+                adapter_speed_restored = True
             record_step("target_speed_probe")
             if occupied is not None:
                 raise DeviceError(f"{TARGET_BAUD} bps에서 ID {motor_id}가 이미 응답합니다.")
@@ -359,7 +372,7 @@ class SettingsService:
             change.update(before=asdict(now), status="writing")
             atomic_json(path, journal)
             record_step("prewrite_checks_and_backup")
-            attempted = True
+            write_unverified = True
             transport.write(motor_id, BAUD_RATE_ADDRESS, 1, TARGET_BAUD_CODE)
             time.sleep(0.05)
             record_step("write_and_settle")
@@ -371,31 +384,36 @@ class SettingsService:
             if (transport.read(motor_id, 7, 1) != motor_id
                     or not self._same_config(replace(now, baud_code=TARGET_BAUD_CODE), after)):
                 raise DeviceError(f"ID {motor_id}: 새 속도에서 모터 설정 재확인 실패")
+            write_unverified = False
             change["status"] = journal["status"] = "verified"
             record_step("readback")
             journal["elapsed_ms"] = round((step_started - started) * 1000)
             atomic_json(path, journal)
         except Exception as exc:
-            self.faulted = True
+            if write_unverified or not adapter_speed_restored:
+                self.faulted = True
             journal.update(status="failed", error=str(exc),
                            elapsed_ms=round((time.monotonic() - started) * 1000))
             try:
                 atomic_json(path, journal)
             except OSError:
                 pass
-            recovery = (f"재연결 후 {TARGET_BAUD} bps와 이전 {old_baud} bps에서 확인하세요."
-                        if attempted else f"쓰기 전에 중단되었습니다. {old_baud} bps로 재연결하세요.")
+            if write_unverified:
+                recovery = f"재연결 후 {TARGET_BAUD} bps와 이전 {old_baud} bps에서 확인하세요."
+            elif not adapter_speed_restored:
+                recovery = f"어댑터 속도를 복구하지 못했습니다. {old_baud} bps로 재연결하세요."
+            else:
+                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
             raise DeviceError(f"속도 저장 중단: {exc}\n{recovery}\n백업: {path}") from exc
         return path, after
 
     def torque_off(self, ids) -> None:
-        # Do not require a clean hardware status just to attempt torque OFF.
+        # Torque OFF remains available when unrelated telemetry reads fail.
         errors = []
         for motor_id in dict.fromkeys(ids):
             try:
-                state = self.read_state(motor_id)
-                if state.torque:
-                    self.transport.write(motor_id, 64, 1, 0)
+                self._read_supported_model(motor_id)
+                self.transport.write(motor_id, 64, 1, 0)
                 if self.transport.read(motor_id, 64, 1) != 0:
                     raise DeviceError("토크 OFF 확인 실패")
             except Exception as exc:
@@ -465,6 +483,7 @@ class SettingsService:
         ])
         atomic_json(path, journal)  # Must succeed before touching EEPROM.
         expected = {s.motor_id: s for s in states}
+        write_unverified = False
         try:
             for change in journal["changes"]:
                 i, address, size, value = (change[k] for k in ("motor_id", "address", "size", "value"))
@@ -482,6 +501,7 @@ class SettingsService:
                 else:
                     change["status"] = "writing"
                     atomic_json(path, journal)
+                    write_unverified = True
                     self.transport.write(i, address, size, value)
                     readback = self.transport.read(i, address, size)
                     if size == 4:
@@ -495,8 +515,6 @@ class SettingsService:
                 confirmed_value = getattr(after, field)
                 if confirmed_value != value:
                     raise DeviceError(f"ID {i}: 저장값 불일치 @{address}: {confirmed_value} != {value}")
-                if current != value:
-                    change["status"] = "verified"
                 if target is not None and abs(after.position - target) > TOLERANCE:
                     raise DeviceError(f"ID {i}: 영점 저장 후 위치 {after.position}, 기준 {target} 불일치 "
                                       f"(차이 {after.position - target} pulse, "
@@ -504,12 +522,19 @@ class SettingsService:
                                       f"{'역방향' if after.reverse else '정방향'}, "
                                       f"Homing Offset {after.homing_offset}). "
                                       "추가 저장 없이 실제 값을 확인하세요.")
+                if write_unverified:
+                    write_unverified = False
+                    change["status"] = "verified"
                 expected[i] = after
                 atomic_json(path, journal)
             journal["status"] = "verified"
             atomic_json(path, journal)
         except Exception as exc:
-            self.faulted = True
+            if write_unverified:
+                self.faulted = True
+                recovery = "일부 값은 저장되었을 수 있습니다. 재연결 후 확인하세요."
+            else:
+                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
             journal.update(status="failed", error=str(exc))
             try:
                 atomic_json(path, journal)
@@ -518,5 +543,5 @@ class SettingsService:
             completed = [f'ID {c["motor_id"]} @{c["address"]}' for c in journal["changes"]
                          if c["status"] in ("verified", "unchanged")]
             raise DeviceError(f"저장 중단: {exc}\n완료: {', '.join(completed) or '없음'}\n"
-                              f"일부 값은 저장되었을 수 있습니다. 재연결 후 확인하세요.\n백업: {path}") from exc
+                              f"{recovery}\n백업: {path}") from exc
         return path, tuple(expected.values())

@@ -55,6 +55,9 @@ def test_hardware_baud_change_requires_one_responding_motor(setup):
     with pytest.raises(DeviceError, match="한 대만"):
         service.set_1mbps(30)
     assert bus.baud == 57_600 and bus.writes == []
+    assert not service.faulted
+    bus.registers = {30: bus.registers[30]}
+    assert service.set_1mbps(30)[1].baud_rate == 1_000_000
 
 
 def test_same_id_at_target_speed_blocks_change(setup, monkeypatch):
@@ -63,6 +66,23 @@ def test_same_id_at_target_speed_blocks_change(setup, monkeypatch):
     with pytest.raises(DeviceError, match="이미 응답"):
         service.set_1mbps(30)
     assert bus.baud == 57_600 and bus.writes == []
+    assert not service.faulted
+
+
+def test_baud_probe_locks_writes_if_adapter_speed_cannot_be_restored(setup, monkeypatch):
+    bus, service = setup
+    set_baud = bus.set_baud
+
+    def fail_restore(baud):
+        if baud == 57_600:
+            raise DeviceError("port reopen failed")
+        set_baud(baud)
+
+    monkeypatch.setattr(bus, "set_baud", fail_restore)
+    with pytest.raises(DeviceError, match="어댑터 속도를 복구하지 못했습니다"):
+        service.set_1mbps(30)
+    assert service.faulted
+    assert bus.baud == 1_000_000 and bus.writes == []
 
 
 def test_baud_backup_failure_prevents_the_write(setup, monkeypatch):
