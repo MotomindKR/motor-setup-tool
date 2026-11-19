@@ -42,6 +42,9 @@ jobs:
     name: Format, lint, and unit tests
     runs-on: ubuntu-22.04
     timeout-minutes: 40
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.tools/ci-cargo
+      RUSTUP_TOOLCHAIN: 1.98.1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -50,12 +53,7 @@ jobs:
             .tools/ci-cargo
             .tools/packaging
             target/ci
-          key: ci-22.04-rust1.98.1-amd64-${{ hashFiles('Cargo.lock', 'packaging/downloads.json', 'packaging/Dockerfile') }}
-          restore-keys: ci-22.04-rust1.98.1-amd64-
-      - name: Build test environment
-        run: docker build -f packaging/Dockerfile -t motomind-tests .
-      - name: Check formatting, Clippy, and unit tests
-        run: |
-          docker run --rm --user "$(id -u):$(id -g)" \
-            -e CARGO_HOME=/work/.tools/ci-cargo -v "$PWD:/work" \
-            motomind-tests bash scripts/check-ci.sh
+          key: native-22.04-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'packaging/downloads.json') }}
+          restore-keys: native-22.04-${{ env.RUSTUP_TOOLCHAIN }}-
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+      - run: bash scripts/check-ci.sh
