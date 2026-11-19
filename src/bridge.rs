@@ -31,7 +31,7 @@ pub fn lock_recording(dir: &Path) -> Result<fs::File> {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(locks.join(format!("{key:x}")))?
+            .open(locks.join(crate::protocol::hex(&key)))?
     };
     lock.try_lock()
         .context("Another operation is using this recording")?;

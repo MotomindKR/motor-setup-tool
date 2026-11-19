@@ -235,11 +235,7 @@ fn gsusb_id(bus_id: &str, address: u8) -> String {
     let bus_hex: String = if bus_id.is_empty() {
         "00".into()
     } else {
-        bus_id
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        protocol::hex(bus_id.as_bytes())
     };
     format!("gsusb:{bus_hex}:{address}")
 }

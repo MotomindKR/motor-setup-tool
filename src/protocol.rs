@@ -1,6 +1,10 @@
 use crate::types::Profile;
 use anyhow::{Context, Result, ensure};
 
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 pub(crate) fn parse_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
     ensure!(
         value.len() == N * 2,

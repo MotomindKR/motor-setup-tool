@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { Backend, backendPath } = require('./backend');
 const { unzipSync } = require('fflate');
 const { inspectRun, loadRun, exportRun, exportName, deleteRun } = require('./recordings');
 
@@ -90,6 +91,19 @@ test('deletion removes an empty run folder and rejects unrelated folders', async
   const { base, directory } = await fixture(t, false);
   await assert.rejects(deleteRun(base), /does not contain/);
   await deleteRun(directory);
+  await assert.rejects(fs.stat(directory), { code: 'ENOENT' });
+});
+
+test('another process cannot delete or refit an in-use recording', { skip: !process.env.TEST_NATIVE_BACKEND }, async t => {
+  const { directory } = await fixture(t);
+  const backend = new Backend(backendPath(path.resolve(__dirname, '..')), () => {});
+  const remove = () => backend.withRecordingLock(directory, () => deleteRun(directory));
+  await backend.withRecordingLock(directory, async () => {
+    await assert.rejects(remove(), /using this recording/);
+    await assert.rejects(backend.run('analyze', { directory }), /using this recording/);
+    assert.equal((await inspectRun(directory)).motorId, 61);
+  });
+  await remove();
   await assert.rejects(fs.stat(directory), { code: 'ENOENT' });
 });
 

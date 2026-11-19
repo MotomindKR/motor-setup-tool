@@ -44,11 +44,7 @@ fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
         "Invalid firmware size"
     );
     ensure!(
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-            == r.sha256,
+        protocol::hex(&Sha256::digest(bytes)) == r.sha256,
         "Firmware SHA-256 mismatch; download the official file again"
     );
     Ok(())
@@ -405,10 +401,7 @@ mod tests {
     fn downloaded_images_must_match_the_pinned_digest() {
         let image = vec![1, 2, 3, 4, 5];
         let mut r = release("RS-00").unwrap();
-        r.sha256 = Sha256::digest(&image)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        r.sha256 = protocol::hex(&Sha256::digest(&image));
         let (url, server) = serve_image("200 OK", &image);
         r.url = url;
         assert_eq!(download_image(&r).unwrap(), image);
