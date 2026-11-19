@@ -1,4 +1,4 @@
-import { i18n } from "../i18n.mjs";
+import { i18n } from "./i18n.mjs";
 
 export let formatLocale;
 

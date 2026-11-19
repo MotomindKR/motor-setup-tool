@@ -109,7 +109,7 @@ test('invalid hardware connection reports failure without starting demo motors',
 });
 
 test('the active worker reports errors in the selected language without reconnecting', async t => {
-  const { i18n } = require('./i18n.mjs');
+  const { i18n } = require('./i18n.js');
   const worker = await withWorker(t);
   await run(worker, 'connect', demo);
   t.after(() => i18n.changeLanguage('en'));

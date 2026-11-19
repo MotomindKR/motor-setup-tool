@@ -1,6 +1,6 @@
 'use strict';
 
-const { i18n, t } = require('./i18n.mjs');
+const { i18n, t } = require('./i18n.js');
 
 const { execFile, spawn } = require('node:child_process');
 const { constants } = require('node:fs');

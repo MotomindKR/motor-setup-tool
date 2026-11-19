@@ -1,4 +1,4 @@
-import { message, t } from "../i18n.mjs";
+import { message, t } from "./i18n.mjs";
 import { displayAngle } from "./format.mjs";
 
 const operationNames = {

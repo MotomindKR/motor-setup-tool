@@ -1,4 +1,4 @@
-import { messageText } from "../i18n.mjs";
+import { messageText } from "./i18n.mjs";
 import { formatLocale } from "./language.mjs";
 export function inputNumberFormat({ step, min, significantDigits } = {}) {
   if (significantDigits || step === "any") {

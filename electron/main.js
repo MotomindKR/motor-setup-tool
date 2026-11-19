@@ -1,6 +1,6 @@
 'use strict';
 
-const { i18n, t } = require('./i18n.mjs');
+const { i18n, t } = require('./i18n.js');
 
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, nativeTheme } = require('electron');
 const path = require('node:path');

@@ -1,0 +1,15 @@
+{
+  "lng": "en",
+  "fallbackLng": "en",
+  "supportedLngs": [
+    "en",
+    "ko"
+  ],
+  "keySeparator": false,
+  "nsSeparator": false,
+  "interpolation": {
+    "escapeValue": false
+  },
+  "initAsync": false,
+  "showSupportNotice": false
+}

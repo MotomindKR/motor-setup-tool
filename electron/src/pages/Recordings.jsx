@@ -1,4 +1,4 @@
-import { messageText } from "../../i18n.mjs";
+import { messageText } from "../i18n.mjs";
 import { formatLocale } from "../language.mjs";
 import { useTranslation } from "react-i18next";
 import React from "react";

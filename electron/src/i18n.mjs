@@ -1,18 +1,9 @@
 import { createInstance } from "i18next";
-import korean from "./locales/ko.json" with { type: "json" };
+import options from "../locales/options.json" with { type: "json" };
+import korean from "../locales/ko.json" with { type: "json" };
 
 export const i18n = createInstance();
-i18n.init({
-  lng: "en",
-  fallbackLng: "en",
-  supportedLngs: ["en", "ko"],
-  resources: { en: { translation: {} }, ko: { translation: korean } },
-  keySeparator: false,
-  nsSeparator: false,
-  interpolation: { escapeValue: false },
-  initAsync: false,
-  showSupportNotice: false,
-});
+i18n.init({ ...options, resources: { ko: { translation: korean } } });
 
 export const t = i18n.t.bind(i18n);
 

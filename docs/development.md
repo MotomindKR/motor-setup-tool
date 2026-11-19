@@ -28,7 +28,7 @@ sessions contend for the same bus ownership. See the [CLI guide](cli.md).
 
 ## Desktop translations
 
-Use `useTranslation()` in React and `t` from `electron/i18n.mjs` in the Electron
+Use `useTranslation()` in React and `t` from `electron/i18n.js` in the Electron
 main process. English UI text is the message key. Add its translation to
 `electron/locales/ko.json` and use named placeholders for values. Rust progress
 events carry their parameters so the renderer can translate them while a job runs.

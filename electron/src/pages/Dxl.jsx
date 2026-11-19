@@ -1,4 +1,4 @@
-import { message, messageText } from "../../i18n.mjs";
+import { message, messageText } from "../i18n.mjs";
 import { formatLocale } from "../language.mjs";
 import { useTranslation } from "react-i18next";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";

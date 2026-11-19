@@ -1,6 +1,6 @@
 'use strict';
 
-const { t } = require('./i18n.mjs');
+const { t } = require('./i18n.js');
 
 const fs = require('node:fs/promises');
 const syncFs = require('node:fs');

@@ -6,7 +6,7 @@ import { App } from "./App.jsx";
 import { createController } from "./controller.mjs";
 
 import { I18nextProvider } from "react-i18next";
-import { i18n, t } from "../i18n.mjs";
+import { i18n, t } from "./i18n.mjs";
 import { applyLanguage } from "./language.mjs";
 
 applyLanguage();
