@@ -25,6 +25,14 @@ async function run(worker, operation, params) {
   return reply.result;
 }
 
+test('serial ports can be listed before connecting to a motor', async t => {
+  const worker = await withWorker(t);
+  const reply = await worker.run('ports');
+  assert.equal(reply.error, undefined);
+  assert.equal(reply.connected, false);
+  assert.ok(Array.isArray(reply.result.ports));
+});
+
 test('DXL demo saves the verified 2048-pulse zero with one command', async t => {
   const worker = await withWorker(t);
   const { motors: [discovered] } = await run(worker, 'connect', demo);

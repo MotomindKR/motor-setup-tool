@@ -14,13 +14,17 @@ const operations = new Set([
   'torqueOff', 'saveZero', 'direction', 'setMode5', 'set1Mbps', 'setId', 'export', 'restore',
 ]);
 
+function developmentPython(root) {
+  return process.env.MOTOMIND_DXL_PYTHON || path.join(root, '.tools', 'dxl-venv',
+    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+}
+
 class DxlWorker {
   constructor({ root, resourcesPath, backupDir }) {
     const windows = process.platform === 'win32';
     const name = windows ? 'dxl-worker.exe' : 'dxl-worker';
-    const python = process.env.MOTOMIND_DXL_PYTHON || (windows ? 'python' : 'python3');
     const entry = path.join(root, 'dxl', 'dxl_settings', 'worker.py');
-    this.command = resourcesPath ? path.join(resourcesPath, 'dxl', name) : python;
+    this.command = resourcesPath ? path.join(resourcesPath, 'dxl', name) : developmentPython(root);
     this.args = resourcesPath ? [backupDir] : [entry, backupDir];
     this.env = resourcesPath ? process.env : { ...process.env, PYTHONPATH: path.join(root, 'dxl') };
     this.pending = [];
@@ -130,4 +134,4 @@ async function grantPortAccess(port) {
   await fs.access(port, flags);
 }
 
-module.exports = { DxlWorker, grantPortAccess };
+module.exports = { DxlWorker, developmentPython, grantPortAccess };

@@ -8,6 +8,8 @@
   "author": "Motomind <MotomindKR@users.noreply.github.com>",
   "main": "main.js",
   "scripts": {
+    "setup:dxl": "node setup-dxl.js",
+    "prestart": "npm run setup:dxl",
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
