@@ -52,27 +52,22 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
       if ($source.version -ne $PreviousVersion -or $source.target -ne $ExpectedVersion) {
         throw "Expected $PreviousVersion to download $ExpectedVersion, saw $($source.version) download $($source.target)"
       }
-      # Hosted runners have no logged-on Explorer shell for NSIS's
-      # ExecShellAsUser restart. Wait for the real installer to finish, then
-      # explicitly launch the installed GUI to verify its runtime and backend.
-      $installDeadline = (Get-Date).AddSeconds(60)
-      $installed = $false
-      while (-not $installed -and (Get-Date) -lt $installDeadline) {
-        try {
-          $launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
-          $ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
-          $installers = @(Get-CimInstance Win32_Process -Filter "Name = 'installer.exe'")
-          $installed = ($launcher -eq $Version -or $launcher -eq "$Version.0") -and $ui -eq $Version -and $installers.Count -eq 0
-        } catch { }
-        if (-not $installed) { Start-Sleep -Milliseconds 200 }
+      $deadline = (Get-Date).AddSeconds(75)
+      do {
+        $restarted = Get-Process -Name 'Motor Setup Tool' -ErrorAction SilentlyContinue | Where-Object {
+          $_.Path -ieq $appExe -and $_.Id -ne $running.Id -and $_.MainWindowHandle -ne 0
+        } | Select-Object -First 1
+        if ($restarted) { break }
+        Start-Sleep -Milliseconds 250
+      } while ((Get-Date) -lt $deadline)
+      if (-not $restarted) { throw "Windows did not reopen a window for $appExe after the update" }
+      $launch = Get-CimInstance Win32_Process -Filter "ProcessId = $($restarted.Id)"
+      $parent = Get-Process -Id $launch.ParentProcessId -ErrorAction SilentlyContinue
+      Write-Output "Relaunched PID $($launch.ProcessId), parent $($launch.ParentProcessId) ($($parent.ProcessName)), command $($launch.CommandLine)"
+      if ($launch.CommandLine -notmatch '(?:^|\s)--updated(?:\s|$)' -or (Get-InstallerVersion $restarted.Path) -ne $Version) {
+        throw "Unexpected process or version in the reopened window"
       }
-      if (-not $installed) { throw 'The NSIS update did not complete in the original installation directory' }
-      Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
-        $_.ExecutablePath -ieq $appExe -and $_.CommandLine -notmatch '\s--type='
-      } | ForEach-Object {
-        $gui = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-        if ($gui -and (-not $gui.CloseMainWindow() -or -not $gui.WaitForExit(15000))) { throw 'The updated app did not close normally' }
-      }
+      if (-not $restarted.CloseMainWindow() -or -not $restarted.WaitForExit(15000)) { throw 'The updated app did not close normally' }
       $env:MOTOMIND_SMOKE_PATH = $screenshot
       $smoke = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
       if (-not $smoke.WaitForExit(30000) -or $smoke.ExitCode -ne 0) { throw 'The updated app runtime smoke check failed' }
@@ -96,6 +91,8 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     Remove-Item Env:MOTOMIND_UPDATE_TEST_CONFIG -ErrorAction SilentlyContinue
     Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
     @{
+      runnerSession = (Get-Process -Id $PID).SessionId
+      explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Select-Object Id, SessionId)
       launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
       ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
       processes = @(Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Select-Object ProcessId, ExecutablePath, CommandLine)
