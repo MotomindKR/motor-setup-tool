@@ -16,8 +16,7 @@
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",
     "package:desktop": "node package-installers.js --dir",
-    "package:installers": "node package-installers.js",
-    "stage:runtime": "node runtime-dependencies.js"
+    "package:installers": "node package-installers.js"
   },
   "devDependencies": {
     "@motomindkr/ui": "file:vendor/motomindkr-ui-4.1.0.tgz",

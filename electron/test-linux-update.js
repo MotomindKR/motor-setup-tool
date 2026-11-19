@@ -10,7 +10,7 @@ const { spawn, execFileSync } = require('node:child_process');
 (async () => {
   assert.equal(process.getuid(), 0);
   const [oldInstaller, installer] = process.argv.slice(2);
-  const version = require('./package.json').version;
+  const version = execFileSync('dpkg-deb', ['--field', installer, 'Version'], { encoding: 'utf8' }).trim();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motor-linux-updater-'));
   const executable = '/opt/Motor Setup Tool/motor-setup-tool';
   const appRoot = path.join(path.dirname(executable), 'resources', 'app');
@@ -20,19 +20,16 @@ const { spawn, execFileSync } = require('node:child_process');
   for (const badChecksum of [false, true]) {
     const caseDirectory = path.join(directory, badChecksum ? 'checksum-failure' : 'upgrade');
     await fs.mkdir(caseDirectory);
-    for (const file of ['main.js', 'preload.js', 'updater.js', 'packaged-update-worker.js']) {
-      await fs.copyFile(path.join(__dirname, file), path.join(appRoot, 'electron', file));
-    }
-    const modules = path.join(__dirname, '..', 'dist-electron', `stage-linux-${process.arch}`, 'app', 'node_modules');
-    await fs.cp(modules, path.join(appRoot, 'node_modules'), { recursive: true, verbatimSymlinks: true });
+    await fs.copyFile(path.join(__dirname, 'packaged-update-worker.js'), path.join(appRoot, 'electron', 'packaged-update-worker.js'));
     const manifestFile = path.join(appRoot, 'package.json');
     const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+    const entry = manifest.main;
     manifest.main = 'electron/packaged-update-worker.js';
     await fs.writeFile(manifestFile, JSON.stringify(manifest));
     const screenshot = path.join(caseDirectory, 'restarted.png');
     const handoff = path.join(caseDirectory, 'handoff.json');
     const configFile = path.join(caseDirectory, 'request.json');
-    await fs.writeFile(configFile, JSON.stringify({ installer, version: badChecksum ? '99.0.0' : version, directory: userData, screenshot, handoff, badChecksum }));
+    await fs.writeFile(configFile, JSON.stringify({ installer, entry, version: badChecksum ? '99.0.0' : version, directory: userData, screenshot, handoff, badChecksum }));
     const log = await fs.open(path.join(caseDirectory, 'app.log'), 'w');
     const child = spawn(executable, ['--no-sandbox', `--user-data-dir=${userData}`], {
       env: { ...process.env, MOTOMIND_UPDATE_TEST_CONFIG: configFile }, stdio: ['ignore', log.fd, log.fd],
@@ -57,6 +54,8 @@ const { spawn, execFileSync } = require('node:child_process');
       assert.equal(source.rejected, true);
       assert.match(runtime.updateError, /checksum mismatch/i);
     } else {
+      assert.notEqual(source.version, version);
+      assert.equal(source.target, version);
       assert.equal(runtime.backendReady, true);
       assert.equal(runtime.updateError, null);
       assert.equal((await fs.readFile(path.join(path.dirname(executable), 'resources', 'package-type'), 'utf8')).trim(), 'deb');

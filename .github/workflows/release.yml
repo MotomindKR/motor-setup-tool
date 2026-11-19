@@ -116,8 +116,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
-          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
+          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
+          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.22-${{ matrix.platform }}.deb" "$PWD"/dist-electron/*-${{ matrix.platform }}.deb
       - name: Test Windows silent upgrade
         if: runner.os == 'Windows'
         shell: pwsh
@@ -125,11 +125,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.18-win32-x64.exe'
+          gh release download v0.1.22 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.22-win32-x64.exe' --dir "$env:RUNNER_TEMP"
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.22-win32-x64.exe'
           $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
-          $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
-          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer
           if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
       - name: Upload Windows update diagnostics
         if: runner.os == 'Windows' && always()

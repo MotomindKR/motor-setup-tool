@@ -1,10 +1,10 @@
 param(
   [Parameter(Mandatory = $true)][string]$OldInstaller,
-  [Parameter(Mandatory = $true)][string]$Installer,
-  [Parameter(Mandatory = $true)][string]$Version
+  [Parameter(Mandatory = $true)][string]$Installer
 )
 
 $ErrorActionPreference = 'Stop'
+$Version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Installer).ProductVersion -replace '^(\d+\.\d+\.\d+)\.0$', '$1'
 $testRoot = Join-Path $env:RUNNER_TEMP 'motomind-update-tests'
 $machineDirectory = Join-Path $testRoot 'Machine App'
 $userDirectory = Join-Path $testRoot 'User App'
@@ -27,19 +27,15 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   $handoff = Join-Path $caseDirectory 'handoff.json'
   try {
     $appRoot = Join-Path $Directory 'resources\app'
-    foreach ($file in @('main.js', 'preload.js', 'updater.js', 'packaged-update-worker.js')) {
-      Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $appRoot "electron\$file") -Force
-    }
-    $runtimeModules = Join-Path $appRoot 'node_modules'
-    if (Test-Path -LiteralPath $runtimeModules) { Remove-Item -LiteralPath $runtimeModules -Recurse -Force }
-    Copy-Item (Join-Path $PSScriptRoot '..\dist-electron\stage-win32-x64\app\node_modules') $runtimeModules -Recurse
+    Copy-Item (Join-Path $PSScriptRoot 'packaged-update-worker.js') (Join-Path $appRoot 'electron\packaged-update-worker.js') -Force
     $manifestFile = Join-Path $appRoot 'package.json'
     $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+    $entry = $manifest.main
     $manifest.main = 'electron/packaged-update-worker.js'
     [System.IO.File]::WriteAllText($manifestFile, ($manifest | ConvertTo-Json))
     $configFile = Join-Path $caseDirectory 'request.json'
     [System.IO.File]::WriteAllText($configFile, (@{
-      installer = $Setup; version = $ExpectedVersion; directory = $stateDirectory
+      entry = $entry; installer = $Setup; version = $ExpectedVersion; directory = $stateDirectory
       screenshot = $screenshot; handoff = $handoff; badChecksum = [bool]$ExpectedError
     } | ConvertTo-Json))
     $env:MOTOMIND_UPDATE_TEST_CONFIG = $configFile
@@ -50,7 +46,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
     if ($ExpectedError) {
       if (-not $source.rejected) { throw 'The corrupt update was not rejected' }
-    } elseif (-not $source.electron -or $source.target -ne $ExpectedVersion -or $source.updater -ne 'NsisUpdater') {
+    } elseif (-not $source.electron -or $source.version -eq $Version -or $source.target -ne $ExpectedVersion -or $source.updater -ne 'NsisUpdater') {
       throw 'The update did not use electron-updater from the packaged Electron app'
     }
     if (-not $ExpectedError) {
@@ -89,7 +85,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     if ($runtime.version -ne $Version) { throw "Restarted runtime version $($runtime.version) does not match $Version" }
     if ($ExpectedError) {
       if ($runtime.updateError -notlike "*$ExpectedError*") { throw "Expected visible update error, got: $($runtime.updateError)" }
-      if (-not $runtime.settingsOpen) { throw 'The failed update was not shown in Settings on restart' }
+      if (-not $runtime.settingsOpen) { throw 'The failed update was not shown in Settings' }
     } else {
       if ($runtime.updateError) { throw $runtime.updateError }
       $actual = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion

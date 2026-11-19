@@ -1,11 +1,11 @@
 'use strict';
-// CI-only entry point in a disposable installation. The real packaged GUI,
-// preload, IPC, electron-updater provider, download, checksum, and installer run.
+// Test entry point installed alongside the packaged main process in a disposable app.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const { createHash } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 const { app } = require('electron');
 const config = JSON.parse(fs.readFileSync(process.env.MOTOMIND_UPDATE_TEST_CONFIG, 'utf8').replace(/^\uFEFF/, ''));
 delete process.env.MOTOMIND_UPDATE_TEST_CONFIG;
@@ -14,76 +14,83 @@ app.setPath('userData', config.directory);
 assert.equal(app.isPackaged, true);
 const manifestFile = path.join(__dirname, '..', 'package.json');
 const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-manifest.main = 'electron/main.js';
+manifest.main = config.entry;
 fs.writeFileSync(manifestFile, JSON.stringify(manifest));
-const extension = path.extname(config.installer);
-const name = `installer${extension}`;
-const bytes = fs.readFileSync(config.installer);
-const sha512 = createHash('sha512').update(config.badChecksum ? 'incorrect payload' : bytes).digest('base64');
-const update = { version: config.version, files: [{ url: name, sha512, size: bytes.length }], path: name, sha512, releaseDate: new Date().toISOString() };
-let installRequested = false;
-let earlyDownload = false;
-const server = http.createServer((request, response) => {
-  if (request.url.split('?')[0].endsWith('.yml')) {
-    response.end(JSON.stringify(update));
-  } else if (request.url.split('?')[0] === `/${name}`) {
-    if (!installRequested) earlyDownload = true;
-    response.setHeader('Content-Length', bytes.length);
-    fs.createReadStream(config.installer).pipe(response);
-  } else { response.writeHead(404); response.end(); }
-});
-server.listen(0, '127.0.0.1', () => {
-  // Supply the same installed metadata builder creates, using the local CI
-  // server. Older installations predate this configuration and dependency.
-  fs.writeFileSync(path.join(process.resourcesPath, 'app-update.yml'), JSON.stringify({
-    provider: 'generic', url: `http://127.0.0.1:${server.address().port}`,
-    updaterCacheDirName: `motomind-updater-test-${process.pid}`,
-  }));
-  if (process.platform === 'linux') {
-    fs.writeFileSync(path.join(process.resourcesPath, 'package-type'), extension.slice(1));
+
+async function waitFor(check, reason) {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const value = await check();
+    if (value) return value;
+    if (Date.now() >= deadline) throw new Error(reason);
+    await delay(100);
   }
+}
+
+async function serve() {
+  const name = `installer${path.extname(config.installer)}`;
+  const hash = createHash('sha512');
+  if (config.badChecksum) hash.update('incorrect payload');
+  else for await (const chunk of fs.createReadStream(config.installer)) hash.update(chunk);
+  const file = { url: name, sha512: hash.digest('base64'), size: fs.statSync(config.installer).size };
+  const update = { version: config.version, files: [file], path: name, sha512: file.sha512, releaseDate: new Date().toISOString() };
+  let installRequested = false;
+  let earlyDownload = false;
+  const server = http.createServer((request, response) => {
+    const url = request.url.split('?')[0];
+    if (url.endsWith('.yml')) response.end(JSON.stringify(update));
+    else if (url === `/${name}`) {
+      if (!installRequested) earlyDownload = true;
+      response.setHeader('Content-Length', file.size);
+      fs.createReadStream(config.installer).pipe(response);
+    } else { response.writeHead(404); response.end(); }
+  });
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
   const native = require('electron-updater').autoUpdater;
+  native.setFeedURL({ provider: 'generic', url: `http://127.0.0.1:${server.address().port}` });
   native.disableDifferentialDownload = true;
   native.on('update-downloaded', () => fs.writeFileSync(config.handoff, JSON.stringify({
     version: app.getVersion(), target: config.version, updater: native.constructor.name,
     electron: process.versions.electron, executable: app.getPath('exe'), pid: process.pid,
   })));
-  app.on('browser-window-created', (_event, window) => {
-    window.webContents.once('did-finish-load', () => {
-      setTimeout(async () => {
-        try {
-          if (process.platform !== 'win32') {
-            process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
-          }
-          await window.webContents.executeJavaScript(`(async () => {
-            const deadline = Date.now() + 15000;
-            while (!(await window.motorApp.updateInfo()).updateResult?.available) {
-              if (Date.now() >= deadline) throw new Error('The background check did not offer an update');
-              await new Promise(resolve => setTimeout(resolve, 100));
-            }
-          })()`);
-          assert.equal(earlyDownload, false, 'Background update check downloaded the installer');
-          installRequested = true;
-          await window.webContents.executeJavaScript('window.motorApp.installUpdate()');
-          assert.equal(Boolean(config.badChecksum), false, 'A corrupt download was accepted');
-        } catch (error) {
-          if (config.badChecksum && /checksum mismatch/i.test(error.message)) {
-            await new Promise(resolve => setTimeout(resolve, 200));
-            const visible = await window.webContents.executeJavaScript(`document.querySelector('[role="dialog"]')?.textContent || ""`);
-            assert.match(visible, /checksum mismatch/i);
-            assert.equal(fs.existsSync(path.join(config.directory, 'pending-update.json')), false);
-            fs.writeFileSync(config.screenshot, (await window.webContents.capturePage()).toPNG());
-            fs.writeFileSync(`${config.screenshot}.json`, JSON.stringify({ version: app.getVersion(), updateError: error.message, settingsOpen: true }));
-            fs.writeFileSync(config.handoff, JSON.stringify({ rejected: true, updater: native.constructor.name }));
-            app.exit(0);
-          } else {
-            fs.writeFileSync(config.handoff, JSON.stringify({ error: error.message }));
-            console.error(error);
-            app.exit(1);
-          }
-        }
-      }, 1000);
-    });
+
+  async function exercise(window) {
+    const evaluate = source => window.webContents.executeJavaScript(source);
+    await waitFor(() => evaluate(`document.querySelector('button[aria-label="Refresh adapters"]')?.disabled === false`), 'Startup did not finish');
+    if (config.badChecksum) {
+      // The upgraded app checks in the background. The baseline checks on demand.
+      await waitFor(() => evaluate('(async () => (await window.motorApp.updateInfo()).updateResult?.available)()'), 'The background check did not offer an update');
+    } else {
+      assert.equal(await evaluate('(async () => (await window.motorApp.checkUpdate()).available)()'), true);
+    }
+    assert.equal(earlyDownload, false, 'Checking for an update downloaded the installer');
+    installRequested = true;
+    if (!config.badChecksum) {
+      if (process.platform !== 'win32') process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
+      await evaluate('window.motorApp.installUpdate()');
+      return;
+    }
+    await assert.rejects(evaluate('window.motorApp.installUpdate()'), /checksum mismatch/i);
+    const visibleError = await waitFor(async () => {
+      const text = await evaluate(`document.querySelector('[role="dialog"]')?.textContent || ""`);
+      return /checksum mismatch/i.test(text) && text;
+    }, 'Checksum failure was not visible in Settings');
+    assert.equal(fs.existsSync(path.join(config.directory, 'pending-update.json')), false);
+    fs.writeFileSync(config.screenshot, (await window.webContents.capturePage()).toPNG());
+    fs.writeFileSync(`${config.screenshot}.json`, JSON.stringify({ version: app.getVersion(), updateError: visibleError, settingsOpen: true }));
+    fs.writeFileSync(config.handoff, JSON.stringify({ rejected: true, updater: native.constructor.name }));
+    app.exit(0);
+  }
+  app.once('browser-window-created', (_event, window) => {
+    window.webContents.once('did-finish-load', () => exercise(window).catch(fail));
   });
-  require('./main');
-});
+  require(path.resolve(path.dirname(manifestFile), config.entry));
+}
+
+function fail(error) {
+  fs.writeFileSync(config.handoff, JSON.stringify({ error: error.message }));
+  console.error(error);
+  app.exit(1);
+}
+
+serve().catch(fail);

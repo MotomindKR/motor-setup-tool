@@ -22,6 +22,4 @@ function installRuntimeDependencies(app) {
   }
 }
 
-if (require.main === module) installRuntimeDependencies(process.argv[2]);
-
 module.exports = { installRuntimeDependencies };
