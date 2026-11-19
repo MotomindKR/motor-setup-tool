@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-const { unzipSync, strFromU8 } = require('fflate');
+const { unzipSync } = require('fflate');
 const { inspectRun, loadRun, exportRun, exportName, deleteRun } = require('./recordings');
 
 async function fixture(t, completed = true) {
@@ -23,14 +23,16 @@ async function fixture(t, completed = true) {
 test('downloads are independently readable ZIPs containing exact artifacts and actuator identity', async t => {
   const { base, directory } = await fixture(t);
   await fs.writeFile(path.join(directory, 'unrelated-secret.txt'), 'excluded');
+  const provenance = { reason: 'Corrected acquisition timestamps' };
+  await fs.writeFile(path.join(directory, 'reprocessing.json'), JSON.stringify(provenance));
   await fs.writeFile(path.join(directory, 'session.json'), Buffer.alloc(300_000, 65));
   const destination = path.join(base, 'download.zip');
   await exportRun(directory, destination);
   const zip = unzipSync(await fs.readFile(destination));
-  assert.deepEqual(Object.keys(zip).sort(), ['config.json','hardware.json','report.json','session.json','training.csv','validation.csv']);
-  assert.equal(strFromU8(zip['training.csv']), await fs.readFile(path.join(directory, 'training.csv'), 'utf8'));
-  assert.deepEqual(JSON.parse(strFromU8(zip['hardware.json'])).uuid, [1,2,3,4,5,6,7,8]);
-  assert.equal(zip['session.json'].length, 300_000);
+  assert.ok(!('unrelated-secret.txt' in zip));
+  for (const name of (await fs.readdir(directory)).filter(name => name !== 'unrelated-secret.txt')) {
+    assert.deepEqual(Buffer.from(zip[name]), await fs.readFile(path.join(directory, name)), name);
+  }
   const run = await inspectRun(directory);
   assert.equal(run.uuid, '0102030405060708');
   assert.match(exportName(run), /^RS-10P-ID61-0102030405060708-1760000000000\.zip$/);
@@ -45,6 +47,7 @@ test('individual downloads preserve CSV bytes and cannot overwrite run artifacts
   await assert.rejects(exportRun(directory, path.join(directory, 'training.csv'), 'validation.csv'), /outside/);
   await assert.rejects(exportRun(directory, output, '../training.csv'), /available recording/);
   await assert.rejects(exportRun(directory, output, 'calibration.json'), /missing/);
+  await assert.rejects(exportRun(directory, path.relative(process.cwd(), output), 'validation.csv'), /download location/);
   assert.equal((await fs.readdir(base)).some(name => name.endsWith('.tmp')), false);
 });
 
@@ -52,6 +55,11 @@ test('incomplete calibration runs can be managed without a completed report', as
   const { base, directory } = await fixture(t, false);
   assert.equal((await inspectRun(directory)).completed, false);
   await assert.rejects(loadRun(directory), /no completed report/);
+  const partial = await loadRun(directory, { allowIncomplete: true });
+  assert.equal(partial.report, null);
+  assert.equal(partial.uuid, '0102030405060708');
+  assert.ok(partial.files.includes('training.csv'));
+  await assert.rejects(loadRun(base, { allowIncomplete: true }), /does not contain/);
   await exportRun(directory, path.join(base, 'partial.zip'));
   await fs.rm(path.join(directory, 'hardware.json'));
   assert.equal((await inspectRun(directory)).uuid, null);
@@ -72,6 +80,7 @@ test('arbitrary folders and symlinked artifacts are excluded', async t => {
 test('deletion removes calibration artifacts permanently and preserves unrelated files', async t => {
   const { directory } = await fixture(t);
   await fs.writeFile(path.join(directory, 'notes.txt'), 'user notes');
+  await fs.writeFile(path.join(directory, 'error.json'), JSON.stringify({ error: 'Acquisition failed' }));
   await deleteRun(directory);
   assert.deepEqual(await fs.readdir(directory), ['notes.txt']);
   assert.equal(await fs.readFile(path.join(directory, 'notes.txt'), 'utf8'), 'user notes');

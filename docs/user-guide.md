@@ -144,19 +144,6 @@ The save also commits other pending persistent settings. Access depends on the
 model; write-only and undocumented settings are protected. See the
 [register audit](registers.md) for the full permissions and persistence table.
 
-| Registers | Editing |
-| --- | --- |
-| Gains and filters · `0x7010`, `0x7011`, `0x7014`, `0x701E`–`0x7021` | Numeric input within documented ranges |
-| Speed and current limits · `0x7017`–`0x7018` | Protected (device supports R/W) |
-| Power-on position range · `zero_sta`, `0x7029` | Choose `0` (0 to 2π) or `1` (−π to π) |
-| Position offset · `add_offset`, `0x702B` | Radians, −7 to 7 |
-
-The app disables the motor, verifies its UUID and previous value, writes the
-correct parameter type, verifies readback, and sends the save command. Changes
-to the power-on range and offset apply after a power cycle. Motion targets and
-other volatile controls are excluded. Older firmware may reject newer settings;
-update the motor firmware if a documented setting is unavailable.
-
 ## Monitor and jog a motor
 
 1. Open **Test → Start monitoring**. The motor starts disabled. Live position,

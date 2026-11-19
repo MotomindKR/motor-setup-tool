@@ -142,19 +142,6 @@ export function App({ controller }) {
     window.scrollTo(0, 0);
   }, [s.tab, s.directory]);
   useEffect(() => {
-    if (
-      s.tab === "setup" &&
-      s.motor?.model &&
-      !c.busy &&
-      !s.registers &&
-      !s.registersFailed
-    )
-      a.loadRegisters();
-  }, [s.tab, s.motor?.model, c.busy, s.registers, s.registersFailed, a]);
-  useEffect(() => {
-    if (window.motorSmoke) window.motorSmoke.setTheme = appearance.setChoice;
-  }, [appearance.setChoice]);
-  useEffect(() => {
     const cleanup = controller.start();
     const revoke = () => a.revoke(),
       release = () => a.release();
@@ -252,7 +239,6 @@ export function App({ controller }) {
                   "manual",
                   "interfaces",
                   "usbAdapters",
-                  "registerList",
                   "plan",
                 ].includes(s.busy) && (
                   <Panel

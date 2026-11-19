@@ -10,7 +10,7 @@ const { argsFor, Backend, backendPath } = require('./backend');
 test('hardware operations require explicit review and validated targets', () => {
   assert.throws(() => argsFor('calibrate', { can: 'can0', id: 1 }), /Review/);
   assert.throws(() => argsFor('calibrate', { can: 'can0', id: 1, reviewed: true }), /configuration missing/);
-  for (const operation of ['info', 'monitor', 'jog', 'firmwareCheck']) assert.throws(() => argsFor(operation), /Unknown operation/);
+  assert.throws(() => argsFor('unrecognized'), /Unknown operation/);
   assert.throws(() => argsFor('zero', { can: 'can0', id: 1 }), /Confirm/);
   assert.throws(() => argsFor('firmwareUpdate', { can: 'can0', id: 1 }), /Confirm/);
   assert.throws(() => argsFor('stop', { can: 'can0;touch /tmp/pwned', id: 1 }), /CAN interface/);
@@ -22,7 +22,6 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.deepEqual(argsFor('firmwarePrepare', { can: 'can0', id: 1 }), ['firmware', 'prepare', '--can', 'can0', '--host-id', '253', '--id', '1']);
   assert.deepEqual(argsFor('canRestart', { can: 'can0' }), ['can', 'restart', 'can0', '--auth', 'polkit']);
   assert.deepEqual(argsFor('usbAdapters'), ['can', 'usb-list']);
-  assert.deepEqual(argsFor('registerList', { model: 'RS-00' }), ['register', 'list', '--model', 'RS-00']);
   assert.deepEqual(argsFor('registerRead', { can: 'can0', id: 1, model: 'RS-00', index: 0x7010 }), ['register', 'read', '--can', 'can0', '--host-id', '253', '--id', '1', '--index', '0x7010']);
   assert.throws(() => argsFor('registerRead', { can: 'can0', id: 1, model: 'RS-00', index: 0x7005 }), /documented register/);
   assert.throws(() => argsFor('registerWrite', { can: 'can0', id: 1, model: 'RS-00', index: 0x7010 }), /Confirm/);
@@ -33,7 +32,6 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.throws(() => argsFor('scan', { can: 'gsusb:0:79' }), /CAN interface/);
   assert.throws(() => argsFor('scan', { can: 'gsusb:303033:999' }), /CAN interface/);
   assert.throws(() => argsFor('scan', { can: 'slcan:canable:921600:/dev/ttyUSB0' }), /CAN interface/);
-  assert.throws(() => argsFor('serialPorts'), /Unknown operation/);
   assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, reviewed: true, config: {}, output: path.join(os.tmpdir(), 'new-calibration') }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--output', path.join(os.tmpdir(), 'new-calibration'), '--config-stdin', '--yes']);
 });
 
@@ -62,8 +60,6 @@ test('manual intent sends the live reviewed direction and rejects invalid speed'
 });
 
 test('RS-10P and model-specific register permissions pass through the bridge', () => {
-  assert.deepEqual(argsFor('plan', { model: 'RS-10P' }), ['plan', '--model', 'RS-10P']);
-  assert.deepEqual(argsFor('registerList', { model: 'RS-10P' }), ['register', 'list', '--model', 'RS-10P']);
   const p = { can: 'can0', id: 1, model: 'RS-10P', index: 0x701F };
   assert.equal(argsFor('registerRead', p).at(-1), '0x701F');
   assert.throws(() => argsFor('registerRead', { ...p, index: 0x2014 }), /documented register/);
@@ -80,32 +76,16 @@ test('a second process cannot start while one is active', async () => {
   assert.equal(backend.active, null);
 });
 
-test('firmware transfer cannot be cancelled after transfer starts', () => {
+test('cancellation closes the control pipe and waits for the worker to exit', () => {
   const backend = new Backend(process.execPath, () => {});
-  backend.active = { child: { kill() { throw new Error('must not be called'); } }, transferStarted: true };
-  assert.throws(() => backend.cancel(), /wait for it to finish/);
-});
-
-test('cancellation retains the active job until the child exits', () => {
-  const backend = new Backend(process.execPath, () => {});
-  let signal;
-  backend.active = {
-    operation: 'manual', transferStarted: false, cancelRequested: false,
-    child: { pid: 123, kill(value) { signal = value; return true; } },
-  };
+  const stdin = new (require('node:stream').PassThrough)();
+  backend.active = { child: { stdin }, operation: 'manual' };
   assert.equal(backend.cancel(), true);
-  assert.equal(signal, 'SIGTERM');
-  assert.equal(backend.active.cancelRequested, true);
+  assert.equal(stdin.writableEnded, true);
+  assert.equal(backend.cancel(), true);
   assert.throws(() => backend.run('interfaces'), /Finish or stop/);
   backend.active = null;
   assert.equal(backend.cancel(), false);
-});
-
-test('cancellation handles a failed spawn without a PID', () => {
-  const backend = new Backend(process.execPath, () => {});
-  backend.active = { transferStarted: false, cancelRequested: false, child: { pid: undefined, kill() { throw new Error('must not be called'); } } };
-  assert.equal(backend.cancel(), true);
-  assert.equal(backend.active.cancelRequested, true);
 });
 
 test('backend selection never falls back from a missing bundle or release to another binary', t => {
@@ -142,14 +122,31 @@ test('backend signal exits report the signal and stderr instead of status null',
   await assert.rejects(backend.preview({}), /Preview backend terminated by SIGTERM[\s\S]*fixture error/);
 });
 
-test('requested cancellation remains a cancelled result after signal termination', { skip: process.platform === 'win32' }, async t => {
+test('an interrupted worker returns its cancellation result after cleanup', { skip: process.platform === 'win32' }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-backend-cancel-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const binary = path.join(directory, 'backend');
-  fs.writeFileSync(binary, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+  fs.writeFileSync(binary, '#!/bin/sh\ncat >/dev/null\nprintf \'{"type":"result","value":{"cancelled":true}}\\n\'\n', { mode: 0o755 });
   const backend = new Backend(binary, () => {});
   const result = backend.run('interfaces');
   backend.cancel();
   assert.deepEqual(await result, { cancelled: true });
   assert.equal(backend.active, null);
+});
+
+test('progress stays separate from diagnostics when a worker exits with an error', { skip: process.platform === 'win32' }, async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'motor-backend-progress-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const binary = path.join(directory, 'backend');
+  fs.writeFileSync(binary, `#!/bin/sh
+echo '{"type":"progress","message":"측정 · 1","percent":7}'
+echo 'CAN connection lost' >&2
+exit 1
+`, { mode: 0o755 });
+  const events = [];
+  const backend = new Backend(binary, event => events.push(event));
+  await assert.rejects(backend.run('interfaces'), { message: 'CAN connection lost' });
+  assert.deepEqual(events.filter(event => event.type === 'progress'), [
+    { type: 'progress', message: '측정 · 1', percent: 7 },
+  ]);
 });

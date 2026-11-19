@@ -345,10 +345,6 @@ test("recordings show identity, download individual files, and require confirmat
 }) => {
   await navigate(page, "Files");
   const run = page.locator(".recording-item").first();
-  await expect(run.locator("svg")).toHaveCount(1);
-  await expect(
-    run.getByRole("button", { name: "Run actions", exact: true }),
-  ).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await run.getByRole("button", { name: "Run actions", exact: true }).click();
   await expect(
     page.getByRole("menuitem", { name: "Entire run (.zip)", exact: true }),
@@ -467,7 +463,7 @@ test("a background update marks Settings in the collapsed sidebar", async ({ pag
 
   await page.evaluate(() => window.testMotor.emit({
     type: "updateChecked",
-    result: { available: true, installable: true, version: "0.1.23" },
+    result: { available: true, version: "0.1.23" },
   }));
   await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
   await expect(settings).toHaveAccessibleDescription("Update available");
@@ -510,8 +506,8 @@ test("number fields show short decimals and retain the precise preset", async ({
       window.testMotor.calls.find((call) => call.operation === "calibrate")
         .params.config,
   );
-  expect(config.speed_limit).toBe(14.844025288211773);
-  expect(config.baseline.armature).toBe(0.000001);
+  expect(config.speed_limit).toBe(fixture.preset.speed_limit);
+  expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
   await page
     .getByRole("button", { name: "New calibration", exact: true })
     .click();

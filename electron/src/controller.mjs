@@ -1,34 +1,18 @@
-// Owns the Electron bridge and motor intent lease. Rendering never sends commands.
-export const configFields = [
-  ["torque_limit", "Torque limit", "Nm", 0.001, undefined, 0.01],
-  ["speed_limit", "Speed cutoff", "rad/s", 0.001, undefined, 0.1],
-  ["travel_limit", "Travel limit", "±rad", 0.001, undefined, 0.5],
-  ["temperature_limit", "Temperature cutoff", "°C", 20, 70, 1],
-  ["train_seconds", "Training duration", "s", 20, 60, 1],
-  ["validation_seconds", "Validation duration", "s", 10, 60, 1],
-  ["sample_hz", "Sample rate", "Hz", 50, 500, 10],
-  ["sweep_start_hz", "Sweep start", "Hz", 0.05, 20, 0.05],
-  ["sweep_end_hz", "Sweep end", "Hz", 0.1, 20, 0.1],
-];
-export const baselineFields = [
-  ["armature", "Armature", "kg m²", 0.000001, 5, 0.001],
-  ["damping", "Damping", "Nm s/rad", 0, 10, 0.001],
-  ["friction", "Friction", "Nm", 0, 100, 0.001],
-  ["delay", "Delay", "s", 0, 0.1, 0.001],
-];
-export const operationNames = {
+const operationNames = {
   interfaces: "Checking interfaces",
   usbAdapters: "Checking USB adapters",
   canUp: "Bringing up CAN",
   canRestart: "Restarting CAN",
   scan: "Finding motors",
+  setId: "Changing motor ID",
+  zero: "Setting motor zero",
+  stop: "Disabling motor",
   plan: "Loading preset",
   calibrate: "Calibrating motor",
   manual: "Monitoring motor",
   analyze: "Refitting recording",
   firmwarePrepare: "Verifying firmware",
   firmwareUpdate: "Updating firmware",
-  registerList: "Loading registers",
   registerRead: "Reading register",
   registerWrite: "Saving register",
 };
@@ -39,11 +23,7 @@ function readableError(message) {
     /^Error invoking remote method '[^']+':\s*/,
     "",
   );
-  const lines = text.split("\n");
-  const start = lines.findLastIndex((line) => /^Error:/.test(line.trim()));
-  return (start < 0 ? text : lines.slice(start).join("\n"))
-    .replace(/^(?:Error:\s*)+/, "")
-    .trim();
+  return text.replace(/^(?:Error:\s*)+/, "").trim();
 }
 export const uuidText = (motor) =>
   Array.isArray(motor?.uuid)
@@ -69,7 +49,7 @@ export function selectedCan(s) {
       ? c.bus
       : "";
 }
-export function busReady(s, platform) {
+function busReady(s, platform) {
   if (s.connection.transport === "gsusb")
     return s.usbAdapters.some((a) => a.id === selectedCan(s) && a.accessible);
   if (s.connection.transport !== "socketcan" || platform !== "linux")
@@ -113,12 +93,10 @@ export function controls(s, platform, now = performance.now()) {
     motor,
     manual,
     fresh,
-    healthy,
     calibrate: !s.report && !busy && motor && Boolean(s.preview) && s.reviewed,
     monitor: motor && (Boolean(s.preview) || manual) && (!busy || manual),
     enable:
       manual &&
-      fresh &&
       healthy &&
       s.jogReviewed &&
       !s.manualStatus?.enabled &&
@@ -158,6 +136,8 @@ export function controls(s, platform, now = performance.now()) {
   };
 }
 
+class OperationCancelled extends Error {}
+
 export function createController(bridge, env = {}) {
   const now = env.now || (() => performance.now());
   const focused =
@@ -177,6 +157,7 @@ export function createController(bridge, env = {}) {
     motors: [],
     motor: null,
     preset: null,
+    limits: null,
     config: null,
     preview: null,
     previewLoading: false,
@@ -198,7 +179,6 @@ export function createController(bridge, env = {}) {
     firmware: null,
     firmwareMessage: "",
     registers: null,
-    registersFailed: false,
     registerIndex: null,
     registerRead: null,
     registerValue: "",
@@ -245,6 +225,7 @@ export function createController(bridge, env = {}) {
           }
         : null,
     });
+  const reportError = (error) => notice(error.message, !(error instanceof OperationCancelled));
   const target = () => ({
     can: selectedCan(s),
     hostId: s.connection.hostId,
@@ -254,19 +235,14 @@ export function createController(bridge, env = {}) {
   const buildConfig = () => {
     if (!s.config || !s.motor)
       throw new Error("Scan and select a motor first.");
-    const config = structuredClone(s.config);
-    for (const [key] of configFields) config[key] = Number(config[key]);
-    for (const [key] of baselineFields)
-      config.baseline[key] = Number(config.baseline[key]);
+    if ([...Object.values(s.config), ...Object.values(s.config.baseline)].includes(null))
+      throw new Error("Fill in all calibration settings.");
     return {
-      ...config,
+      ...s.config,
       interface: selectedCan(s),
       host_id: Number(s.connection.hostId),
       motor_id: s.motor.id,
       reference_angle_rad: s.referenceAngle,
-      baseline: { ...config.baseline, static_friction: 0 },
-      experiment: "Mixed",
-      excitation_revision: 1,
     };
   };
   async function run(operation, params = {}) {
@@ -275,17 +251,18 @@ export function createController(bridge, env = {}) {
     set({
       busy: operation,
       work: {
-        title: operationNames[operation] || "Working",
+        title: operationNames[operation],
         message: "",
         percent: null,
       },
       notice: null,
     });
     try {
-      return await bridge.run(operation, params);
-    } catch (error) {
-      notice(error.message, true);
-      throw error;
+      const result = await bridge.run(operation, params);
+      if (result?.cancelled && operation !== "manual") {
+        throw new OperationCancelled("Operation stopped.");
+      }
+      return result;
     } finally {
       set({ busy: null, work: null });
     }
@@ -300,6 +277,7 @@ export function createController(bridge, env = {}) {
       motors: [],
       motor: null,
       preset: null,
+      limits: null,
       config: null,
       preview: null,
       previewLoading: false,
@@ -311,7 +289,7 @@ export function createController(bridge, env = {}) {
       firmwareMessage: "",
       registerRead: null,
       registers: null,
-      registersFailed: false,
+      registerIndex: null,
       registerValue: "",
       registerMessage: "",
       manualStatus: null,
@@ -352,19 +330,22 @@ export function createController(bridge, env = {}) {
       } catch (error) {
         if (request === sequence) {
           set({ previewLoading: false });
-          notice(error.message, true);
+          reportError(error);
         }
       }
     }, env.previewDelay ?? 220);
   }
+  let runListRequest = 0;
   async function refreshRuns() {
+    const request = ++runListRequest;
     set({ runsLoading: true });
     try {
-      set({ runs: await bridge.listRuns() });
+      const runs = await bridge.listRuns();
+      if (request === runListRequest) set({ runs });
     } catch (error) {
-      notice(error.message, true);
+      if (request === runListRequest) reportError(error);
     } finally {
-      set({ runsLoading: false });
+      if (request === runListRequest) set({ runsLoading: false });
     }
   }
   async function refreshInterfaces() {
@@ -417,8 +398,8 @@ export function createController(bridge, env = {}) {
         if (hadMotor)
           notice("Adapter unavailable. Reconnect it, then scan.", true);
       } else set(next);
-    } catch {
-      /* run reports bridge errors */
+    } catch (error) {
+      reportError(error);
     } finally {
       set({ refreshingAdapters: false });
     }
@@ -441,8 +422,8 @@ export function createController(bridge, env = {}) {
           ? `${motors.length} motors found. Select one.`
           : "No motors found. Check power and wiring.",
       );
-    } catch {
-      /* run reports bridge errors */
+    } catch (error) {
+      reportError(error);
     }
   }
   async function selectMotor(id) {
@@ -452,6 +433,7 @@ export function createController(bridge, env = {}) {
     if (motor && motor === s.motor && s.config) return;
     resetMotor({ motors, motor });
     const epoch = connectionEpoch;
+    let referenceError;
     if (motor?.uuid) {
       try {
         const angle = await bridge.getReferenceAngle(motor.uuid);
@@ -463,24 +445,30 @@ export function createController(bridge, env = {}) {
           ),
         });
       } catch (error) {
-        notice(error.message, true);
+        if (epoch !== connectionEpoch) return;
+        referenceError = error;
       }
     }
     if (motor?.model && !motor.issue) {
       try {
-        const preset = await run("plan", { model: motor.model });
+        const { preset, limits, registers } = await run("plan", { model: motor.model });
         if (epoch !== connectionEpoch) return;
         set({
           preset,
-          config: structuredClone(preset),
+          limits,
+          registers,
+          registerIndex: registers[0]?.index ?? null,
+          config: preset,
           jogSpeed: Math.min(0.5, maxJogSpeed(preset)),
           connectionOpen: false,
         });
         schedulePreview();
-      } catch {
-        /* run reports bridge errors */
+      } catch (error) {
+        reportError(error);
+        return;
       }
     }
+    if (referenceError) reportError(referenceError);
   }
   function maxJogSpeed(config = s.config) {
     return Math.max(0.01, Math.min(Number(config?.speed_limit || 1) * 0.1, 1));
@@ -506,7 +494,7 @@ export function createController(bridge, env = {}) {
       .catch((error) => {
         wantEnabled = false;
         direction = 0;
-        notice(error.message, true);
+        reportError(error);
       })
       .finally(() => {
         intentPending = false;
@@ -532,29 +520,7 @@ export function createController(bridge, env = {}) {
       await bridge.cancel();
       await manualPromise;
     } catch (error) {
-      notice(error.message, true);
-    }
-  }
-  let registersLoading = false;
-  async function loadRegisters() {
-    if (
-      registersLoading ||
-      s.registers ||
-      flags().busy ||
-      s.registersFailed ||
-      !s.motor?.model
-    )
-      return;
-    registersLoading = true;
-    try {
-      const model = s.motor.model;
-      const registers = await run("registerList", { model });
-      if (s.motor?.model !== model) return;
-      set({ registers, registerIndex: registers[0]?.index ?? null });
-    } catch {
-      set({ registersFailed: true });
-    } finally {
-      registersLoading = false;
+      reportError(error);
     }
   }
   function eventReceived(event) {
@@ -567,19 +533,7 @@ export function createController(bridge, env = {}) {
       });
     else if (event.type === "progress") {
       if (!s.busy) return;
-      const message = (
-        event.message.split("\n").filter(Boolean).at(-1) || ""
-      ).replace(/^\[[= ]{20}\]\s*/, "");
-      const match =
-        message.match(/^(?:Scanning|Recording|Fitting)\s+(\d+)%\s*·\s*(.*)$/) ||
-        message.match(/^(\d+)%\s+(.+)$/);
-      set({
-        work: {
-          ...s.work,
-          message: match?.[2] || message,
-          percent: match ? Math.min(100, Number(match[1])) : s.work?.percent,
-        },
-      });
+      set({ work: { ...s.work, message: event.message, percent: event.percent } });
     } else if (event.type === "manualStatus") {
       const value = event.value;
       if (manualEverEnabled && !value.enabled && !value.preparing) {
@@ -600,24 +554,20 @@ export function createController(bridge, env = {}) {
       }
       set({ manualStatus: value, lastStatusAt: now(), manualHistory: history });
     } else if (event.type === "error") notice(event.message, true);
-    // The operation promise owns busy state; a finish event may precede its result.
   }
   function openReport(result) {
     set({
       directory: result.directory,
       report: result.report,
-      reportFiles: result.files || [],
-      reportUuid:
-        result.uuid ||
-        (result.report.motor_uuid
-          ? uuidText({ uuid: result.report.motor_uuid })
-          : ""),
+      reportFiles: result.files,
+      reportUuid: result.uuid,
       trace: "validation",
       chart: "motion",
     });
   }
   async function openRun(directory) {
     if (flags().busy) return;
+    set({ fileOperation: true });
     try {
       const result = directory
         ? await bridge.loadRun(directory)
@@ -625,23 +575,20 @@ export function createController(bridge, env = {}) {
       if (result) {
         openReport(result);
         set({ tab: "files", notice: null });
+        if (!directory) refreshRuns();
+        if (!result.report) notice("Incomplete run. Use its menu to download or delete the files.");
       }
     } catch (error) {
-      notice(error.message, true);
+      reportError(error);
+    } finally {
+      set({ fileOperation: false });
     }
   }
   async function setTab(tab) {
     if (!["calibrate", "test", "setup", "files"].includes(tab)) return;
-    if (s.tab === "test" && tab !== "test") {
-      revoke();
-      await stopMonitor();
-    }
+    if (s.tab === "test" && tab !== "test") await stopMonitor();
     set({ tab, notice: s.notice?.error ? s.notice : null });
     if (tab === "files") refreshRuns();
-    if (tab === "setup") {
-      set({ registersFailed: false });
-      loadRegisters();
-    }
   }
   let confirmation = null;
   function confirmAction(title, description, action, destructive = false) {
@@ -662,7 +609,7 @@ export function createController(bridge, env = {}) {
         const result = await bridge.exportRun(directory, file);
         if (result) notice(`Downloaded ${file || "calibration run"}.`);
       } catch (error) {
-        notice(error.message, true);
+        reportError(error);
       } finally {
         set({ fileOperation: false });
       }
@@ -678,9 +625,11 @@ export function createController(bridge, env = {}) {
           set({ fileOperation: true });
           try {
             await bridge.deleteRun(directory);
+            ++runListRequest;
             if (s.directory === directory)
-              set({ directory: null, report: null, reportFiles: [] });
+              set({ directory: null, report: null, reportFiles: [], reportUuid: "" });
             set({
+              runsLoading: false,
               runs: s.runs.filter((item) => item.directory !== directory),
             });
             notice("Run deleted.");
@@ -691,7 +640,6 @@ export function createController(bridge, env = {}) {
         true,
       );
     },
-    loadRegisters,
     dismissNotice: () => notice(""),
     toggleConnection: () => set({ connectionOpen: !s.connectionOpen }),
     changeConnection(key, value) {
@@ -713,13 +661,16 @@ export function createController(bridge, env = {}) {
       try {
         await run(bus.up ? "canRestart" : "canUp", { can: bus.name });
         await refreshInterfaces();
-      } catch {}
+      } catch (error) {
+        reportError(error);
+      }
     },
     changeConfig(key, value, baseline = false) {
       if (!s.config || flags().busy) return;
+      const numeric = value === "" ? null : Number(value);
       const config = baseline
-        ? { ...s.config, baseline: { ...s.config.baseline, [key]: value } }
-        : { ...s.config, [key]: value };
+        ? { ...s.config, baseline: { ...s.config.baseline, [key]: numeric } }
+        : { ...s.config, [key]: numeric };
       set({
         config,
         reviewed: false,
@@ -730,7 +681,7 @@ export function createController(bridge, env = {}) {
     restorePreset() {
       if (!s.preset || flags().busy) return;
       set({
-        config: structuredClone(s.preset),
+        config: s.preset,
         reviewed: false,
         jogSpeed: Math.min(Number(s.jogSpeed), maxJogSpeed(s.preset)),
       });
@@ -744,27 +695,27 @@ export function createController(bridge, env = {}) {
         const outputDirectory = await bridge.pickCalibrationOutput();
         if (outputDirectory) set({ outputDirectory });
       } catch (error) {
-        notice(error.message, true);
+        reportError(error);
       }
     },
     async calibrate() {
       if (!flags().calibrate) return;
       try {
+        const output = s.outputDirectory;
+        const config = buildConfig();
+        set({ outputDirectory: null });
         const result = await run("calibrate", {
           ...target(),
           reviewed: s.reviewed,
-          config: buildConfig(),
-          output: s.outputDirectory,
+          config,
+          output,
         });
-        if (result?.cancelled) {
-          notice("Calibration stopped. Motor disabled.");
-          return;
-        }
         openReport(await bridge.loadRun(result.directory));
         notice(result.accepted ? "" : "Validation failed. Check the results.");
-        refreshRuns();
       } catch (error) {
-        notice(error.message, true);
+        reportError(error);
+      } finally {
+        refreshRuns();
       }
     },
     async monitor() {
@@ -781,7 +732,7 @@ export function createController(bridge, env = {}) {
         lastStatusAt: 0,
       });
       manualPromise = run("manual", { ...target(), config: buildConfig() })
-        .catch(() => null)
+        .catch(reportError)
         .finally(() => {
           manualPromise = null;
           wantEnabled = false;
@@ -823,18 +774,20 @@ export function createController(bridge, env = {}) {
         try {
           await bridge.cancel();
         } catch (error) {
-          notice(error.message, true);
+          reportError(error);
         }
         return;
       }
       try {
         await run("stop", target());
         notice("Motor disabled.");
-      } catch {}
+      } catch (error) {
+        reportError(error);
+      }
     },
     cancel: () => {
       if (s.busy !== "firmwareUpdate")
-        bridge.cancel().catch((error) => notice(error.message, true));
+        bridge.cancel().catch(reportError);
     },
     setReferenceInput: (value) => set({ referenceInput: value }),
     setReferenceUnit(unit) {
@@ -867,13 +820,17 @@ export function createController(bridge, env = {}) {
         notice("Reference angle must be within ±100 rad.", true);
         return;
       }
+      const motor = s.motor;
       confirmAction(
         "Set current position?",
         `Set the stationary motor’s current position to zero. The app will display ${numberText(angle, 3)} rad at this position.`,
         async () => {
+          if (s.motor !== motor || !flags().zero) return;
           if (s.busy === "manual") await stopMonitor();
+          if (s.motor !== motor || flags().busy) return;
           await run("zero", { ...target(), confirmed: true });
-          await bridge.setReferenceAngle(s.motor.uuid, angle);
+          await bridge.setReferenceAngle(motor.uuid, angle);
+          if (s.motor !== motor) return;
           set({
             referenceAngle: angle,
             referenceInput: String(
@@ -913,10 +870,6 @@ export function createController(bridge, env = {}) {
             newId,
             confirmed: true,
           });
-          if (result?.cancelled) {
-            notice("ID change stopped before verification.");
-            return;
-          }
           if (result?.previous_id !== motor.id || result.id !== newId)
             throw new Error("The motor’s new ID could not be verified.");
           if (updateSelectedMotor(motor, { id: result.id }))
@@ -932,7 +885,9 @@ export function createController(bridge, env = {}) {
           firmware,
           firmwareMessage: `Verified · installed ${firmware.current_version} → ${firmware.version}`,
         });
-      } catch {}
+      } catch (error) {
+        reportError(error);
+      }
     },
     updateFirmware() {
       if (
@@ -953,10 +908,6 @@ export function createController(bridge, env = {}) {
             ...params,
             confirmed: true,
           });
-          if (result?.cancelled) {
-            notice("Firmware preparation stopped.");
-            return;
-          }
           if (
             result?.id !== motor.id ||
             typeof result.firmware !== "string" ||
@@ -981,7 +932,7 @@ export function createController(bridge, env = {}) {
       );
     },
     releaseNotes: () =>
-      bridge.openReleaseNotes().catch((error) => notice(error.message, true)),
+      bridge.openReleaseNotes(s.motor?.model).catch(reportError),
     selectRegister(index) {
       set({
         registerIndex: index,
@@ -992,10 +943,6 @@ export function createController(bridge, env = {}) {
     },
     searchRegisters: (query) => set({ registerSearch: query }),
     setRegisterValue: (value) => set({ registerValue: value }),
-    retryRegisters() {
-      set({ registersFailed: false });
-      loadRegisters();
-    },
     async readRegister() {
       if (!flags().registerRead) return;
       const index = s.registerIndex,
@@ -1020,7 +967,9 @@ export function createController(bridge, env = {}) {
             s.registers.find((r) => r.index === index),
           ),
         });
-      } catch {}
+      } catch (error) {
+        reportError(error);
+      }
     },
     writeRegister() {
       if (!flags().registerWrite) return;
@@ -1032,6 +981,7 @@ export function createController(bridge, env = {}) {
         "Save register to motor?",
         `Write ${r.name} (0x${r.index.toString(16).toUpperCase()}) from ${registerValueText(prior.value, r)} to ${registerValueText(value, r)} on motor ID ${motor.id}, then save motor settings to flash. This also saves other pending persistent settings.`,
         async () => {
+          if (s.motor !== motor || s.registerRead !== prior || s.registerIndex !== r.index || flags().busy) return;
           try {
             const result = await run("registerWrite", {
               ...target(),
@@ -1064,24 +1014,21 @@ export function createController(bridge, env = {}) {
     toggleSeries: (key) =>
       set({ visible: { ...s.visible, [key]: !s.visible[key] } }),
     showFolder: () =>
-      bridge.showRun(s.directory).catch((error) => notice(error.message, true)),
+      bridge.showRun(s.directory).catch(reportError),
     copyPath: () =>
       bridge
         .copyRunPath(s.directory)
         .then(() => notice("Folder path copied."))
-        .catch((error) => notice(error.message, true)),
+        .catch(reportError),
     refit() {
-      if (!s.directory || flags().busy) return;
+      const directory = s.directory;
+      if (!directory || flags().busy) return;
       confirmAction(
         "Refit this recording?",
         "Analysis artifacts in this folder will be replaced. The original recorded samples are preserved.",
         async () => {
-          const directory = s.directory;
-          const result = await run("analyze", { directory });
-          if (result?.cancelled) {
-            notice("Refit stopped.");
-            return;
-          }
+          if (s.directory !== directory || flags().busy) return;
+          await run("analyze", { directory });
           openReport(await bridge.loadRun(directory));
           notice("Recording refitted.");
         },
@@ -1102,7 +1049,7 @@ export function createController(bridge, env = {}) {
       try {
         await action?.();
       } catch (error) {
-        notice(error.message, true);
+        reportError(error);
       }
     },
     openSettings: () => set({ settingsOpen: true }),
@@ -1123,7 +1070,7 @@ export function createController(bridge, env = {}) {
       }
     },
     async installUpdate() {
-      if (flags().busy || s.checkingUpdate || !s.updateResult?.installable) return;
+      if (flags().busy || s.checkingUpdate || !s.updateResult?.available) return;
       set({ installingUpdate: true, updateMessage: "Downloading update…" });
       try {
         await bridge.installUpdate();
@@ -1162,8 +1109,8 @@ export function createController(bridge, env = {}) {
       disposed = true;
       clearInterval(timer);
       clearTimeout(previewTimer);
-      offEvent?.();
-      offUpdate?.();
+      offEvent();
+      offUpdate();
     };
   }
   return {

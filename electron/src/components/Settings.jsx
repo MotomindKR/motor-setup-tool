@@ -13,16 +13,9 @@ import { Button, Field, Choice } from "../ui.jsx";
 
 export function Settings({ s, a, appearance, c }) {
   const result = s.updateResult;
-  let updateMessage = s.updateMessage;
-  if (!updateMessage && result) {
-    if (!result.available) updateMessage = "You have the latest version.";
-    else if (result.installable)
-      updateMessage = `Version ${result.version} is available.`;
-    else
-      updateMessage =
-        result.reason ||
-        `No installer for version ${result.version} on this computer yet.`;
-  }
+  const updateMessage = s.updateMessage || (result && (
+    result.available ? `Version ${result.version} is available.` : "You have the latest version."
+  ));
   return (
     <Dialog
       open={s.settingsOpen}
@@ -66,7 +59,7 @@ export function Settings({ s, a, appearance, c }) {
             <RefreshCw className={s.checkingUpdate ? "spinning" : ""} />
             Check for update
           </Button>
-          {result?.installable && (
+          {result?.available && (
             <Button
               onClick={a.installUpdate}
               disabled={c.busy || s.checkingUpdate}

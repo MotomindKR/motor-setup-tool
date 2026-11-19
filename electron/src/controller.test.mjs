@@ -13,7 +13,9 @@ const preset = {
   sample_hz: 200,
   sweep_start_hz: 0.1,
   sweep_end_hz: 5,
-  baseline: { armature: 0.01, damping: 0.01, friction: 0.01, delay: 0 },
+  experiment: "Mixed",
+  excitation_revision: 1,
+  baseline: { static_friction: 0, armature: 0.01, damping: 0.01, friction: 0.01, delay: 0 },
   profile: {},
 };
 const motor = { model: "RS-00", id: 1, uuid: [1, 2, 3, 4, 5, 6, 7, 8] };
@@ -54,6 +56,7 @@ async function setup(t, overrides = {}) {
     onUpdateProgress: () => () => {},
     updateInfo: async () => ({ version: "0.1.22" }),
     listRuns: async () => [],
+    loadRun: async directory => ({ directory, report: { accepted: true }, files: [], uuid: "" }),
     preview: async () => ({
       spec: {},
       t: [0, 1],
@@ -69,8 +72,8 @@ async function setup(t, overrides = {}) {
         return [{ name: "can0", up: true, state: "ERROR-ACTIVE" }];
       if (op === "usbAdapters") return [];
       if (op === "scan") return [motor];
-      if (op === "plan") return structuredClone(preset);
-      if (op === "registerList") return [register];
+      if (op === "calibrate") return { accepted: true, directory: "/recordings/finished" };
+      if (op === "plan") return { preset: structuredClone(preset), limits: {}, registers: [register] };
       if (op === "setId") return { previous_id: params.id, id: params.newId };
       if (op === "firmwarePrepare")
         return { id: params.id, current_version: "1.2.3", version: "1.2.4" };
@@ -86,7 +89,9 @@ async function setup(t, overrides = {}) {
         return new Promise((resolve) => {
           finishManual = resolve;
         });
-      return { cancelled: true };
+      if (op === "zero") return { zeroed: true };
+      if (op === "stop") return { stopped: true };
+      throw new Error(`Unexpected test operation: ${op}`);
     },
     manualIntent: async (value) => {
       intents.push(value);
@@ -151,8 +156,9 @@ test("late progress cannot reopen a finished operation", async (t) => {
   await ctx.connect();
   await ctx.actions.setTab("test");
   await ctx.actions.monitor();
-  ctx.emit({ type: "progress", message: "Monitoring" });
+  ctx.emit({ type: "progress", message: "Monitoring", percent: 31 });
   assert.equal(ctx.getSnapshot().work.message, "Monitoring");
+  assert.equal(ctx.getSnapshot().work.percent, 31);
   await ctx.actions.monitor();
   ctx.emit({ type: "progress", message: "Error: CAN deadline" });
   assert.equal(ctx.getSnapshot().busy, null);
@@ -259,6 +265,9 @@ test("calibration requires a valid preview and explicit review; editing revokes 
   assert.equal(call.params.reviewed, true);
   assert.equal(call.params.config.speed_limit, 2);
   assert.equal(call.params.config.motor_id, 1);
+  assert.equal(ctx.getSnapshot().directory, "/recordings/finished");
+  assert.ok(ctx.getSnapshot().report.accepted);
+  assert.equal(ctx.getSnapshot().notice, null);
 });
 test("outdated preview responses cannot authorize a changed configuration", async (t) => {
   const responses = [];
@@ -375,19 +384,14 @@ test("restoring a preset restores baseline fields and revokes calibration review
   assert.equal(ctx.getSnapshot().reviewed, false);
 });
 
-test("register loading remains single-flight when a subscriber reacts to operation completion", async (t) => {
+test("browsing the selected motor's register catalog needs no backend job", async t => {
   const ctx = await setup(t);
-  await ctx.actions.scan();
-  const off = ctx.subscribe(() => {
-    const s = ctx.getSnapshot();
-    if (s.tab === "setup" && !s.busy && !s.registers && !s.registersFailed)
-      ctx.actions.loadRegisters();
-  });
-  t.after(off);
+  await ctx.connect();
+  const before = ctx.calls.length;
   await ctx.actions.setTab("setup");
-  await tick();
-  assert.equal(ctx.calls.filter((c) => c.op === "registerList").length, 1);
-  assert.equal(ctx.getSnapshot().registers.length, 1);
+  assert.equal(ctx.getSnapshot().registerIndex, register.index);
+  assert.equal(ctx.flags().registerRead, true);
+  assert.equal(ctx.calls.length, before);
 });
 
 test("recording deletion is confirmed, permanent, and clears only the deleted selection", async (t) => {
@@ -397,6 +401,7 @@ test("recording deletion is confirmed, permanent, and clears only the deleted se
     listRuns: async () => [{ directory, model: "RS-10P", motorId: 61 }],
     loadRun: async () => ({
       directory,
+      uuid: "0102030405060708",
       report: { motor_uuid: motor.uuid },
       files: ["training.csv"],
     }),
@@ -539,7 +544,7 @@ test("verified ID changes keep the motor, limits, and reference selected without
     assert.equal(ctx.calls.findLast((call) => call.op === op).params.id, 61);
   await ctx.actions.selectMotor("61");
   assert.equal(ctx.getSnapshot().motor.firmware, "1.2.4");
-  assert.equal(ctx.getSnapshot().config.torque_limit, "0.7");
+  assert.equal(ctx.getSnapshot().config.torque_limit, 0.7);
   assert.equal(ctx.getSnapshot().referenceAngle, 0.2);
   assert.equal(ctx.calls.filter((call) => call.op === "plan").length, 1);
   assert.equal(ctx.calls.filter((call) => call.op === "scan").length, 1);
@@ -640,18 +645,66 @@ test("multiple scanned motors require an explicit selection", async (t) => {
   assert.equal(ctx.getSnapshot().motor.id, 2);
 });
 
-test("firmware errors show the failure without repeated progress output", async (t) => {
+test("a cancelled scan leaves the motor list empty and can be retried", async (t) => {
+  const ctx = await setup(t);
+  const run = ctx.bridge.run;
+  ctx.bridge.run = async () => ({ cancelled: true });
+  await ctx.actions.scan();
+  assert.deepEqual(ctx.getSnapshot().motors, []);
+  assert.equal(ctx.getSnapshot().notice.error, false);
+  ctx.bridge.run = run;
+  await ctx.actions.scan();
+  assert.equal(ctx.getSnapshot().motor.id, motor.id);
+});
+
+test("a cancelled zero does not save a reference angle", async (t) => {
+  let writes = 0;
+  const ctx = await setup(t, { setReferenceAngle: async () => { writes++; } });
+  await ctx.connect();
+  ctx.bridge.run = async () => ({ cancelled: true });
+  ctx.actions.zero();
+  await ctx.actions.confirm();
+  assert.equal(writes, 0);
+  assert.equal(ctx.getSnapshot().notice.error, false);
+});
+
+test("a cleared baseline input blocks calibration until a number is entered", async t => {
   const ctx = await setup(t);
   await ctx.connect();
-  ctx.bridge.run = async () => {
-    throw new Error(
-      "Preparing official RS-00 firmware 0.0.3.36\nError: RobStride no longer hosts RS-00 firmware 0.0.3.36. Check for an app update.",
-    );
-  };
-  await ctx.actions.prepareFirmware();
-  assert.equal(
-    ctx.getSnapshot().notice.message,
-    "RobStride no longer hosts RS-00 firmware 0.0.3.36. Check for an app update.",
-  );
-  assert.equal(ctx.getSnapshot().firmware, null);
+  ctx.actions.changeConfig("damping", "", true);
+  await tick();
+  ctx.actions.review(true);
+  assert.equal(ctx.flags().calibrate, false);
+  assert.equal(ctx.getSnapshot().config.baseline.damping, null);
+  ctx.actions.changeConfig("damping", "0", true);
+  await tick();
+  ctx.actions.review(true);
+  await ctx.actions.calibrate();
+  assert.equal(ctx.calls.find(call => call.op === "calibrate").params.config.baseline.damping, 0);
+});
+
+test("a zero confirmation expires when another motor is selected", async t => {
+  const ctx = await setup(t);
+  const run = ctx.bridge.run;
+  ctx.bridge.run = (op, params) => op === "scan" ? [motor, { ...motor, id: 2 }] : run(op, params);
+  await ctx.actions.scan();
+  await ctx.actions.selectMotor("1");
+  ctx.actions.zero();
+  await ctx.actions.selectMotor("2");
+  await ctx.actions.confirm();
+  assert.ok(!ctx.calls.some(call => call.op === "zero"));
+});
+
+test("a stale recordings list cannot restore a deleted run", async t => {
+  const directory = "/recordings/incomplete";
+  const ctx = await setup(t, { deleteRun: async () => {} });
+  let resolve;
+  ctx.bridge.listRuns = () => new Promise(done => { resolve = done; });
+  const refresh = ctx.actions.refreshRuns();
+  ctx.actions.deleteRun(directory);
+  await ctx.actions.confirm();
+  resolve([{ directory }]);
+  await refresh;
+  assert.deepEqual(ctx.getSnapshot().runs, []);
+  assert.equal(ctx.getSnapshot().runsLoading, false);
 });

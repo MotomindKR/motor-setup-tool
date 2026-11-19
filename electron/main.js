@@ -16,19 +16,51 @@ const updateCheckInterval = 4 * 60 * 60 * 1000;
 // Leave the header's bottom border below the opaque native window controls.
 const titleBarOverlayHeight = process.platform === 'darwin' ? titleBarHeight : titleBarHeight - 1;
 const knownRuns = new Set();
-const selectedOutputs = new Set();
+let selectedOutput = null;
 const recentPathFile = () => path.join(app.getPath('userData'), 'recent-calibrations.json');
 const referenceFile = () => path.join(app.getPath('userData'), 'motor-references.json');
 function uuidKey(value) {
   if (!Array.isArray(value) || value.length !== 8 || value.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error('Select a motor with a valid UUID');
   return value.map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
-async function references() {
-  try {
-    const result = JSON.parse(await fs.readFile(referenceFile(), 'utf8'));
-    return result && typeof result === 'object' && !Array.isArray(result) ? result : {};
-  } catch { return {}; }
+async function readSettings(file, initial) {
+  let contents;
+  try { contents = await fs.readFile(file, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return initial; throw error; }
+  const value = JSON.parse(contents);
+  if (!value || typeof value !== 'object' || Array.isArray(value) !== Array.isArray(initial)) {
+    throw new Error(`Invalid settings in ${file}`);
+  }
+  return value;
 }
+
+async function recentPaths() {
+  const paths = await readSettings(recentPathFile(), []);
+  return paths.filter(value => typeof value === 'string' && path.isAbsolute(value));
+}
+
+let recentWrite = Promise.resolve();
+function updateRecent(directory, add) {
+  if (path.dirname(directory) === dataDirectory()) return;
+  recentWrite = recentWrite.then(async () => {
+    const recent = await recentPaths();
+    const next = recent.filter(value => value !== directory);
+    if (add) next.unshift(directory);
+    else if (recent.length === next.length) return;
+    const file = recentPathFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, JSON.stringify(next.slice(0, 50)));
+    await fs.rename(temporary, file);
+  }).catch(error => console.error('Could not update recent calibration folders:', error));
+  return recentWrite;
+}
+
+function rememberRun(directory) {
+  knownRuns.add(directory);
+  return updateRecent(directory, true);
+}
+
 let window;
 let backend;
 let backendError;
@@ -41,6 +73,10 @@ let managedUpdater = null;
 let recordingOperation = false;
 
 function send(event) {
+  if (event.type === 'recordingCreated') {
+    rememberRun(event.directory);
+    return;
+  }
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
   if (quitting && event.type === 'finish') app.quit();
 }
@@ -77,11 +113,11 @@ async function listRuns() {
   let entries;
   try { entries = await fs.readdir(base, { withFileTypes: true }); }
   catch (error) { if (error.code === 'ENOENT') entries = []; else throw error; }
-  let custom = [];
-  try { custom = JSON.parse(await fs.readFile(recentPathFile(), 'utf8')); }
-  catch { /* No custom locations saved yet. */ }
-  if (!Array.isArray(custom)) custom = [];
-  const directories = [...new Set([...entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)), ...custom.filter(value => typeof value === 'string' && path.isAbsolute(value))])];
+  const custom = await recentPaths().catch(error => {
+    console.error('Could not read recent calibration folders:', error);
+    return [];
+  });
+  const directories = [...new Set([...knownRuns, ...entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)), ...custom])];
   const runs = await Promise.all(directories.map(async directory => {
     try {
       const run = await recordings.inspectRun(directory);
@@ -90,6 +126,22 @@ async function listRuns() {
     } catch { return null; }
   }));
   return runs.filter(Boolean).sort((a, b) => b.timestamp - a.timestamp);
+}
+
+async function captureStartup(destination) {
+  const contents = window.webContents;
+  const details = await contents.executeJavaScript(`(async () => {
+    const deadline = performance.now() + 10000;
+    while (!document.querySelector('.app-header')) {
+      if (performance.now() >= deadline) throw new Error('Desktop UI did not render');
+      await new Promise(requestAnimationFrame);
+    }
+    return { title: document.title, bridge: typeof window.motorApp };
+  })()`);
+  await fs.writeFile(destination, (await contents.capturePage()).toPNG());
+  await fs.writeFile(`${destination}.json`, JSON.stringify({
+    ...details, version: app.getVersion(), backendReady: !backendError, updateError,
+  }));
 }
 
 function createWindow() {
@@ -121,49 +173,15 @@ function createWindow() {
   window.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.webContents.on('render-process-gone', () => { try { backend?.cancel(); } catch { /* Firmware transfer finishes before exit. */ } });
+  window.webContents.on('render-process-gone', () => backend?.cancel());
   window.webContents.on('did-finish-load', () => {
     if (backendError) send({ type: 'error', message: backendError.message });
     if (updateError) send({ type: 'updateFailure', message: updateError, version: app.getVersion() });
     if (process.env.MOTOMIND_SMOKE_PATH) {
-      setTimeout(async () => {
-        try {
-          if (process.env.MOTOMIND_SMOKE_REPORT) {
-            const directory = process.env.MOTOMIND_SMOKE_REPORT;
-            knownRuns.add(directory);
-            await window.webContents.executeJavaScript(`window.motorSmoke.actions.openRun(${JSON.stringify(directory)})`);
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
-          if (['calibrate', 'test', 'setup', 'files'].includes(process.env.MOTOMIND_SMOKE_TAB)) {
-            await window.webContents.executeJavaScript(`window.motorSmoke.actions.setTab(${JSON.stringify(process.env.MOTOMIND_SMOKE_TAB)})`);
-            await new Promise(resolve => setTimeout(resolve, 400));
-          }
-          if (process.env.MOTOMIND_SMOKE_TRANSPORT === 'gsusb') {
-            await window.webContents.executeJavaScript(`window.motorSmoke.actions.changeConnection('transport', ${JSON.stringify(process.env.MOTOMIND_SMOKE_TRANSPORT)})`);
-            await new Promise(resolve => setTimeout(resolve, 200));
-          }
-          if (['system', 'light', 'dark'].includes(process.env.MOTOMIND_SMOKE_THEME)) {
-            await window.webContents.executeJavaScript(`window.motorSmoke.setTheme(${JSON.stringify(process.env.MOTOMIND_SMOKE_THEME)})`);
-          }
-          if (process.env.MOTOMIND_SMOKE_COLLAPSE === '1') {
-            await window.webContents.executeJavaScript('window.motorSmoke.actions.toggleConnection()');
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          if (process.env.MOTOMIND_SMOKE_SETTINGS === '1') {
-            await window.webContents.executeJavaScript('window.motorSmoke.actions.openSettings()');
-          }
-          await new Promise(resolve => setTimeout(resolve, 200));
-          const details = await window.webContents.executeJavaScript('({title:document.title,bridge:typeof window.motorApp,can:document.querySelector(".connection-meta")?.textContent,logo:Boolean(document.querySelector("[data-slot=motomind-logo]")),tab:window.motorSmoke.getSnapshot().tab,theme:document.documentElement.dataset.theme,connectionOpen:window.motorSmoke.getSnapshot().connectionOpen})');
-          details.version = app.getVersion();
-          details.backendReady = !backendError;
-          details.updateError = updateError;
-          details.settingsOpen = await window.webContents.executeJavaScript('window.motorSmoke.getSnapshot().settingsOpen');
-          await fs.writeFile(process.env.MOTOMIND_SMOKE_PATH, (await window.webContents.capturePage()).toPNG());
-          await fs.writeFile(`${process.env.MOTOMIND_SMOKE_PATH}.json`, JSON.stringify(details));
-          console.log(JSON.stringify(details));
-          app.quit();
-        } catch (error) { console.error(error); app.exit(1); }
-      }, 800);
+      captureStartup(process.env.MOTOMIND_SMOKE_PATH).then(() => app.quit()).catch(error => {
+        console.error(error);
+        app.exit(1);
+      });
     }
   });
   window.on('closed', () => { window = null; });
@@ -175,7 +193,7 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
     updateError = await updater.readUpdateError(app);
-  } catch { /* No previous update error. */ }
+  } catch (error) { updateError = `Could not verify the previous update: ${error.message}`; }
   managedUpdater = updater.createUpdater(app, error => {
     if (!installingUpdate) return;
     installingUpdate = false;
@@ -191,22 +209,11 @@ app.whenReady().then(async () => {
     if (backendError) throw backendError;
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (operation === 'analyze' && !knownRuns.has(params?.directory)) throw new Error('Select a saved run first');
-    if (operation === 'calibrate' && params?.output && !selectedOutputs.has(params.output)) throw new Error('Choose the calibration folder with the file picker');
-    const result = await backend.run(operation, params);
-    if (operation === 'calibrate' && params?.output) selectedOutputs.delete(params.output);
-    if (operation === 'calibrate' && result?.directory) {
-      knownRuns.add(result.directory);
-      if (params?.output) {
-        try {
-          let recent = [];
-          try { recent = JSON.parse(await fs.readFile(recentPathFile(), 'utf8')); } catch {}
-          if (!Array.isArray(recent)) recent = [];
-          await fs.mkdir(path.dirname(recentPathFile()), { recursive: true });
-          await fs.writeFile(recentPathFile(), JSON.stringify([params.output, ...recent.filter(value => value !== params.output)].slice(0, 50)));
-        } catch (error) { console.error('Could not remember calibration folder:', error); }
-      }
+    if (operation === 'calibrate' && params?.output) {
+      if (params.output !== selectedOutput) throw new Error('Choose the calibration folder with the file picker');
+      selectedOutput = null;
     }
-    return result;
+    return backend.run(operation, params);
   });
   ipcMain.handle('backend:cancel', event => {
     assertSender(event);
@@ -247,17 +254,17 @@ app.whenReady().then(async () => {
     if (result.canceled || !result.filePath) return null;
     try { await fs.access(result.filePath); throw new Error('Choose a new folder name; this path already exists'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    selectedOutputs.add(result.filePath);
+    selectedOutput = result.filePath;
     return result.filePath;
   });
   ipcMain.handle('reference:get', async (event, uuid) => {
     assertSender(event);
-    return Number((await references())[uuidKey(uuid)]) || 0;
+    return Number((await readSettings(referenceFile(), {}))[uuidKey(uuid)]) || 0;
   });
   ipcMain.handle('reference:set', async (event, uuid, angle) => {
     assertSender(event);
     if (!Number.isFinite(angle) || Math.abs(angle) > 100) throw new Error('Reference angle must be within ±100 rad');
-    const map = await references();
+    const map = await readSettings(referenceFile(), {});
     map[uuidKey(uuid)] = angle;
     await fs.mkdir(path.dirname(referenceFile()), { recursive: true });
     const temp = `${referenceFile()}.${process.pid}.tmp`;
@@ -280,7 +287,7 @@ app.whenReady().then(async () => {
     // A check can change the updater's selected release. Let it finish before downloading.
     if (updateCheck) await updateCheck.catch(() => {});
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
-    if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
+    if (!checkedUpdate?.available) throw new Error('Check for an available update first');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
@@ -302,8 +309,9 @@ app.whenReady().then(async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Open motor recording' });
     if (selection.canceled || !selection.filePaths.length) return null;
     const directory = selection.filePaths[0];
-    knownRuns.add(directory);
-    return loadRun(directory);
+    const result = await recordings.loadRun(directory, { allowIncomplete: true });
+    await rememberRun(directory);
+    return result;
   });
   ipcMain.handle('runs:load', async (event, directory) => {
     assertSender(event);
@@ -316,7 +324,7 @@ app.whenReady().then(async () => {
     recordingOperation = true;
     try {
       const run = await recordings.inspectRun(directory);
-      if (file !== null && !['training.csv', 'validation.csv', 'calibration.json'].includes(file)) throw new Error('Choose an available recording file');
+      if (file !== null && !recordings.SINGLE_FILES.includes(file)) throw new Error('Choose an available recording file');
       if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
       const extension = file ? path.extname(file).slice(1) : 'zip';
       const selection = await dialog.showSaveDialog(window, {
@@ -336,10 +344,7 @@ app.whenReady().then(async () => {
     try {
       await recordings.deleteRun(directory);
       knownRuns.delete(directory);
-      let recent = [];
-      try { recent = JSON.parse(await fs.readFile(recentPathFile(), 'utf8')); } catch { /* No recent paths. */ }
-      try { if (Array.isArray(recent)) await fs.writeFile(recentPathFile(), JSON.stringify(recent.filter(item => item !== directory))); }
-      catch { /* Deletion succeeded; stale recent entries are ignored by listRuns. */ }
+      await updateRecent(directory, false);
       return { directory };
     } finally { recordingOperation = false; }
   });
@@ -353,9 +358,13 @@ app.whenReady().then(async () => {
     if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
     await clipboard.writeText(directory);
   });
-  ipcMain.handle('links:firmwareRelease', async event => {
+  ipcMain.handle('links:firmwareRelease', async (event, model) => {
     assertSender(event);
-    await shell.openExternal('https://github.com/RobStride/Product_Information/releases/tag/V26.05.19');
+    const release = require('../src/firmware_catalog.json').find(entry => entry.model === model);
+    const page = release
+      ? new URL('.', release.url).href.replace('/releases/download/', '/releases/tag/').replace(/\/$/, '')
+      : 'https://github.com/RobStride/Product_Information/releases';
+    await shell.openExternal(page);
   });
   createWindow();
   if (managedUpdater && !process.env.MOTOMIND_SMOKE_PATH) {
@@ -372,8 +381,7 @@ app.on('before-quit', event => {
   if (!backend?.active) return;
   event.preventDefault();
   quitting = true;
-  try { backend.cancel(); }
-  catch { send({ type: 'progress', message: 'Finishing firmware transfer before exit…' }); }
+  backend.cancel();
 });
 
 app.on('window-all-closed', () => app.quit());

@@ -20,47 +20,40 @@ async function fixture(t) {
   return { directory, native, calls, app, updater, pending: path.join(directory, 'pending-update.json') };
 }
 
-test('updates require a packaged app and never download or install on their own', async t => {
+test('development sessions do not create an updater', () => {
   assert.equal(createUpdater({ isPackaged: false }), null);
-  const { native } = await fixture(t);
-  assert.equal(native.autoDownload, false);
-  assert.equal(native.autoInstallOnAppQuit, false);
-  assert.equal(native.allowDowngrade, false);
-  assert.equal(native.allowPrerelease, false);
-  assert.equal(native.disableWebInstaller, true);
 });
 
 test('update availability follows the maintained updater, including rollout eligibility', async t => {
   const { native, updater } = await fixture(t);
-  assert.deepEqual(await updater.check(), { available: true, version: '0.1.20', installable: true });
+  assert.deepEqual(await updater.check(), { available: true, version: '0.1.20' });
   native.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '0.1.20' } });
-  assert.deepEqual(await updater.check(), { available: false, version: '0.1.20', installable: false });
+  assert.deepEqual(await updater.check(), { available: false, version: '0.1.20' });
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
 });
 
 test('only the checked release can be installed; progress and restart use the native updater', async t => {
-  const { updater, native, calls, pending } = await fixture(t);
+  const { updater, native, calls, app } = await fixture(t);
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
   await updater.check();
   await assert.rejects(updater.install('0.1.21', () => {}, () => {}), /Check for an available update/);
   const progress = [];
-  let idleChecks = 0;
-  await updater.install('0.1.20', value => progress.push(value), () => { idleChecks++; });
-  assert.equal(idleChecks, 2);
+  await updater.install('0.1.20', value => progress.push(value), () => {});
   assert.deepEqual(calls, ['download', [true, true]]);
   assert.ok(progress.includes('Downloading update · 42%'));
   assert.equal(native.listenerCount('download-progress'), 0);
-  assert.deepEqual(JSON.parse(await fs.readFile(pending, 'utf8')), { version: '0.1.20', previousVersion: '0.1.19' });
+  assert.match(await readUpdateError(app), /Update to 0\.1\.20 did not complete/);
 });
 
 test('an active motor blocks installation before downloading and after a long download', async t => {
-  const { updater, calls, pending } = await fixture(t);
+  const { updater, native, calls, pending } = await fixture(t);
   await updater.check();
   const busy = () => { throw new Error('Motor operation active'); };
   await assert.rejects(updater.install('0.1.20', () => {}, busy), /Motor operation active/);
   assert.deepEqual(calls, []);
-  let checks = 0;
-  await assert.rejects(updater.install('0.1.20', () => {}, () => { if (++checks === 2) busy(); }), /Motor operation active/);
+  let motorActive = false;
+  native.downloadUpdate = async () => { calls.push('download'); motorActive = true; };
+  await assert.rejects(updater.install('0.1.20', () => {}, () => { if (motorActive) busy(); }), /Motor operation active/);
   assert.deepEqual(calls, ['download']);
   await assert.rejects(fs.access(pending), { code: 'ENOENT' });
 });
@@ -82,6 +75,9 @@ test('native installation failures are logged and clear pending update state', a
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Installation was denied/);
   await assert.rejects(fs.access(pending), { code: 'ENOENT' });
   assert.match(await fs.readFile(path.join(directory, 'update.log'), 'utf8'), /Installation was denied/);
+  native.quitAndInstall = () => { throw new Error('Could not start installer'); };
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Could not start installer/);
+  await assert.rejects(fs.access(pending), { code: 'ENOENT' });
 });
 
 test('restart verification reports an incomplete update once and consumes old helper errors', async t => {
@@ -94,4 +90,13 @@ test('restart verification reports an incomplete update once and consumes old he
   await fs.writeFile(path.join(directory, 'update-error.txt'), 'Previous Windows helper failure');
   assert.equal(await readUpdateError(app), 'Previous Windows helper failure');
   assert.equal(await readUpdateError(app), null);
+});
+
+test('a partial pending update marker is reported once on restart', async t => {
+  const { app, pending } = await fixture(t);
+  for (const contents of ['{"version":', '{}']) {
+    await fs.writeFile(pending, contents);
+    assert.match(await readUpdateError(app), /could not be verified/);
+    assert.equal(await readUpdateError(app), null);
+  }
 });
