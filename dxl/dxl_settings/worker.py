@@ -34,7 +34,7 @@ class Session:
         if operation == "connect":
             if self.service:
                 raise DeviceError("기존 DXL 연결을 먼저 끊으세요.")
-            demo, port, baud = params["demo"], params["port"], params["baud"]
+            demo, port, baud = params.get("demo", False), params.get("port"), params.get("baud")
             if type(demo) is not bool or not isinstance(port, str) or type(baud) is not int:
                 raise DeviceError("DXL 연결 설정을 확인하세요.")
             if not demo and (not port or baud <= 0):
@@ -89,7 +89,7 @@ class Session:
             return {"path": str(path) if path is not None else None,
                     "baud": service.transport.baud, "motors": [motor_view(state)]}
         if operation == "saveZero":
-            return {"path": str(service.apply_zero(service.preview_zero(ids)))}
+            return {"path": str(service.save_zero(ids))}
         if operation == "direction":
             return {"path": str(service.set_direction(ids, params["reverse"]))}
         if operation == "setId":

@@ -74,13 +74,6 @@ class MotorState:
 
 
 @dataclass(frozen=True)
-class ZeroPlan:
-    states: tuple[MotorState, ...]
-    target: int
-    offsets: tuple[int, ...]
-
-
-@dataclass(frozen=True)
 class IdChangeResult:
     old_id: int
     state: MotorState
@@ -95,23 +88,15 @@ def validate_offset(mode: int, value: int) -> None:
         raise DeviceError(f"모드 {mode}의 Homing Offset 범위 초과: {value} (±{limit})")
 
 
-def validate_zero_target(target: int) -> None:
-    if type(target) is not int or target != DEFAULT_ZERO_PULSE:
-        raise DeviceError("영점 기준은 2048 pulse (π rad)로 고정되어 있습니다. "
-                          "0 pulse 및 다른 기준값으로 저장할 수 없습니다.")
-
-
 def validate_zero_mode(state: MotorState) -> None:
     # Preserve the existing 2048 calibration support without changing motor mode.
     validate_offset(state.operating_mode, 0)
 
 
-def zero_offset(state: MotorState, target: int) -> int:
-    # XL330 mode-5 Reverse response observed on firmware 53:
-    # ID 40: position 2056, offset -3 -> offset -2059 yielded position 4112.
-    # In Reverse, increasing the stored offset decreases reported position.
-    # Keep readback verification mandatory; do not wrap an error into success.
-    correction = target - state.position
+def zero_offset(state: MotorState) -> int:
+    # Reverse inverts the reported position's response to the stored offset.
+    # Observed on XL330 firmware 53 in Mode 5; always verify position after writing.
+    correction = DEFAULT_ZERO_PULSE - state.position
     return state.homing_offset + (-correction if state.reverse else correction)
 
 
@@ -192,43 +177,31 @@ class SettingsService:
             "min_position", "max_position", "baud_code",
         ))
 
-    def preview_zero(self, ids, target: int = DEFAULT_ZERO_PULSE) -> ZeroPlan:
-        validate_zero_target(target)
+    def save_zero(self, ids) -> Path:
         first = self.read_states(ids)
         self._editable(first)
         for state in first:
             validate_zero_mode(state)
         time.sleep(0.05)
-        second = self.read_states([s.motor_id for s in first])
+        second = self.read_states(state.motor_id for state in first)
         self._editable(second)
-        offsets = []
+        changes = []
         for before, state in zip(first, second):
             if not self._same_config(before, state) or abs(state.position - before.position) > TOLERANCE:
                 raise DeviceError(f"ID {state.motor_id}: 자세/설정이 변했습니다. 고정 후 다시 읽으세요.")
             validate_zero_mode(state)
-            if state.operating_mode == 3 and not state.min_position <= target <= state.max_position:
+            if state.operating_mode == 3 and not state.min_position <= DEFAULT_ZERO_PULSE <= state.max_position:
                 raise DeviceError(f"ID {state.motor_id}: 기준 pulse가 모터 위치 한계를 벗어납니다.")
-            offset = zero_offset(state, target)
+            offset = zero_offset(state)
             validate_offset(state.operating_mode, offset)
-            offsets.append(offset)
-        return ZeroPlan(second, target, tuple(offsets))
+            changes.append((state.motor_id, 20, 4, offset))
 
-    def apply_zero(self, plan: ZeroPlan) -> Path:
-        if not isinstance(plan, ZeroPlan) or not plan.states or len(plan.states) != len(plan.offsets):
-            raise DeviceError("영점 저장에 필요한 위치값을 확인하지 못했습니다.")
-        validate_zero_target(plan.target)
-        states = self.read_states([s.motor_id for s in plan.states])
+        states = self.read_states(state.motor_id for state in second)
         self._editable(states)
-        changes = []
-        for old, now, offset in zip(plan.states, states, plan.offsets):
+        for old, now in zip(second, states):
             if not self._same_config(old, now) or abs(now.position - old.position) > TOLERANCE:
                 raise DeviceError(f"ID {now.motor_id}: 저장 전에 자세/설정이 바뀌었습니다. 기준 자세를 고정하고 다시 저장하세요.")
-            validate_zero_mode(now)
-            validate_offset(now.operating_mode, offset)
-            if offset != zero_offset(old, plan.target):
-                raise DeviceError("영점 계산값이 일치하지 않습니다.")
-            changes.append((now.motor_id, 20, 4, offset))
-        path, _ = self._commit("zero", states, changes, target=plan.target)
+        path, _ = self._commit("zero", states, changes, target=DEFAULT_ZERO_PULSE)
         return path
 
     def set_direction(self, ids, reverse: bool) -> Path:

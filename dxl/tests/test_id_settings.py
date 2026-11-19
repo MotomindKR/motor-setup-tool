@@ -39,7 +39,7 @@ def test_id_change_preserves_calibration_and_other_motors(setup, new_id):
     assert change["old_id_response"] is None
     # Existing zero/direction controls must work at the new address.
     service.set_direction([new_id], False)
-    service.apply_zero(service.preview_zero([new_id]))
+    service.save_zero([new_id])
     assert service.read_state(new_id).position == 2048
 
 

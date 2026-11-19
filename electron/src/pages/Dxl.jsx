@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@motomindkr/ui/components/alert";
 import { Badge } from "@motomindkr/ui/components/badge";
 import { DataTable } from "@motomindkr/ui/components/data-table";
@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@motomindkr/ui/components/dialog";
 import { FreshnessIndicator } from "@motomindkr/ui/components/freshness-indicator";
-import { Button, Check, Choice, Field, Panel } from "../ui.jsx";
+import { Button, Choice, Field, Panel } from "../ui.jsx";
 
 const column = (id, header) => ({ id, header, value: (row) => row[id] });
 const angle = (key, label) => ({
@@ -66,10 +66,10 @@ export function DxlPage({ platform, active }) {
   const [port, setPort] = useState(platform === "linux" ? "/dev/ttyACM0" : "");
   const [baud, setBaud] = useState("1000000");
   const [activeBaud, setActiveBaud] = useState(null);
-  const [demo, setDemo] = useState(false);
   const [connected, setConnected] = useState(false);
   const [faulted, setFaulted] = useState(false);
   const [fresh, setFresh] = useState(false);
+  const [visible, setVisible] = useState(!document.hidden);
   const [motors, setMotors] = useState([]);
   const [selected, setSelected] = useState([]);
   const [newId, setNewId] = useState("");
@@ -85,7 +85,10 @@ export function DxlPage({ platform, active }) {
   const motorIds = motors.map((row) => row.motor_id).join(",");
   const canRead = connected && !busy;
   const hasSelection = canRead && ids.length > 0;
-  const canWrite = hasSelection && fresh && !faulted;
+  const canWrite = active && visible && hasSelection && fresh && !faulted;
+  const canConfirm = confirm?.operation === "torqueOff"
+    ? active && visible && hasSelection
+    : canWrite;
   const modeChanges = motors.filter(
     (row) => selected.includes(rowId(row)) && row.operating_mode !== 5,
   );
@@ -140,8 +143,19 @@ export function DxlPage({ platform, active }) {
   }, [active]);
 
   useEffect(() => {
-    if (!active || !connected || !fresh || !motorIds) return;
-    const timer = setInterval(async () => {
+    const updateVisibility = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => document.removeEventListener("visibilitychange", updateVisibility);
+  }, []);
+
+  useLayoutEffect(() => {
+    generation.current += 1;
+    setFresh(false);
+  }, [active, visible]);
+
+  useEffect(() => {
+    if (!active || !visible || !connected || !motorIds) return;
+    async function poll() {
       if (inProgress.current || pollPending.current || document.hidden) return;
       const request = generation.current;
       pollPending.current = true;
@@ -153,16 +167,20 @@ export function DxlPage({ platform, active }) {
         updateConnection(reply);
         if (reply.error) throw new Error(reply.error);
         setMotors(reply.result.motors);
+        setFresh(true);
       } catch (error) {
         if (request !== generation.current) return;
         setFresh(false);
+        setConfirm((pending) => pending?.operation === "torqueOff" ? pending : null);
         setNotice({ error: error.message });
       } finally {
         pollPending.current = false;
       }
-    }, 1200);
+    }
+    void poll();
+    const timer = setInterval(poll, 1200);
     return () => clearInterval(timer);
-  }, [active, api, connected, fresh, motorIds]);
+  }, [active, api, connected, motorIds, visible]);
 
   function load(result, selectAll) {
     const available = result.motors.map(rowId);
@@ -175,6 +193,7 @@ export function DxlPage({ platform, active }) {
 
   function write(operation, title, description, params = {}) {
     setConfirm({
+      operation,
       title,
       description,
       action: () =>
@@ -182,7 +201,7 @@ export function DxlPage({ platform, active }) {
           if (operation === "set1Mbps") {
             load(result, true);
             setActiveBaud(result.baud);
-            if (!demo) setBaud(String(result.baud));
+            setBaud(String(result.baud));
             setNotice({
               message: `1 Mbps verified for ID ${ids[0]}.${result.path ? ` Backup saved to ${result.path}` : ""}`,
             });
@@ -261,7 +280,7 @@ export function DxlPage({ platform, active }) {
             list="dxl-port-list"
             placeholder={platform === "win32" ? "COM3" : "/dev/tty…"}
             onChange={(event) => setPort(event.target.value)}
-            disabled={connected || demo || busy}
+            disabled={connected || busy}
           />
           <datalist id="dxl-port-list">
             {ports.map((device) => (
@@ -273,11 +292,11 @@ export function DxlPage({ platform, active }) {
             inputMode="numeric"
             value={connected ? String(activeBaud) : baud}
             onChange={(event) => setBaud(event.target.value)}
-            disabled={connected || demo || busy}
+            disabled={connected || busy}
           />
           <Button
             variant="outline"
-            disabled={connected || demo || busy}
+            disabled={connected || busy}
             onClick={listPorts}
           >
             Refresh ports
@@ -287,7 +306,6 @@ export function DxlPage({ platform, active }) {
               variant="outline"
               disabled={
                 connected ||
-                demo ||
                 busy ||
                 !/^\/dev\/tty(?:ACM|USB)[0-9]+$/.test(port.trim())
               }
@@ -304,9 +322,6 @@ export function DxlPage({ platform, active }) {
           )}
         </div>
         <div className="dxl-row">
-          <Check checked={demo} onChange={setDemo} disabled={connected || busy}>
-            Demo motors
-          </Check>
           {connected ? (
             <Button
               variant="outline"
@@ -319,12 +334,13 @@ export function DxlPage({ platform, active }) {
             <Button
               disabled={
                 busy ||
-                (!demo && (!port.trim() || !/^[1-9][0-9]{0,7}$/.test(baud)))
+                !port.trim() ||
+                !/^[1-9][0-9]{0,7}$/.test(baud)
               }
               onClick={() =>
                 run(
                   "connect",
-                  { port: port.trim(), baud: Number(baud), demo },
+                  { port: port.trim(), baud: Number(baud) },
                   (result) => {
                     load(result, true);
                     setActiveBaud(result.baud);
@@ -336,12 +352,8 @@ export function DxlPage({ platform, active }) {
               Connect
             </Button>
           )}
-          <Badge variant={demo ? "secondary" : "outline"}>
-            {connected
-              ? demo
-                ? "Demo connected"
-                : "Hardware connected"
-              : "Disconnected"}
+          <Badge variant="outline">
+            {connected ? "Hardware connected" : "Disconnected"}
           </Badge>
           {busy && <span role="status">Working…</span>}
         </div>
@@ -550,7 +562,9 @@ export function DxlPage({ platform, active }) {
               Cancel
             </Button>
             <Button
+              disabled={!canConfirm}
               onClick={() => {
+                if (!confirm || !canConfirm || document.hidden) return;
                 const action = confirm.action;
                 setConfirm(null);
                 void action();

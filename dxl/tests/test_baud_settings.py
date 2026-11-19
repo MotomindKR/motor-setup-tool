@@ -28,8 +28,6 @@ def test_baud_is_written_once_and_verified_at_one_megabit(setup):
     assert (journal["old_baud"], journal["new_baud"]) == (57_600, 1_000_000)
     assert journal["changes"][0]["readback"] == 3
     assert journal["status"] == "verified"
-    assert journal["elapsed_ms"] >= journal["timings_ms"]["write_and_settle"]
-    assert journal["timings_ms"]["readback"] >= 0
     assert service.set_1mbps(30) == (None, after)
     assert len(bus.writes) == 1
 

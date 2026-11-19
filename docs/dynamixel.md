@@ -16,7 +16,6 @@ motors separately. Close other programs using the same serial port.
 3. Click **Connect** to discover motors and select them in the **Motors**
    table. **Baud rate (bps)** shows each motor's stored speed. **Scan bus**
    refreshes the list at the session's active speed.
-   Select **Demo motors** before connecting to practice without hardware.
 
 Support the mechanism before using **Torque off**. To save direction,
 zero, mode, ID, or baud, the motor must report torque off, no hardware error, and
@@ -26,8 +25,7 @@ Status Return Level 2.
   motor to the U2D2, using its current speed. After the write, the app switches
   to 1,000,000 bps and verifies the stored value at the same ID. If verification
   fails after writing, reconnect and scan at 1,000,000 bps and at the old speed
-  before attempting another write. The backup records elapsed milliseconds for
-  the bus scan, port speed changes, EEPROM write, and readback.
+  before attempting another write.
 - **Set Mode 5** saves Current-based Position Control Mode on selected motors
   that report a different mode. The app reads back the mode and updates the
   table. Mode changes reset control settings such as gains and profiles. The
@@ -49,9 +47,9 @@ Check for one-revolution jumps around the actual range of motion.
 
 The app records a JSON backup before each EEPROM write. Open it with
 **Open backup folder** or make a snapshot with **Export settings**.
-**Restore zero and direction** accepts DXL Studio and Motor Setup Tool
-backups that match the selected IDs, models, operating modes, and demo
-setting. To restore a previous ID, use **Save ID** at the motor's current
+**Restore zero and direction** accepts hardware backups from DXL Studio and
+Motor Setup Tool that match the selected IDs, models, and operating modes.
+To restore a previous ID, use **Save ID** at the motor's current
 address. After an uncertain write, reconnect and scan to verify what was
 applied before attempting another write.
 

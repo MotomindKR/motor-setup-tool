@@ -5,13 +5,13 @@ import threading
 from math import pi
 
 import pytest
-
-pytestmark = pytest.mark.skipif(not hasattr(os, "openpty"), reason="requires a POSIX PTY")
-PacketHandler = pytest.importorskip("dynamixel_sdk").PacketHandler
+from dynamixel_sdk import PacketHandler
 
 from dxl_settings.service import SettingsService
 from dxl_settings.transport import DemoTransport, DeviceError, SDKTransport
 from dxl_settings.worker import Session
+
+pytestmark = pytest.mark.skipif(not hasattr(os, "openpty"), reason="requires a POSIX PTY")
 
 
 class Emulator:
@@ -114,7 +114,7 @@ def test_real_sdk_scan_zero_direction_and_signed_bytes(wire):
     emulator.bus.physical[30] = 2500
     emulator.bus.registers[30][10] = 12
     service.set_direction([30], True)
-    service.apply_zero(service.preview_zero([30]))
+    service.save_zero([30])
     state = service.read_state(30)
     assert state.drive_mode == 13
     assert state.position == 2048 and state.joint_radians == 0
@@ -127,7 +127,7 @@ def test_real_sdk_scan_zero_direction_and_signed_bytes(wire):
 
 def test_sdk_fixed_pi_reference_and_negative_joint_angle(wire):
     emulator, service = wire
-    service.apply_zero(service.preview_zero([30]))
+    service.save_zero([30])
     state = service.read_state(30)
     assert state.position == 2048 and state.radians == pytest.approx(pi)
     assert state.joint_radians == state.joint_degrees == 0

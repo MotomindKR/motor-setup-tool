@@ -37,6 +37,6 @@ Accepted runs export `calibration.json` and `post_calibration.xml`. See the
 ## Documentation
 
 - [User guide](docs/user-guide.md), [CLI guide](docs/cli.md), and [MuJoCo exports](docs/simulation.md)
-- [Dynamixel setup](docs/dynamixel.md) and [DXL desktop testing](docs/dxl-desktop-test.md)
+- [Dynamixel setup](docs/dynamixel.md) and [U2D2 hardware checks](docs/development.md#u2d2-hardware-checks)
 - [Fitting method](docs/identification.md) and [CAN protocol](docs/protocol.md)
 - [Development](docs/development.md) and [desktop releases](packaging/README.md)

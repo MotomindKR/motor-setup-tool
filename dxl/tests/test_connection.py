@@ -2,9 +2,8 @@
 from types import SimpleNamespace
 
 import pytest
-
-pytest.importorskip("dynamixel_sdk")
-SerialException = pytest.importorskip("serial").SerialException
+import dynamixel_sdk
+from serial import SerialException
 
 from dxl_settings.service import NoSupportedMotors
 from dxl_settings.transport import DemoTransport, DeviceError, SDKTransport
@@ -38,7 +37,7 @@ def test_constructor_opens_once_and_close_is_repeatable(monkeypatch):
         def closePort(self):
             calls.append(("close",))
             self.ser = None
-    monkeypatch.setattr("dynamixel_sdk.PortHandler", Port)
+    monkeypatch.setattr(dynamixel_sdk, "PortHandler", Port)
     transport = SDKTransport("/dev/ttyACM0", 1000000)
     assert calls == [("port", "/dev/ttyACM0"), ("open", 1000000)]
     assert transport.port.ser.exclusive
@@ -57,7 +56,7 @@ def test_cleanup_error_does_not_mask_open_failure(monkeypatch):
 
         def closePort(self):
             raise RuntimeError("cleanup failure")
-    monkeypatch.setattr("dynamixel_sdk.PortHandler", Port)
+    monkeypatch.setattr(dynamixel_sdk, "PortHandler", Port)
     with pytest.raises(SerialException, match="original open failure"):
         SDKTransport("fake-port", 1000000)
 

@@ -1,10 +1,9 @@
 import json
-from dataclasses import replace
 from math import pi
 
 import pytest
 
-from dxl_settings.service import SettingsService, zero_offset
+from dxl_settings.service import MODELS, SettingsService
 from dxl_settings.transport import DemoTransport, DeviceError, check_write
 
 
@@ -14,12 +13,11 @@ def setup(tmp_path):
     return transport, SettingsService(transport, tmp_path / "backups")
 
 
-def test_connect_and_preview_do_not_write(setup):
+def test_scan_does_not_write(setup):
     bus, service = setup
     states = service.scan()
-    assert len(states) == 7
-    assert [s.model for s in states] == [1200] * 6 + [1190]
-    service.preview_zero(range(30, 37))
+    assert states
+    assert all(state.model in MODELS for state in states)
     assert bus.writes == []
 
 
@@ -28,8 +26,7 @@ def test_zero_includes_old_offset_and_preserves_direction(setup, reverse, old_of
     bus, service = setup
     bus.registers[30][10] = int(reverse) | 12  # keep time-profile and auto-torque bits
     bus.registers[30][20] = old_offset & 0xFFFFFFFF
-    plan = service.preview_zero([30])
-    path = service.apply_zero(plan)
+    path = service.save_zero([30])
     state = service.read_state(30)
     assert state.position == 2048
     assert state.radians == pytest.approx(pi) and state.degrees == 180
@@ -41,7 +38,7 @@ def test_zero_includes_old_offset_and_preserves_direction(setup, reverse, old_of
     assert saved["motors"][0]["homing_offset"] == old_offset
     assert saved["status"] == "verified"
     # Repeating calibration doesn't accumulate the offset or wear EEPROM.
-    service.apply_zero(service.preview_zero([30]))
+    service.save_zero([30])
     assert len(bus.writes) == 1
 
 
@@ -70,20 +67,20 @@ def test_mode_three_offset_bound_and_target_limits(setup):
     bus.registers[30][11] = 3
     bus.physical[30] = 300
     with pytest.raises(DeviceError, match="범위 초과"):
-        service.preview_zero([30], target=2048)
+        service.save_zero([30])
     bus.physical[30] = 1024
-    service.apply_zero(service.preview_zero([30], target=2048))
+    service.save_zero([30])
     assert service.read_state(30).homing_offset == 1024
     bus.registers[30][48] = 1000
     with pytest.raises(DeviceError, match="위치 한계"):
-        service.preview_zero([30], target=2048)
+        service.save_zero([30])
 
 
 @pytest.mark.parametrize("mode", [3, 4])
 def test_fixed_pi_reference_preserves_existing_position_modes(setup, mode):
     bus, service = setup
     bus.registers[36][11] = mode
-    service.apply_zero(service.preview_zero(range(30, 37)))
+    service.save_zero(range(30, 37))
     assert all(s.position == 2048 for s in service.read_states(range(30, 37)))
     assert bus.registers[36][11] == mode
 
@@ -91,7 +88,7 @@ def test_fixed_pi_reference_preserves_existing_position_modes(setup, mode):
 def test_default_zero_all_axes_and_signed_motion(setup):
     bus, service = setup
     before = service.read_states(range(30, 37))
-    service.apply_zero(service.preview_zero(range(30, 37)))
+    service.save_zero(range(30, 37))
     after = service.read_states(range(30, 37))
     assert all(s.position == 2048 and s.joint_radians == 0 and s.joint_degrees == 0 for s in after)
     assert [s.operating_mode for s in after] == [s.operating_mode for s in before]
@@ -111,37 +108,12 @@ def test_default_zero_all_axes_and_signed_motion(setup):
 
 def test_explicit_fixed_reference_keeps_pi(setup):
     bus, service = setup
-    service.apply_zero(service.preview_zero([30], target=2048))
+    service.save_zero([30])
     state = service.read_state(30)
     assert state.position == 2048
     assert state.radians == pytest.approx(pi)
     assert state.degrees == 180
     assert bus.registers[30][11] == 5 and bus.registers[30][64] == 0
-
-
-@pytest.mark.parametrize("target", [0, -500, 4096, 2047, 2048.0, True, None, "2048", 2**31])
-def test_non_pi_reference_rejected_before_device_access(setup, monkeypatch, target):
-    bus, service = setup
-    def unexpected_read(*_):
-        raise AssertionError("Invalid calibration target must not access a motor")
-    monkeypatch.setattr(bus, "read", unexpected_read)
-    with pytest.raises(DeviceError, match="2048 pulse.*고정"):
-        service.preview_zero([30], target=target)
-    assert bus.writes == []
-    assert not service.backup_dir.exists()
-
-
-@pytest.mark.parametrize("target", [0, -500, 4096, 2048.0])
-def test_stale_or_modified_target_plan_cannot_write(setup, target):
-    bus, service = setup
-    plan = service.preview_zero([30])
-    # Include a consistent offset: rejecting the target must not depend on an
-    # unrelated mismatch in a stale plan made by the previous 0-reference app.
-    offsets = tuple(zero_offset(s, target) for s in plan.states)
-    with pytest.raises(DeviceError, match="고정"):
-        service.apply_zero(replace(plan, target=target, offsets=offsets))
-    assert bus.writes == []
-    assert not service.backup_dir.exists()
 
 
 def test_joint_display_does_not_hide_whole_turn_error(setup):
@@ -153,12 +125,11 @@ def test_joint_display_does_not_hide_whole_turn_error(setup):
     assert state.joint_degrees == 360
 
 
-def test_mode_change_after_default_zero_preview_rejected(setup):
+def test_mode_change_during_capture_rejected(setup, monkeypatch):
     bus, service = setup
-    plan = service.preview_zero([30])
-    bus.registers[30][11] = 3
-    with pytest.raises(DeviceError, match="바뀌었습니다"):
-        service.apply_zero(plan)
+    monkeypatch.setattr("dxl_settings.service.time.sleep", lambda _: bus.registers[30].__setitem__(11, 3))
+    with pytest.raises(DeviceError, match="설정이 변했습니다"):
+        service.save_zero([30])
     assert bus.writes == []
 
 
@@ -167,7 +138,7 @@ def test_mode_five_zero_offset_overflow_rejected(setup, physical):
     bus, service = setup
     bus.physical[30] = physical
     with pytest.raises(DeviceError, match="범위 초과"):
-        service.preview_zero([30])
+        service.save_zero([30])
     assert bus.writes == []
 
 
@@ -176,7 +147,7 @@ def test_non_position_modes_cannot_calibrate(setup, mode):
     bus, service = setup
     bus.registers[30][11] = mode
     with pytest.raises(DeviceError, match="위치 제어"):
-        service.preview_zero([30])
+        service.save_zero([30])
     assert bus.writes == []
 
 
@@ -187,21 +158,30 @@ def test_signed_positions_and_negative_offset(setup):
     assert service.read_state(30).position == -200
     assert service.read_state(30).current_ma == -20
     bus.physical[30] = 2250
-    service.apply_zero(service.preview_zero([30]))
+    service.save_zero([30])
     assert service.read_state(30).position == 2048
     assert service.read_state(30).homing_offset == -202
 
 
-def test_moved_pose_or_changed_direction_invalidates_preview(setup):
+@pytest.mark.parametrize("change_pose", [True, False])
+def test_moved_pose_or_changed_direction_before_zero_write_is_rejected(setup, monkeypatch, change_pose):
     bus, service = setup
-    plan = service.preview_zero([30])
-    bus.physical[30] += 40
-    with pytest.raises(DeviceError, match="바뀌었습니다"):
-        service.apply_zero(plan)
-    bus.physical[30] -= 40
-    bus.registers[30][10] = 1
-    with pytest.raises(DeviceError, match="바뀌었습니다"):
-        service.apply_zero(plan)
+    read_states = service.read_states
+    reads = 0
+
+    def change_after_sampling(ids):
+        nonlocal reads
+        reads += 1
+        if reads == 3:
+            if change_pose:
+                bus.physical[30] += 40
+            else:
+                bus.registers[30][10] = 1
+        return read_states(ids)
+
+    monkeypatch.setattr(service, "read_states", change_after_sampling)
+    with pytest.raises(DeviceError, match="저장 전에.*바뀌었습니다"):
+        service.save_zero([30])
     assert bus.writes == []
 
 
@@ -209,7 +189,7 @@ def test_motion_during_capture_rejected(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr("dxl_settings.service.time.sleep", lambda _: bus.physical.__setitem__(30, 2000))
     with pytest.raises(DeviceError, match="고정"):
-        service.preview_zero([30])
+        service.save_zero([30])
 
 
 def test_failed_backup_prevents_eeprom_writes(setup, monkeypatch):
@@ -279,7 +259,7 @@ def test_position_verification_after_offset_write(setup, monkeypatch):
         bus.physical[30] += 100
     monkeypatch.setattr(bus, "write", write)
     with pytest.raises(DeviceError, match="영점 저장 후 위치"):
-        service.apply_zero(service.preview_zero([30]))
+        service.save_zero([30])
 
 
 @pytest.mark.parametrize("turn_delta", [-4096, 4096])
@@ -292,7 +272,7 @@ def test_whole_turn_mismatch_never_accepted_as_zero(setup, monkeypatch, turn_del
     monkeypatch.setattr(bus, "write", write)
     before = service.read_state(30)
     with pytest.raises(DeviceError, match="차이"):
-        service.apply_zero(service.preview_zero([30]))
+        service.save_zero([30])
     assert service.faulted
     document = json.loads(next(service.backup_dir.glob("*.json")).read_text())
     change = document["changes"][0]
@@ -302,7 +282,7 @@ def test_whole_turn_mismatch_never_accepted_as_zero(setup, monkeypatch, turn_del
     assert change["after"]["position"] == 2048 + turn_delta
     assert len(bus.writes) == 1
     with pytest.raises(DeviceError, match="잠겼습니다"):
-        service.apply_zero(service.preview_zero([30]))
+        service.save_zero([30])
     assert len(bus.writes) == 1
 
 
@@ -317,9 +297,7 @@ def test_reported_xl330_firmware53_reverse_offsets_recovered_to_pi(setup, old_of
     bus.registers[40][20] = old_offset & 0xFFFFFFFF
     state = service.read_state(40)
     assert state.position == position and state.homing_offset == old_offset
-    plan = service.preview_zero([40])
-    assert plan.offsets == (5,)
-    service.apply_zero(plan)
+    service.save_zero([40])
     state = service.read_state(40)
     assert state.position == 2048 and state.radians == pytest.approx(pi)
     assert state.joint_radians == 0
@@ -327,7 +305,7 @@ def test_reported_xl330_firmware53_reverse_offsets_recovered_to_pi(setup, old_of
     assert state.reverse and state.operating_mode == 5 and state.torque == 0
     assert bus.physical[40] == 2042
     assert bus.writes == [(40, 20, 4, 5)]
-    service.apply_zero(service.preview_zero([40]))
+    service.save_zero([40])
     assert len(bus.writes) == 1
 
 
@@ -335,7 +313,7 @@ def test_restore_direction_and_zero_only(setup, tmp_path):
     bus, service = setup
     path = service.export([30], tmp_path / "snapshot.json")
     service.set_direction([30], True)
-    service.apply_zero(service.preview_zero([30]))
+    service.save_zero([30])
     bus.registers[30][10] |= 12
     service.restore([30], path)
     assert bus.registers[30][10] == 12
@@ -447,11 +425,9 @@ def test_unknown_model_not_interpreted_as_xl330(setup):
     assert bus.writes == []
 
 
-def test_invalid_ids_and_modified_plan_rejected(setup):
-    _, service = setup
+def test_zero_rejects_invalid_ids(setup):
+    bus, service = setup
     for ids in ([], [30, 30], [-1], [254]):
         with pytest.raises(DeviceError):
-            service.read_states(ids)
-    plan = service.preview_zero([30])
-    with pytest.raises(DeviceError):
-        service.apply_zero(replace(plan, offsets=(0,)))
+            service.save_zero(ids)
+    assert bus.writes == []

@@ -139,7 +139,9 @@ const replies = execFileSync(path.join(resources, 'dxl', dxlName), [os.tmpdir()]
   input: requests.map(request => JSON.stringify(request)).join('\n') + '\n',
   encoding: 'utf8', timeout: 30_000,
 }).trim().split('\n').map(line => JSON.parse(line));
-if (!Array.isArray(replies[0]?.result?.ports) || replies[1]?.result?.motors?.length !== 7) {
+const discovered = replies[1]?.result;
+if (!Array.isArray(replies[0]?.result?.ports) || !discovered?.motors?.length ||
+    !discovered.motors.every(motor => motor.baud_rate === discovered.baud && Number.isInteger(motor.position))) {
   throw new Error('Packaged DXL worker self-check failed');
 }
 

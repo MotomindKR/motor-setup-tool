@@ -27,15 +27,14 @@ async function run(worker, operation, params) {
 
 test('DXL demo saves the verified 2048-pulse zero with one command', async t => {
   const worker = await withWorker(t);
-  const states = await run(worker, 'connect', demo);
-  assert.equal(states.motors.length, 7);
-  const { path: backup } = await run(worker, 'saveZero', { ids: [30] });
+  const { motors: [discovered] } = await run(worker, 'connect', demo);
+  const ids = [discovered.motor_id];
+  const { path: backup } = await run(worker, 'saveZero', { ids });
   const journal = JSON.parse(await fs.readFile(backup, 'utf8'));
   assert.equal(journal.status, 'verified');
   assert.equal(journal.simulated, true);
-  assert.equal(journal.motors[0].homing_offset, 0);
-  assert.equal(journal.changes[0].readback, 298);
-  const { motors: [motor] } = await run(worker, 'poll', { ids: [30] });
+  assert.equal(journal.motors[0].motor_id, discovered.motor_id);
+  const { motors: [motor] } = await run(worker, 'poll', { ids });
   assert.equal(motor.position, 2048);
   assert.equal(motor.joint_radians, 0);
 });
@@ -103,7 +102,7 @@ test('worker waits for pending writes before closing and starts a fresh session'
 
 test('invalid hardware connection reports failure without starting demo motors', async t => {
   const worker = await withWorker(t);
-  const reply = await worker.run('connect', { demo: false, baud: 1_000_000, port: '' });
+  const reply = await worker.run('connect', { baud: 1_000_000, port: '' });
   assert.equal(reply.connected, false);
   assert.ok(reply.error);
   assert.equal((await run(worker, 'connect', demo)).demo, true);

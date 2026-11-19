@@ -134,7 +134,7 @@ class SDKTransport:
 class DemoTransport:
     """Register-shaped fake, never a fallback after a hardware error.
 
-    Reverse offset response models the firmware-53/mode-5 report for ID 40.
+    Reverse offset response models the observed XL330 firmware-53 Mode 5 behavior.
     This is a test model, not physical validation of the corrected calculation.
     """
     simulated = True

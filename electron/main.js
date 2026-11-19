@@ -248,6 +248,9 @@ app.whenReady().then(async () => {
       await dxl.close();
       return { connected: false, faulted: false, result: {} };
     }
+    if (operation === 'connect') {
+      return dxl.run(operation, { port: params?.port, baud: params?.baud });
+    }
     const filters = [{ name: 'DXL settings', extensions: ['json'] }];
     if (operation === 'export' || operation === 'restore') {
       dxlDialog = true;
