@@ -19,8 +19,6 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
       fi
       "$CARGO_HOME/bin/cargo" build --release "$1"
       if [[ "$1" == --locked ]]; then
-          /opt/python/cp312-cp312/bin/python -m venv .tools/dxl-build-venv
-          .tools/dxl-build-venv/bin/python -m pip install --no-cache-dir -r dxl/requirements-build.txt
-          .tools/dxl-build-venv/bin/python dxl/build.py
+          bash packaging/build-dxl-linux.sh
       fi
     ' bash "${1:---locked}"

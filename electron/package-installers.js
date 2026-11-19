@@ -100,6 +100,8 @@ if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
   config.mac.notarize = true;
 } else if (platform === 'darwin' && !buildEnv.CSC_LINK && !buildEnv.CSC_NAME) {
   config.mac.identity = '-';
+  buildEnv.CSC_FOR_PULL_REQUEST = 'true';
+  config.mac.notarize = false;
   config.extraMetadata = { manualUpdateReleases: `${pkg.homepage}/releases` };
   // Ad-hoc test signatures have no Team ID for hardened library validation.
   // Signed production builds keep the hardened runtime enabled.
