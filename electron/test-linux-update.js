@@ -6,7 +6,6 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { spawn, execFileSync } = require('node:child_process');
-const { copyRuntimeDependencies } = require('./runtime-dependencies');
 
 (async () => {
   assert.equal(process.getuid(), 0);
@@ -24,7 +23,8 @@ const { copyRuntimeDependencies } = require('./runtime-dependencies');
     for (const file of ['main.js', 'preload.js', 'updater.js', 'packaged-update-worker.js']) {
       await fs.copyFile(path.join(__dirname, file), path.join(appRoot, 'electron', file));
     }
-    copyRuntimeDependencies(appRoot);
+    const modules = path.join(__dirname, '..', 'dist-electron', `stage-linux-${process.arch}`, 'app', 'node_modules');
+    await fs.cp(modules, path.join(appRoot, 'node_modules'), { recursive: true, verbatimSymlinks: true });
     const manifestFile = path.join(appRoot, 'package.json');
     const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
     manifest.main = 'electron/packaged-update-worker.js';

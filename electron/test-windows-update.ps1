@@ -32,8 +32,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     }
     $runtimeModules = Join-Path $appRoot 'node_modules'
     if (Test-Path -LiteralPath $runtimeModules) { Remove-Item -LiteralPath $runtimeModules -Recurse -Force }
-    & node -e 'require(process.argv[1]).copyRuntimeDependencies(process.argv[2])' (Join-Path $PSScriptRoot 'runtime-dependencies.js') $appRoot
-    if ($LASTEXITCODE -ne 0) { throw 'Could not stage updater runtime dependencies' }
+    Copy-Item (Join-Path $PSScriptRoot '..\dist-electron\stage-win32-x64\app\node_modules') $runtimeModules -Recurse
     $manifestFile = Join-Path $appRoot 'package.json'
     $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
     $manifest.main = 'electron/packaged-update-worker.js'
@@ -77,11 +76,9 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
         if ($gui -and (-not $gui.CloseMainWindow() -or -not $gui.WaitForExit(15000))) { throw 'The updated app did not close normally' }
       }
       $env:MOTOMIND_SMOKE_PATH = $screenshot
-      $env:MOTOMIND_SMOKE_TAB = 'setup'
       $smoke = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
       if (-not $smoke.WaitForExit(30000) -or $smoke.ExitCode -ne 0) { throw 'The updated app runtime smoke check failed' }
       Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
-      Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
     }
     $deadline = (Get-Date).AddSeconds(150)
     while (-not (Test-Path "$screenshot.json")) {
@@ -103,7 +100,6 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   } finally {
     Remove-Item Env:MOTOMIND_UPDATE_TEST_CONFIG -ErrorAction SilentlyContinue
     Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
-    Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
     @{
       launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
       ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version

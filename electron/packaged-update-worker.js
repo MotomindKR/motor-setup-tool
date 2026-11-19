@@ -21,10 +21,13 @@ const name = `installer${extension}`;
 const bytes = fs.readFileSync(config.installer);
 const sha512 = createHash('sha512').update(config.badChecksum ? 'incorrect payload' : bytes).digest('base64');
 const update = { version: config.version, files: [{ url: name, sha512, size: bytes.length }], path: name, sha512, releaseDate: new Date().toISOString() };
+let installRequested = false;
+let earlyDownload = false;
 const server = http.createServer((request, response) => {
   if (request.url.split('?')[0].endsWith('.yml')) {
     response.end(JSON.stringify(update));
   } else if (request.url.split('?')[0] === `/${name}`) {
+    if (!installRequested) earlyDownload = true;
     response.setHeader('Content-Length', bytes.length);
     fs.createReadStream(config.installer).pipe(response);
   } else { response.writeHead(404); response.end(); }
@@ -51,16 +54,17 @@ server.listen(0, '127.0.0.1', () => {
         try {
           if (process.platform !== 'win32') {
             process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
-            process.env.MOTOMIND_SMOKE_TAB = 'setup';
           }
           await window.webContents.executeJavaScript(`(async () => {
             const deadline = Date.now() + 15000;
-            while (!(await window.motorApp.updateInfo()).updateResult?.installable) {
+            while (!(await window.motorApp.updateInfo()).updateResult?.available) {
               if (Date.now() >= deadline) throw new Error('The background check did not offer an update');
               await new Promise(resolve => setTimeout(resolve, 100));
             }
-            await window.motorApp.installUpdate();
           })()`);
+          assert.equal(earlyDownload, false, 'Background update check downloaded the installer');
+          installRequested = true;
+          await window.webContents.executeJavaScript('window.motorApp.installUpdate()');
           assert.equal(Boolean(config.badChecksum), false, 'A corrupt download was accepted');
         } catch (error) {
           if (config.badChecksum && /checksum mismatch/i.test(error.message)) {

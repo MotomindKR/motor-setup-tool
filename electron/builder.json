@@ -7,6 +7,7 @@
   "electronUpdaterCompatibility": ">=6.8.11",
   "npmRebuild": false,
   "linux": {
+    "target": ["deb", "rpm"],
     "artifactName": "motor-setup-tool-${version}-linux-${arch}.${ext}",
     "category": "Utility",
     "icon": "../assets/icons/256.png",

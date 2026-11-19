@@ -11,28 +11,31 @@
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "check": "node --check main.js && node --check preload.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-desktop.js && node --check package-installers.js && node --check build-icons.js && node --check set-windows-icon.mjs && node --test recordings.test.js backend.test.js updater.test.js src/controller.test.mjs && npm run build",
+    "check": "node --check main.js && node --check preload.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-installers.js && node --check build-icons.js && node --test recordings.test.js backend.test.js updater.test.js src/controller.test.mjs && npm run build",
     "test:ui": "playwright test",
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",
-    "package:desktop": "node package-desktop.js",
-    "package:installers": "node package-installers.js"
+    "package:desktop": "node package-installers.js --dir",
+    "package:installers": "node package-installers.js",
+    "stage:runtime": "node runtime-dependencies.js"
   },
   "devDependencies": {
+    "@motomindkr/ui": "file:vendor/motomindkr-ui-4.1.0.tgz",
     "@playwright/test": "^1.58.2",
+    "app-builder-lib": "26.15.3",
     "electron": "44.9.0",
     "electron-builder": "^26.15.3",
     "fflate": "0.8.2",
+    "js-yaml": "^4.3.2",
+    "lucide-react": "^1.66.0",
     "png2icons": "^2.0.1",
-    "rcedit": "^5.0.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.11.0",
     "vite": "^6.4.1"
   },
   "dependencies": {
-    "@motomindkr/ui": "file:vendor/motomindkr-ui-4.1.0.tgz",
     "electron-updater": "6.8.11",
-    "lucide-react": "^1.66.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "recharts": "^3.11.0"
+    "yazl": "3.3.1"
   }
 }

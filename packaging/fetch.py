@@ -12,9 +12,6 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ARCH = platform.machine()
-LOCK = json.loads((ROOT / 'packaging/downloads.json').read_text())[ARCH]
-CACHE = ROOT / '.tools/packaging' / ARCH
 
 
 def download_request(url):
@@ -45,10 +42,9 @@ def download(url, name):
         time.sleep(delay)
 
 
-def fetch(name):
-    spec = LOCK[name]
-    path = CACHE / (name + '-' + spec['sha256'][:16])
-    CACHE.mkdir(parents=True, exist_ok=True)
+def fetch(name, spec, cache):
+    path = cache / (name + '-' + spec['sha256'][:16])
+    cache.mkdir(parents=True, exist_ok=True)
     if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != spec['sha256']:
         data = download(spec['url'], name)
         if hashlib.sha256(data).hexdigest() != spec['sha256']:
@@ -58,9 +54,11 @@ def fetch(name):
 
 
 if __name__ == '__main__':
-    archive = fetch('mujoco')
-    destination = CACHE / 'sdk'
-    # Only unpack this checksum-verified upstream archive into our cache.
+    arch = platform.machine()
+    spec = json.loads((ROOT / 'packaging/downloads.json').read_text())[arch]['mujoco']
+    cache = ROOT / '.tools/packaging' / arch
+    archive = fetch('mujoco', spec, cache)
+    destination = cache / 'sdk'
     with tarfile.open(archive) as tar:
         tar.extractall(destination)
     print(destination / 'mujoco-3.12.0')

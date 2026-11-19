@@ -3,7 +3,7 @@
 // Run only in an isolated desktop/CI session. Startup only enumerates adapters.
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { _electron } = require('playwright');
+const { _electron } = require('@playwright/test');
 
 (async () => {
   const [executable, output] = process.argv.slice(2);

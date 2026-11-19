@@ -33,6 +33,8 @@ jobs:
         working-directory: electron
       - run: npm run build
         working-directory: electron
+      - run: npm run stage:runtime -- ../dist-electron/stage-${{ matrix.platform }}/app
+        working-directory: electron
       - uses: actions/download-artifact@v4
         with:
           name: installers-${{ matrix.platform }}
@@ -77,6 +79,8 @@ jobs:
       - run: npm ci
         working-directory: electron
       - run: npm run build
+        working-directory: electron
+      - run: npm run stage:runtime -- ../dist-electron/stage-win32-x64/app
         working-directory: electron
       - uses: actions/download-artifact@v4
         with:

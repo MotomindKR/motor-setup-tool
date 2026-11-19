@@ -7,9 +7,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 
-# These download-integrity tests use mocked assets and do not depend on the host.
-with patch('platform.machine', return_value='x86_64'):
-    import fetch
+import fetch
 
 
 class DownloadTests(unittest.TestCase):
@@ -43,21 +41,20 @@ class DownloadTests(unittest.TestCase):
     def test_corrupt_cache_is_replaced_only_with_verified_bytes(self):
         data = b'verified asset'
         digest = hashlib.sha256(data).hexdigest()
-        spec = {'mujoco': {'url': 'https://example.org/file', 'sha256': digest}}
+        spec = {'url': 'https://example.org/file', 'sha256': digest}
         with tempfile.TemporaryDirectory() as directory, \
-                patch.object(fetch, 'CACHE', pathlib.Path(directory)), \
-                patch.object(fetch, 'LOCK', spec), \
                 patch.object(fetch, 'download') as download:
-            path = pathlib.Path(directory) / ('mujoco-' + digest[:16])
+            cache = pathlib.Path(directory)
+            path = cache / ('mujoco-' + digest[:16])
             path.write_bytes(b'corrupt cache')
             download.return_value = b'wrong asset'
             with self.assertRaisesRegex(RuntimeError, 'SHA-256 mismatch'):
-                fetch.fetch('mujoco')
+                fetch.fetch('mujoco', spec, cache)
             self.assertEqual(path.read_bytes(), b'corrupt cache')
             download.return_value = data
-            self.assertEqual(fetch.fetch('mujoco').read_bytes(), data)
+            self.assertEqual(fetch.fetch('mujoco', spec, cache).read_bytes(), data)
             download.reset_mock()
-            self.assertEqual(fetch.fetch('mujoco').read_bytes(), data)
+            self.assertEqual(fetch.fetch('mujoco', spec, cache).read_bytes(), data)
             download.assert_not_called()
 
 
