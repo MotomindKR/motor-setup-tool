@@ -127,6 +127,8 @@ def test_real_sdk_scan_zero_direction_and_signed_bytes(wire):
 
 def test_sdk_fixed_pi_reference_and_negative_joint_angle(wire):
     emulator, service = wire
+    emulator.bus.physical[30] = 1750
+    emulator.bus.registers[30][20] = 0
     service.save_zero([30])
     state = service.read_state(30)
     assert state.position == 2048 and state.radians == pytest.approx(pi)
