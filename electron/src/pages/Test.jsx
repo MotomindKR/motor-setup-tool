@@ -14,8 +14,15 @@ import { Badge } from "@motomindkr/ui/components/badge";
 import { Slider } from "@motomindkr/ui/components/slider";
 import { Separator } from "@motomindkr/ui/components/separator";
 import { Panel, Button, Check, Empty, Metric } from "../ui.jsx";
-import { Chart } from "../Chart.jsx";
+import { SingleTraceChart } from "../Chart.jsx";
 import { maxJogSpeed, numberText } from "../controller.mjs";
+
+const motionSignals = [
+  ["Position", "position_rad", "rad", 3],
+  ["Speed", "velocity_rad_s", "rad/s", 3],
+  ["Torque", "torque_nm", "Nm", 3],
+];
+const feedbackSignals = [...motionSignals, ["Temperature", "temperature_c", "°C", 1]];
 
 function JogButton({ direction, disabled, a, children }) {
   const release = () => a.release();
@@ -56,6 +63,8 @@ export function TestPage({ s, a, c }) {
       </Empty>
     );
   const status = s.manualStatus;
+  const sampleTimes = s.manualHistory.map(sample => sample.sample_t);
+  const displayValue = (sample, key) => sample[key] + (key === "position_rad" ? s.referenceAngle : 0);
   const canDisable = c.manual && Boolean(status?.enabled || status?.preparing);
   const controlsLocked = (c.busy && !c.manual) || canDisable;
   const feedbackLabel =
@@ -74,9 +83,7 @@ export function TestPage({ s, a, c }) {
       <div className="task-content stack">
         <Panel
           title="Live feedback"
-          description={
-            s.motor ? `${s.motor.model} · ID ${s.motor.id}` : undefined
-          }
+          description={`${s.motor.model} · ID ${s.motor.id}`}
           action={
             <Badge
               variant={
@@ -92,24 +99,11 @@ export function TestPage({ s, a, c }) {
           }
         >
           <div className="metrics live-metrics">
-            {[
-              ["Position", "position_rad", "rad", 3],
-              ["Speed", "velocity_rad_s", "rad/s", 3],
-              ["Torque", "torque_nm", "Nm", 3],
-              ["Temperature", "temperature_c", "°C", 1],
-            ].map(([label, key, unit, digits]) => (
+            {feedbackSignals.map(([label, key, unit, digits]) => (
               <Metric
                 key={key}
                 label={label}
-                value={
-                  c.fresh
-                    ? numberText(
-                        status[key] +
-                          (key === "position_rad" ? s.referenceAngle : 0),
-                        digits,
-                      )
-                    : "—"
-                }
+                value={c.fresh ? numberText(displayValue(status, key), digits) : "—"}
                 unit={unit}
               />
             ))}
@@ -127,22 +121,15 @@ export function TestPage({ s, a, c }) {
           )}
         </Panel>
         {s.manualHistory.length ? (
-          ["position_rad", "velocity_rad_s", "torque_nm"].map((key, i) => (
-            <Chart
+          motionSignals.map(([label, key, unit]) => (
+            <SingleTraceChart
               key={key}
-              title={["Position", "Speed", "Torque"][i]}
-              unit={["rad", "rad/s", "Nm"][i]}
+              title={label}
+              unit={unit}
               compact
-              series={[
-                {
-                  label: "Measured",
-                  x: s.manualHistory.map((v) => v.sample_t),
-                  y: s.manualHistory.map(
-                    (v) => v[key] + (i === 0 ? s.referenceAngle : 0),
-                  ),
-                  color: "--info-foreground",
-                },
-              ]}
+              label="Measured"
+              x={sampleTimes}
+              y={s.manualHistory.map(sample => displayValue(sample, key))}
             />
           ))
         ) : (

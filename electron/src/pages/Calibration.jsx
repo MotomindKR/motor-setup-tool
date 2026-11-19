@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@motomindkr/ui/components/badge";
 import { Panel, Field, Check, Button, Empty, Disclosure } from "../ui.jsx";
-import { Chart } from "../Chart.jsx";
+import { SingleTraceChart } from "../Chart.jsx";
 import { conciseNumber } from "../format.mjs";
 
 const limitFields = [
@@ -111,30 +111,21 @@ function CalibrationPreview({ s }) {
     <Disclosure className="motion-preview" title="Motion preview">
       {s.preview ? (
         <div className="stack">
-          <Chart
+          <SingleTraceChart
             title="Target speed"
             unit="rad/s"
-            series={[
-              {
-                label: "Target",
-                x: s.preview.t,
-                y: s.preview.velocity,
-                color: "--info-foreground",
-              },
-            ]}
+            label="Target"
+            x={s.preview.t}
+            y={s.preview.velocity}
           />
-          {s.preview.torque.some((value) => value !== 0) && (
-            <Chart
+          {s.preview.torque.some(value => value !== 0) && (
+            <SingleTraceChart
               title="Torque"
               unit="Nm"
-              series={[
-                {
-                  label: "Target",
-                  x: s.preview.t,
-                  y: s.preview.torque,
-                  color: "--premium",
-                },
-              ]}
+              label="Target"
+              x={s.preview.t}
+              y={s.preview.torque}
+              color="--premium"
             />
           )}
           <div className="preview-segments">
@@ -157,41 +148,16 @@ function CalibrationPreview({ s }) {
 }
 
 export function CalibratePage({ s, a, c }) {
-  if (!s.config)
-    return (
-      <Empty
-        compact
-        icon={
-          s.motor?.issue
-            ? CircleAlert
-            : s.busy === "plan"
-              ? LoaderCircle
-              : Cable
-        }
-        title={
-          s.motor?.issue
-            ? "Motor unavailable"
-            : s.busy === "plan"
-              ? "Loading preset…"
-              : s.motor
-                ? "Preset unavailable"
-                : s.motors.length > 1
-                  ? "Select a motor"
-                  : "No motor connected"
-        }
-      >
-        <p>
-          {s.motor?.issue ||
-            (s.busy === "plan"
-              ? null
-              : s.motor
-                ? "Select another motor or scan again."
-                : s.motors.length > 1
-                  ? "Choose a motor above."
-                  : "Scan above to select your motor.")}
-        </p>
-      </Empty>
+  if (!s.config) {
+    const empty = (icon, title, message) => (
+      <Empty compact icon={icon} title={title}>{message && <p>{message}</p>}</Empty>
     );
+    if (s.motor?.issue) return empty(CircleAlert, "Motor unavailable", s.motor.issue);
+    if (s.busy === "plan") return empty(LoaderCircle, "Loading preset…");
+    if (s.motor) return empty(Cable, "Preset unavailable", "Select another motor or scan again.");
+    if (s.motors.length > 1) return empty(Cable, "Select a motor", "Choose a motor above.");
+    return empty(Cable, "No motor connected", "Scan above to select your motor.");
+  }
   return (
     <div className="stack calibration-workspace">
       <CalibrationControls s={s} a={a} c={c} />

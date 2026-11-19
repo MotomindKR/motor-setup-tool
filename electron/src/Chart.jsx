@@ -118,3 +118,8 @@ export function Chart({ title, unit, series, compact = false }) {
     </Panel>
   );
 }
+
+export function SingleTraceChart({ label, x, y, color = "--info-foreground", ...chart }) {
+  const series = useMemo(() => [{ label, x, y, color }], [label, x, y, color]);
+  return <Chart {...chart} series={series} />;
+}
