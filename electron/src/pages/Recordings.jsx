@@ -90,6 +90,34 @@ function RunMenu({ directory, files = [], a, disabled, compact = false }) {
   );
 }
 
+const axes = [
+  { key: "velocity", label: "Velocity", unit: "rad/s" },
+  { key: "position", label: "Position", unit: "rad" },
+];
+const traces = [
+  { key: "measured", prefix: "measured", label: "Measured", color: "--foreground" },
+  { key: "before", prefix: "pre", label: "Before", color: "--premium" },
+  { key: "after", prefix: "post", label: "After", color: "--info-foreground" },
+];
+
+const MotionCharts = React.memo(function MotionCharts({ replay, visible, residual, reference }) {
+  return axes.map(({ key, label, unit }) => {
+    const measured = replay[`measured_${key}`];
+    const offset = key === "position" ? reference : 0;
+    const series = traces
+      .filter(trace => visible[trace.key] && !(residual && trace.key === "measured"))
+      .map(({ prefix, label, color }) => {
+        let y = replay[`${prefix}_${key}`];
+        if (residual) y = y.map((value, i) => value - measured[i]);
+        else if (offset) y = y.map(value => value + offset);
+        return { label, color, x: replay.t, y };
+      });
+    return (
+      <Chart key={key} title={residual ? `${label} residual` : label} unit={unit} series={series} />
+    );
+  });
+});
+
 function Report({ s, a, c }) {
   const r = s.report;
   const replay = r.replays.find((item) => item.name === s.trace);
@@ -98,37 +126,6 @@ function Report({ s, a, c }) {
   const recordedAt =
     s.runs.find((run) => run.directory === s.directory)?.timestamp ??
     Number(/^\d{13}(?=-|$)/.exec(folder || "")?.[0]);
-  const colors = {
-    measured: "--foreground",
-    before: "--premium",
-    after: "--info-foreground",
-  };
-  const series = (measured, before, after, residual = false, offset = 0) =>
-    [
-      s.visible.measured &&
-        !residual && {
-          label: "Measured",
-          x: replay.t,
-          y: measured.map((v) => v + offset),
-          color: colors.measured,
-        },
-      s.visible.before && {
-        label: "Before",
-        x: replay.t,
-        y: residual
-          ? before.map((v, i) => v - measured[i])
-          : before.map((v) => v + offset),
-        color: colors.before,
-      },
-      s.visible.after && {
-        label: "After",
-        x: replay.t,
-        y: residual
-          ? after.map((v, i) => v - measured[i])
-          : after.map((v) => v + offset),
-        color: colors.after,
-      },
-    ].filter(Boolean);
   return (
     <div className="stack report">
       <div className="section-heading">
@@ -183,35 +180,34 @@ function Report({ s, a, c }) {
             ["training", "Training"],
           ]}
         />
-        <div className="legend">
-          {["measured", "before", "after"].map((key) => (
-            <Check
-              key={key}
-              checked={s.visible[key]}
-              onChange={() => a.toggleSeries(key)}
-            >
-              <i className={`swatch swatch-${key}`} />
-              {key.charAt(0).toUpperCase() + key.slice(1)}
-            </Check>
-          ))}
-        </div>
+        {s.chart !== "torque" && (
+          <div className="legend">
+            {traces.map(({ key, label }) => (
+              <Check
+                key={key}
+                checked={s.visible[key]}
+                onChange={() => a.toggleSeries(key)}
+              >
+                <i className={`swatch swatch-${key}`} />
+                {label}
+              </Check>
+            ))}
+          </div>
+        )}
       </div>
       {replay ? (
         <>
           <Panel size="md">
             <div className="metrics result-metrics">
-              <Metric
-                label="Velocity error · RMSE"
-                value={numberText(replay.post_velocity_rmse, 4)}
-                unit="rad/s"
-                detail={`Before ${numberText(replay.pre_velocity_rmse, 4)} rad/s`}
-              />
-              <Metric
-                label="Position error · RMSE"
-                value={numberText(replay.post_position_rmse, 4)}
-                unit="rad"
-                detail={`Before ${numberText(replay.pre_position_rmse, 4)} rad`}
-              />
+              {axes.map(({ key, label, unit }) => (
+                <Metric
+                  key={key}
+                  label={`${label} error · RMSE`}
+                  value={numberText(replay[`post_${key}_rmse`], 4)}
+                  unit={unit}
+                  detail={`Before ${numberText(replay[`pre_${key}_rmse`], 4)} ${unit}`}
+                />
+              ))}
             </div>
           </Panel>
           <Segments
@@ -244,33 +240,12 @@ function Report({ s, a, c }) {
               ]}
             />
           ) : (
-            <>
-              <Chart
-                title={
-                  s.chart === "residuals" ? "Velocity residual" : "Velocity"
-                }
-                unit="rad/s"
-                series={series(
-                  replay.measured_velocity,
-                  replay.pre_velocity,
-                  replay.post_velocity,
-                  s.chart === "residuals",
-                )}
-              />
-              <Chart
-                title={
-                  s.chart === "residuals" ? "Position residual" : "Position"
-                }
-                unit="rad"
-                series={series(
-                  replay.measured_position,
-                  replay.pre_position,
-                  replay.post_position,
-                  s.chart === "residuals",
-                  ref,
-                )}
-              />
-            </>
+            <MotionCharts
+              replay={replay}
+              visible={s.visible}
+              residual={s.chart === "residuals"}
+              reference={ref}
+            />
           )}
         </>
       ) : (

@@ -47,7 +47,7 @@ test('individual downloads preserve CSV bytes and cannot overwrite run artifacts
   await assert.rejects(exportRun(directory, path.join(directory, 'training.csv'), 'validation.csv'), /outside/);
   await assert.rejects(exportRun(directory, output, '../training.csv'), /available recording/);
   await assert.rejects(exportRun(directory, output, 'calibration.json'), /missing/);
-  await assert.rejects(exportRun(directory, path.relative(process.cwd(), output), 'validation.csv'), /download location/);
+  await assert.rejects(exportRun(directory, 'recording.csv', 'validation.csv'), /download location/);
   assert.equal((await fs.readdir(base)).some(name => name.endsWith('.tmp')), false);
 });
 
