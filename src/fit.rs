@@ -384,8 +384,8 @@ fn refine(
     initial: &Parameters,
     torque_limit: f64,
     cancel: &AtomicBool,
-    progress: &impl Fn(f32, String),
-    label: &str,
+    progress: &impl Fn(f32, ProgressLabel),
+    label: &'static str,
 ) -> Result<(Parameters, bool, f64)> {
     let scale = Vector4::new(
         initial.armature.max(0.0001),
@@ -404,7 +404,11 @@ fn refine(
     for iteration in 0..80 {
         progress(
             iteration as f32 / 80.,
-            format!("{label} · iteration {} / 80", iteration + 1),
+            ProgressLabel::FitIteration {
+                stage: label,
+                iteration: iteration + 1,
+                total: 80,
+            },
         );
         crate::cancel::check(cancel)?;
         let mut jac = Vec::new();
@@ -460,7 +464,7 @@ fn refine(
             lambda *= 5.;
         }
     }
-    progress(1., format!("{label} complete"));
+    progress(1., ProgressLabel::FitComplete { stage: label });
     Ok((from_vector(x, scale), converged, cost / r.len() as f64))
 }
 

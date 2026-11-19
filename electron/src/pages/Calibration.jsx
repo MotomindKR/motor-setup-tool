@@ -1,3 +1,5 @@
+import { messageText } from "../i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
 import {
   Cable,
@@ -33,12 +35,13 @@ const baselineFields = [
 ];
 
 function CalibrationControls({ s, a, c }) {
+  const { t } = useTranslation();
   function fields(definitions, baseline = false) {
     const values = baseline ? s.config.baseline : s.config;
     return definitions.map(([key, label, unit, step]) => {
       const [min, max] = s.limits[key];
       return (
-        <Field key={key} label={label} unit={unit} type="number"
+        <Field key={key} label={t(label)} unit={unit} type="number"
           min={min} max={max} step={step} value={values[key]} disabled={c.busy}
           onValueChange={(value) => a.changeConfig(key, value, baseline)}
         />
@@ -48,7 +51,7 @@ function CalibrationControls({ s, a, c }) {
   return (
     <Panel
       className="calibration-controls"
-      title="Limits"
+      title={t("Limits")}
       action={
         <Button
           variant="ghost"
@@ -57,7 +60,7 @@ function CalibrationControls({ s, a, c }) {
           disabled={c.busy}
         >
           <RefreshCw />
-          Reset
+          {t("Reset")}
         </Button>
       }
     >
@@ -65,12 +68,12 @@ function CalibrationControls({ s, a, c }) {
         <div className="calibration-limits">
           {fields(limitFields)}
         </div>
-        <Disclosure className="calibration-advanced" title="Advanced settings">
+        <Disclosure className="calibration-advanced" title={t("Advanced settings")}>
           <div className="field-grid">{fields(advancedFields)}</div>
-          <h3 className="form-subheading">Baseline model</h3>
+          <h3 className="form-subheading">{t("Baseline model")}</h3>
           <div className="field-grid">{fields(baselineFields, true)}</div>
           <div className="save-location">
-            <span>Save folder</span>
+            <span>{t("Save folder")}</span>
             <Button
               variant="outline"
               size="sm"
@@ -78,27 +81,27 @@ function CalibrationControls({ s, a, c }) {
               disabled={c.busy}
             >
               <FolderOpen />
-              Choose…
+              {t("Choose…")}
             </Button>
             <p title={s.outputDirectory || ""}>
-              {s.outputDirectory || "Automatic"}
+              {s.outputDirectory || t("Automatic")}
             </p>
           </div>
         </Disclosure>
         <div className="calibration-start">
           <div>
             <Check checked={s.reviewed} onChange={a.review} disabled={c.busy}>
-              Motor secured · limits reviewed
+              {t("Motor secured · limits reviewed")}
             </Check>
             <p className="field-hint">
               {s.previewLoading
-                ? "Checking limits…"
-                : `${conciseNumber(s.config.train_seconds)} s training · ${conciseNumber(s.config.validation_seconds)} s validation`}
+                ? t("Checking limits…")
+                : t("{{training}} s training · {{validation}} s validation", { training: conciseNumber(s.config.train_seconds), validation: conciseNumber(s.config.validation_seconds) })}
             </p>
           </div>
           <Button onClick={a.calibrate} disabled={!c.calibrate}>
             <Play />
-            Start calibration
+            {t("Start calibration")}
           </Button>
         </div>
       </div>
@@ -107,22 +110,23 @@ function CalibrationControls({ s, a, c }) {
 }
 
 function CalibrationPreview({ s }) {
+  const { t } = useTranslation();
   return (
-    <Disclosure className="motion-preview" title="Motion preview">
+    <Disclosure className="motion-preview" title={t("Motion preview")}>
       {s.preview ? (
         <div className="stack">
           <SingleTraceChart
-            title="Target speed"
+            title={t("Target speed")}
             unit="rad/s"
-            label="Target"
+            label={t("Target")}
             x={s.preview.t}
             y={s.preview.velocity}
           />
           {s.preview.torque.some(value => value !== 0) && (
             <SingleTraceChart
-              title="Torque"
+              title={t("Torque")}
               unit="Nm"
-              label="Target"
+              label={t("Target")}
               x={s.preview.t}
               y={s.preview.torque}
               color="--premium"
@@ -131,7 +135,7 @@ function CalibrationPreview({ s }) {
           <div className="preview-segments">
             {s.preview.segments.map((segment, i) => (
               <Badge key={`${segment.name}-${i}`} variant="secondary">
-                {segment.name} · {conciseNumber(segment.end - segment.start)} s
+                {t(segment.name)} · {conciseNumber(segment.end - segment.start)} s
               </Badge>
             ))}
           </div>
@@ -140,7 +144,7 @@ function CalibrationPreview({ s }) {
         <Empty
           compact
           icon={s.previewLoading ? LoaderCircle : CircleAlert}
-          title={s.previewLoading ? "Loading preview…" : "Check the limits"}
+          title={s.previewLoading ? t("Loading preview…") : t("Check the limits")}
         />
       )}
     </Disclosure>
@@ -148,15 +152,16 @@ function CalibrationPreview({ s }) {
 }
 
 export function CalibratePage({ s, a, c }) {
+  const { t } = useTranslation();
   if (!s.config) {
     const empty = (icon, title, message) => (
       <Empty compact icon={icon} title={title}>{message && <p>{message}</p>}</Empty>
     );
-    if (s.motor?.issue) return empty(CircleAlert, "Motor unavailable", s.motor.issue);
-    if (s.busy === "plan") return empty(LoaderCircle, "Loading preset…");
-    if (s.motor) return empty(Cable, "Preset unavailable", "Select another motor or scan again.");
-    if (s.motors.length > 1) return empty(Cable, "Select a motor", "Choose a motor above.");
-    return empty(Cable, "No motor connected", "Scan above to select your motor.");
+    if (s.motor?.issue) return empty(CircleAlert, t("Motor unavailable"), messageText(s.motor.issue));
+    if (s.busy === "plan") return empty(LoaderCircle, t("Loading preset…"));
+    if (s.motor) return empty(Cable, t("Preset unavailable"), t("Select another motor or scan again."));
+    if (s.motors.length > 1) return empty(Cable, t("Select a motor"), t("Choose a motor above."));
+    return empty(Cable, t("No motor connected"), t("Scan above to select your motor."));
   }
   return (
     <div className="stack calibration-workspace">

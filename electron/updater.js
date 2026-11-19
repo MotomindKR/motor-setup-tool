@@ -1,5 +1,7 @@
 'use strict';
 
+const { t } = require('./i18n.js');
+
 const fs = require('node:fs/promises');
 const syncFs = require('node:fs');
 const path = require('node:path');
@@ -35,7 +37,7 @@ class ManagedUpdater {
 
   async check() {
     const result = await this.native.checkForUpdates();
-    if (!result) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
+    if (!result) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
     const available = result.isUpdateAvailable;
     const version = result.updateInfo.version;
     this.candidate = available && !this.manualUpdateReleases ? version : null;
@@ -46,18 +48,18 @@ class ManagedUpdater {
   }
 
   async install(version, progress, ensureIdle) {
-    if (!this.candidate || version !== this.candidate) throw new Error('Check for an available update first');
+    if (!this.candidate || version !== this.candidate) throw new Error(t("Check for an available update first"));
     ensureIdle();
     this.failure = null;
-    const onProgress = value => progress(`Downloading update · ${Math.min(100, Math.round(value.percent))}%`);
+    const onProgress = value => progress(t("Downloading update · {{percent}}%", { percent: Math.min(100, Math.round(value.percent)) }));
     this.native.on('download-progress', onProgress);
     try {
-      progress('Downloading update…');
+      progress(t("Downloading update…"));
       await this.native.downloadUpdate();
       ensureIdle();
       const pending = path.join(this.app.getPath('userData'), 'pending-update.json');
       await fs.writeFile(pending, JSON.stringify({ version }));
-      progress('Installing update. The app will restart…');
+      progress(t("Installing update. The app will restart…"));
       try {
         this.native.quitAndInstall(true, true);
         if (this.failure) throw this.failure;
@@ -94,9 +96,9 @@ async function readUpdateError(app) {
       if (!(failure instanceof SyntaxError)) throw failure;
     }
     if (typeof version !== 'string' || !version) {
-      error ||= 'The previous update could not be verified. Please install the latest release again.';
+      error ||= t("The previous update could not be verified. Please install the latest release again.");
     } else if (version !== app.getVersion()) {
-      error ||= `Update to ${version} did not complete. This app is still ${app.getVersion()}. Details: ${path.join(directory, 'update.log')}`;
+      error ||= t("Update to {{version}} did not complete. This app is still {{current}}. Details: {{path}}", { version, current: app.getVersion(), path: path.join(directory, 'update.log') });
     }
     await fs.rm(pendingFile, { force: true });
   }

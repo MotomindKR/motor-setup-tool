@@ -1,4 +1,7 @@
+import { messageText } from "../i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
+import { languageChoice, chooseLanguage } from "../language.mjs";
 import { ArrowDownToLine, RefreshCw } from "lucide-react";
 import { Badge } from "@motomindkr/ui/components/badge";
 import { Separator } from "@motomindkr/ui/components/separator";
@@ -12,8 +15,11 @@ import {
 import { Button, Field, Choice } from "../ui.jsx";
 
 export function Settings({ s, a, appearance, c }) {
+  const { t } = useTranslation();
   const result = s.updateResult;
-  const updateMessage = s.updateMessage || (result && !result.available && "You have the latest version.");
+  const updateMessage =
+    messageText(s.updateMessage) ||
+    (result && !result.available && t("You have the latest version."));
   return (
     <Dialog
       open={s.settingsOpen}
@@ -23,16 +29,27 @@ export function Settings({ s, a, appearance, c }) {
     >
       <DialogContent className="settings-dialog" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
+          <DialogTitle>{t("Settings")}</DialogTitle>
         </DialogHeader>
-        <Field label="Appearance">
+        <Field label={t("Language")}>
+          <Choice
+            value={languageChoice()}
+            onChange={chooseLanguage}
+            options={[
+              { value: "system", label: t("System") },
+              { value: "en", label: "English" },
+              { value: "ko", label: "한국어" },
+            ]}
+          />
+        </Field>
+        <Field label={t("Appearance")}>
           <Choice
             value={appearance.choice}
             onChange={appearance.setChoice}
             options={[
-              { value: "system", label: "System" },
-              { value: "light", label: "Light" },
-              { value: "dark", label: "Dark" },
+              { value: "system", label: t("System") },
+              { value: "light", label: t("Light") },
+              { value: "dark", label: t("Dark") },
             ]}
           />
         </Field>
@@ -40,10 +57,16 @@ export function Settings({ s, a, appearance, c }) {
         <div className="version-row">
           <strong>Motor Setup Tool</strong>
           <Badge variant="secondary">
-            {s.version ? `v${s.version}` : "Version unavailable"}
+            {s.version ? `v${s.version}` : t("Version unavailable")}
           </Badge>
         </div>
-        {result?.available && <p className="field-hint" role="status">Version {result.version} is available.</p>}
+        {result?.available && (
+          <p className="field-hint" role="status">
+            {t("Version {{version}} is available.", {
+              version: result.version,
+            })}
+          </p>
+        )}
         {updateMessage && (
           <p className="field-hint" role="status">
             {updateMessage}
@@ -56,7 +79,7 @@ export function Settings({ s, a, appearance, c }) {
             disabled={s.checkingUpdate || s.installingUpdate}
           >
             <RefreshCw className={s.checkingUpdate ? "spinning" : ""} />
-            Check for update
+            {t("Check for update")}
           </Button>
           {result?.available && (
             <Button
@@ -64,7 +87,9 @@ export function Settings({ s, a, appearance, c }) {
               disabled={c.busy || s.checkingUpdate}
             >
               <ArrowDownToLine />
-              {result.releasePage ? "Open download page" : "Install update"}
+              {result.releasePage
+                ? t("Open download page")
+                : t("Install update")}
             </Button>
           )}
         </DialogFooter>

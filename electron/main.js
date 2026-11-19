@@ -1,5 +1,7 @@
 'use strict';
 
+const { i18n, t } = require('./i18n.js');
+
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
@@ -26,7 +28,7 @@ let selectedOutput = null;
 const recentPathFile = () => path.join(app.getPath('userData'), 'recent-calibrations.json');
 const referenceFile = () => path.join(app.getPath('userData'), 'motor-references.json');
 function uuidKey(value) {
-  if (!Array.isArray(value) || value.length !== 8 || value.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error('Select a motor with a valid UUID');
+  if (!Array.isArray(value) || value.length !== 8 || value.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error(t("Select a motor with a valid UUID"));
   return Buffer.from(value).toString('hex');
 }
 async function readSettings(file, initial) {
@@ -35,7 +37,7 @@ async function readSettings(file, initial) {
   catch (error) { if (error.code === 'ENOENT') return initial; throw error; }
   const value = JSON.parse(contents);
   if (!value || typeof value !== 'object' || Array.isArray(value) !== Array.isArray(initial)) {
-    throw new Error(`Invalid settings in ${file}`);
+    throw new Error(t("Invalid settings in {{file}}", { file }));
   }
   return value;
 }
@@ -92,9 +94,9 @@ function send(event) {
 }
 
 function requireIdleForUpdate() {
-  if (backend?.active) throw new Error('Stop the motor operation before installing an update');
-  if (dxl.active || dxlDialog) throw new Error('Finish the current DXL operation before updating');
-  if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
+  if (backend?.active) throw new Error(t("Stop the motor operation before installing an update"));
+  if (dxl.active || dxlDialog) throw new Error(t("Finish the current DXL operation before updating"));
+  if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
 }
 
 function checkForUpdate() {
@@ -109,7 +111,7 @@ function checkForUpdate() {
 function handle(channel, handler) {
   ipcMain.handle(channel, (event, ...args) => {
     if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
-      throw new Error('Invalid app window');
+      throw new Error(t("Invalid app window"));
     }
     return handler(...args);
   });
@@ -119,7 +121,7 @@ function handleRecordingWrite(channel, handler) {
   handle(channel, async (directory, ...args) => {
     requireKnownRun(directory);
     if (backendError) throw backendError;
-    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
+    if (backend?.active || installingUpdate || recordingOperation) throw new Error(t("Finish the current operation first"));
     recordingOperation = true;
     try { return await handler(directory, ...args); }
     finally { recordingOperation = false; }
@@ -134,7 +136,7 @@ function dataDirectory() {
 }
 
 function requireKnownRun(directory) {
-  if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
+  if (!knownRuns.has(directory)) throw new Error(t("Select a saved run first"));
   return directory;
 }
 
@@ -230,7 +232,7 @@ app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   try {
     updateError = await updater.readUpdateError(app);
-  } catch (error) { updateError = `Could not verify the previous update: ${error.message}`; }
+  } catch (error) { updateError = t("Could not verify the previous update: {{error}}", { error: error.message }); }
   managedUpdater = updater.createUpdater(app, error => {
     if (!installingUpdate) return;
     installingUpdate = false;
@@ -241,9 +243,13 @@ app.whenReady().then(async () => {
   } catch (error) { backendError = error; }
   dxl = new DxlWorker({ root, resourcesPath: app.isPackaged ? process.resourcesPath : null, backupDir: dxlBackupDir() });
 
+  handle('app:setLanguage', language => {
+    if (language === 'ko' || language === 'en') return i18n.changeLanguage(language).then(() => undefined);
+  });
+
   handle('dxl:run', async (operation, params) => {
-    if (quitting || installingUpdate) throw new Error('Wait for the app to finish');
-    if (dxlDialog && operation !== 'poll') throw new Error('Finish the current DXL operation');
+    if (quitting || installingUpdate) throw new Error(t("Wait for the app to finish"));
+    if (dxlDialog && operation !== 'poll') throw new Error(t("Finish the current DXL operation"));
     if (operation === 'disconnect') {
       await dxl.close();
       return { connected: false, faulted: false, result: {} };
@@ -251,13 +257,13 @@ app.whenReady().then(async () => {
     if (operation === 'connect') {
       return dxl.run(operation, { port: params?.port, baud: params?.baud });
     }
-    const filters = [{ name: 'DXL settings', extensions: ['json'] }];
+    const filters = [{ name: t("DXL settings"), extensions: ['json'] }];
     if (operation === 'export' || operation === 'restore') {
       dxlDialog = true;
       try {
         const selection = operation === 'export'
-          ? await dialog.showSaveDialog(window, { title: 'Export DXL settings', defaultPath: 'dxl-settings.json', filters })
-          : await dialog.showOpenDialog(window, { title: 'Restore DXL zero and direction', defaultPath: dxlBackupDir(), filters, properties: ['openFile'] });
+          ? await dialog.showSaveDialog(window, { title: t("Export DXL settings"), defaultPath: 'dxl-settings.json', filters })
+          : await dialog.showOpenDialog(window, { title: t("Restore DXL zero and direction"), defaultPath: dxlBackupDir(), filters, properties: ['openFile'] });
         if (selection.canceled || quitting) return null;
         return await dxl.run(operation, { ids: params.ids, path: selection.filePath || selection.filePaths[0] });
       } finally { dxlDialog = false; }
@@ -279,25 +285,25 @@ app.whenReady().then(async () => {
   });
 
   handle('backend:run', async (operation, params) => {
-    if (installingUpdate) throw new Error('Wait for the update to finish');
+    if (installingUpdate) throw new Error(t("Wait for the update to finish"));
     if (backendError) throw backendError;
-    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
+    if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
     if (operation === 'analyze') requireKnownRun(params?.directory);
     if (operation === 'calibrate' && params?.output) {
-      if (params.output !== selectedOutput) throw new Error('Choose the calibration folder with the file picker');
+      if (params.output !== selectedOutput) throw new Error(t("Choose the calibration folder with the file picker"));
       selectedOutput = null;
     }
     return backend.run(operation, params);
   });
   handle('backend:cancel', () => backend?.cancel() ?? false);
   handle('backend:manualIntent', (value) => {
-    if (installingUpdate) throw new Error('Wait for the update to finish');
+    if (installingUpdate) throw new Error(t("Wait for the update to finish"));
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
   handle('window:setTheme', (theme, caption) => {
-    if (!['system', 'light', 'dark'].includes(theme)) throw new Error('Unknown appearance');
-    if (caption !== undefined && (!caption || !/^#[0-9a-f]{6}$/i.test(caption.color) || !/^#[0-9a-f]{6}$/i.test(caption.symbolColor))) throw new Error('Invalid window colors');
+    if (!['system', 'light', 'dark'].includes(theme)) throw new Error(t("Unknown appearance"));
+    if (caption !== undefined && (!caption || !/^#[0-9a-f]{6}$/i.test(caption.color) || !/^#[0-9a-f]{6}$/i.test(caption.symbolColor))) throw new Error(t("Invalid window colors"));
     nativeTheme.themeSource = theme;
     const dark = nativeTheme.shouldUseDarkColors;
     const background = dark ? '#121212' : '#ffffff';
@@ -313,13 +319,13 @@ app.whenReady().then(async () => {
     return backend.preview(config);
   });
   handle('calibration:pickOutput', async () => {
-    if (backend?.active) throw new Error('Finish the current operation first');
+    if (backend?.active) throw new Error(t("Finish the current operation first"));
     const base = dataDirectory();
     await fs.mkdir(base, { recursive: true });
     const suggested = `calibration-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-    const result = await dialog.showSaveDialog(window, { title: 'Choose new calibration folder', defaultPath: path.join(base, suggested), buttonLabel: 'Choose folder' });
+    const result = await dialog.showSaveDialog(window, { title: t("Choose new calibration folder"), defaultPath: path.join(base, suggested), buttonLabel: t("Choose folder") });
     if (result.canceled || !result.filePath) return null;
-    try { await fs.access(result.filePath); throw new Error('Choose a new folder name; this path already exists'); }
+    try { await fs.access(result.filePath); throw new Error(t("Choose a new folder name; this path already exists")); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     selectedOutput = result.filePath;
     return result.filePath;
@@ -328,7 +334,7 @@ app.whenReady().then(async () => {
     return Number((await readSettings(referenceFile(), {}))[uuidKey(uuid)]) || 0;
   });
   handle('reference:set', async (uuid, angle) => {
-    if (!Number.isFinite(angle) || Math.abs(angle) > 100) throw new Error('Reference angle must be within ±100 rad');
+    if (!Number.isFinite(angle) || Math.abs(angle) > 100) throw new Error(t("Reference angle must be within ±100 rad"));
     const map = await readSettings(referenceFile(), {});
     map[uuidKey(uuid)] = angle;
     await fs.mkdir(path.dirname(referenceFile()), { recursive: true });
@@ -340,19 +346,19 @@ app.whenReady().then(async () => {
     return { version: app.getVersion(), updateError, updateResult: checkedUpdate };
   });
   handle('updates:check', async () => {
-    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
-    if (installingUpdate) throw new Error('Update already in progress');
-    if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
+    if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
+    if (installingUpdate) throw new Error(t("Update already in progress"));
+    if (!managedUpdater) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
     return checkForUpdate();
   });
   handle('updates:install', async version => {
     // A check can change the updater's selected release. Let it finish before downloading.
     if (updateCheck) await updateCheck;
     requireIdleForUpdate();
-    if (!checkedUpdate?.available) throw new Error('Check for an available update first');
-    if (checkedUpdate.version !== version) throw new Error('The available update changed. Review the new version before installing.');
-    if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
-    if (installingUpdate) throw new Error('Update already in progress');
+    if (!checkedUpdate?.available) throw new Error(t("Check for an available update first"));
+    if (checkedUpdate.version !== version) throw new Error(t("The available update changed. Review the new version before installing."));
+    if (!managedUpdater) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
+    if (installingUpdate) throw new Error(t("Update already in progress"));
     if (checkedUpdate.releasePage) return shell.openExternal(checkedUpdate.releasePage);
     installingUpdate = true;
     const progress = message => window?.webContents.send('updates:progress', message);
@@ -364,7 +370,7 @@ app.whenReady().then(async () => {
   });
   handle('runs:list', listRuns);
   handle('runs:pick', async () => {
-    const selection = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Open motor recording' });
+    const selection = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: t("Open motor recording") });
     if (selection.canceled || !selection.filePaths.length) return null;
     const directory = selection.filePaths[0];
     const result = await recordings.loadRun(directory);
@@ -374,11 +380,11 @@ app.whenReady().then(async () => {
   handle('runs:load', directory => recordings.loadRun(requireKnownRun(directory)));
   handleRecordingWrite('runs:export', async (directory, file = null) => {
     const run = await recordings.inspectRun(directory);
-    if (file !== null && !recordings.SINGLE_FILES.includes(file)) throw new Error('Choose an available recording file');
-    if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
+    if (file !== null && !recordings.SINGLE_FILES.includes(file)) throw new Error(t("Choose an available recording file"));
+    if (file && !run.files.includes(file)) throw new Error(t("Recording file is missing"));
     const extension = file ? path.extname(file).slice(1) : 'zip';
     const selection = await dialog.showSaveDialog(window, {
-      title: file ? `Download ${file}` : 'Download calibration run',
+      title: file ? t("Download {{file}}", { file }) : t("Download calibration run"),
       defaultPath: path.join(app.getPath('downloads'), recordings.exportName(run, file)),
       filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
     });

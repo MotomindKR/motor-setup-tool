@@ -8,6 +8,8 @@
   "author": "Motomind <MotomindKR@users.noreply.github.com>",
   "main": "main.js",
   "scripts": {
+    "setup:dxl": "node setup-dxl.js",
+    "prestart": "npm run setup:dxl",
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
@@ -30,11 +32,13 @@
     "png2icons": "^2.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-i18next": "^18.0.3",
     "recharts": "^3.11.0",
     "vite": "^6.4.1"
   },
   "dependencies": {
     "electron-updater": "6.8.11",
+    "i18next": "^27.2.2",
     "yazl": "3.3.1"
   }
 }

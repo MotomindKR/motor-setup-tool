@@ -316,9 +316,13 @@ impl JobOutput<'_> {
         }
     }
 
-    fn progress(&self, message: &str, percent: Option<i32>) {
+    fn progress(&self, message: &ProgressLabel, percent: Option<i32>) {
         if self.desktop {
-            if output_line(&json!({"type":"progress","message":message,"percent":percent})).is_err()
+            let detail = match message {
+                ProgressLabel::Text { .. } => None,
+                value => Some(value),
+            };
+            if output_line(&json!({"type":"progress","message":message.to_string(),"detail":detail,"percent":percent})).is_err()
             {
                 self.cancel.store(true, Ordering::Relaxed);
             }
@@ -730,7 +734,8 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
             };
             crate::cancel::check(cancel)?;
             out.progress(
-                "Firmware transfer starting. Keep power on; transfer finishes before exiting.",
+                &"Firmware transfer starting. Keep power on; transfer finishes before exiting."
+                    .into(),
                 None,
             );
             let version = firmware::update(&c, &prepared, cancel, |fraction, s| {

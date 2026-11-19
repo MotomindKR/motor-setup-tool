@@ -33,6 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
+      - run: npm run setup:dxl
       - run: npm run check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui

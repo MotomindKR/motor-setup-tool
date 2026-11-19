@@ -1,3 +1,5 @@
+import { messageText } from "../i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
 import {
   ArrowDownToLine,
@@ -33,37 +35,38 @@ import {
   Disclosure,
   NumericInput,
 } from "../ui.jsx";
-import { numberText, registerValueText } from "../controller.mjs";
-import { conciseNumber, displayAngle } from "../format.mjs";
+import { registerValueText } from "../controller.mjs";
+import { conciseNumber, displayAngle, numberText } from "../format.mjs";
 
 function RegisterPanel({ s, a, c }) {
+  const { t } = useTranslation();
   const access = (r) =>
     r.availability === "not_documented"
-      ? "Not documented"
+      ? t("Not documented")
       : r.readable
         ? r.writable
-          ? "Read / write"
-          : "Read only"
-        : "Write only";
+          ? t("Read / write")
+          : t("Read only")
+        : t("Write only");
   const storage = (r) =>
     r.persistence === "save_to_flash"
-      ? "Persistent · save required"
+      ? t("Persistent · save required")
       : r.persistence === "volatile"
-        ? "Live · not stored"
-        : "Persistence undocumented";
+        ? t("Live · not stored")
+        : t("Persistence undocumented");
   const registers = s.registers.filter((r) =>
-    `${r.name} ${r.symbol} 0x${r.index.toString(16)} ${r.host_index || ""}`
+    `${r.name} ${t(r.name)} ${r.symbol} 0x${r.index.toString(16)} ${r.host_index || ""}`
       .toLowerCase()
       .includes(s.registerSearch.trim().toLowerCase()),
   );
   const r = s.registers.find((r) => r.index === s.registerIndex);
   return (
     <Panel
-      title="Motor registers"
+      title={t("Motor registers")}
       className="register-panel"
       action={
         <Badge variant="secondary">
-          {registers.length} registers
+          {t("{{count}} registers", { count: registers.length })}
         </Badge>
       }
     >
@@ -72,20 +75,20 @@ function RegisterPanel({ s, a, c }) {
           <Search aria-hidden="true" />
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search registers"
+          aria-label={t("Search registers")}
           type="search"
-          placeholder="Search name, symbol, or address…"
+          placeholder={t("Search name, symbol, or address…")}
           value={s.registerSearch}
           onChange={(e) => a.searchRegisters(e.target.value)}
         />
       </InputGroup>
       <div className="register-workspace">
         <div className="register-list">
-          <Table aria-label="Registers">
+          <Table aria-label={t("Registers")}>
             <TableHeader>
               <TableRow>
-                <TableHead>Address</TableHead>
-                <TableHead>Register</TableHead>
+                <TableHead>{t("Address")}</TableHead>
+                <TableHead>{t("Register")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -108,10 +111,10 @@ function RegisterPanel({ s, a, c }) {
                       onClick={() => a.selectRegister(item.index)}
                     >
                       <span>
-                        {item.name}
+                        {t(item.name)}
                         <small>
                           {item.symbol}
-                          {` · ${access(item)}${item.writable && !item.editable ? " · Protected" : ""}`}
+                          {` · ${access(item)}${item.writable && !item.editable ? t(" · Protected") : ""}`}
                         </small>
                       </span>
                       <ChevronRight />
@@ -122,11 +125,11 @@ function RegisterPanel({ s, a, c }) {
             </TableBody>
           </Table>
           {!registers.length && (
-            <p className="field-hint no-registers">No matching registers.</p>
+            <p className="field-hint no-registers">{t("No matching registers.")}</p>
           )}
         </div>
         <div className="register-editor">
-          <h3>{r?.name || "Select a register"}</h3>
+          <h3>{r ? t(r.name) : t("Select a register")}</h3>
           <p className="register-meta">
             {r &&
               `0x${r.index.toString(16).toUpperCase()} · ${r.value_type} · ${access(r)}`}
@@ -134,13 +137,13 @@ function RegisterPanel({ s, a, c }) {
           {r && (
             <p className="field-hint">
               {storage(r)}
-              {r.host_index ? ` · Host code ${r.host_index}` : ""}
+              {r.host_index ? t(" · Host code {{code}}", { code: r.host_index }) : ""}
             </p>
           )}
-          {r?.description && <p>{r.description}</p>}
+          {r?.description && <p>{t(r.description)}</p>}
           <div className="register-current">
             <div>
-              <span>Current value</span>
+              <span>{t("Current value")}</span>
               <strong>
                 {s.registerRead
                   ? registerValueText(s.registerRead.value, r)
@@ -154,14 +157,14 @@ function RegisterPanel({ s, a, c }) {
               disabled={!c.registerRead}
             >
               <RefreshCw />
-              Read
+              {t("Read")}
             </Button>
           </div>
           {r?.editable ? (
             <>
               <Field
-                label="New value"
-                hint={`${conciseNumber(r.min)} to ${conciseNumber(r.max)}`}
+                label={t("New value")}
+                hint={t("{{min}} to {{max}}", { min: conciseNumber(r.min), max: conciseNumber(r.max) })}
               >
                 {r?.choices?.length ? (
                   <Choice
@@ -169,17 +172,17 @@ function RegisterPanel({ s, a, c }) {
                     onChange={a.setRegisterValue}
                     options={r.choices.map((ch) => ({
                       value: String(ch.value),
-                      label: ch.label,
+                      label: t(ch.label),
                     }))}
                     disabled={!s.registerRead || c.busy}
-                    placeholder="Read first"
+                    placeholder={t("Read first")}
                   />
                 ) : (
                   <NumericInput
                     min={r?.min}
                     max={r?.max}
                     step="any"
-                    placeholder="Read first"
+                    placeholder={t("Read first")}
                     value={s.registerValue}
                     onValueChange={a.setRegisterValue}
                     disabled={!s.registerRead || c.busy}
@@ -192,17 +195,17 @@ function RegisterPanel({ s, a, c }) {
                 onClick={a.writeRegister}
               >
                 <ArrowDownToLine />
-                Save to motor
+                {t("Save to motor")}
               </Button>
               <p className="field-hint" role="status">
-                {s.registerMessage ||
-                  (!s.registerRead ? "Read to edit." : "")}
+                {messageText(s.registerMessage) ||
+                  (!s.registerRead ? t("Read to edit.") : "")}
               </p>
             </>
           ) : (
             <p className="field-hint">
-              {r?.protected_reason ||
-                (r?.readable ? "Read only" : "Readback unavailable")}
+              {r?.protected_reason ? t(r.protected_reason) :
+                (r?.readable ? t("Read only") : t("Readback unavailable"))}
             </p>
           )}
         </div>
@@ -211,20 +214,21 @@ function RegisterPanel({ s, a, c }) {
   );
 }
 export function SetupPage({ s, a, c }) {
+  const { t } = useTranslation();
   if (!c.motor)
     return (
-      <Empty compact icon={Cable} title="No motor selected">
-        Scan above to open motor settings.
+      <Empty compact icon={Cable} title={t("No motor selected")}>
+        {t("Scan above to open motor settings.")}
       </Empty>
     );
   const spec = s.preview?.spec;
   return (
     <div className="stack">
       <div className="setup-grid">
-        <Panel title="Position reference" size="md">
+        <Panel title={t("Position reference")} size="md">
           <div className="reference-grid">
             <Field
-              label="Display angle"
+              label={t("Display angle")}
               type="number"
               step="any"
               min={displayAngle(-100, s.referenceUnit)}
@@ -233,13 +237,13 @@ export function SetupPage({ s, a, c }) {
               onValueChange={a.setReferenceInput}
               disabled={c.busy}
             />
-            <Field label="Unit">
+            <Field label={t("Unit")}>
               <Choice
                 value={s.referenceUnit}
                 onChange={a.setReferenceUnit}
                 options={[
-                  { value: "rad", label: "Radians" },
-                  { value: "deg", label: "Degrees" },
+                  { value: "rad", label: t("Radians") },
+                  { value: "deg", label: t("Degrees") },
                 ]}
                 disabled={c.busy}
               />
@@ -252,17 +256,17 @@ export function SetupPage({ s, a, c }) {
             onClick={() => a.zero()}
           >
             <Target />
-            Set current position
+            {t("Set current position")}
           </Button>
-          <p className="field-hint">Sets motor zero to 0 at this position.</p>
+          <p className="field-hint">{t("Sets motor zero to 0 at this position.")}</p>
         </Panel>
-        <Panel title="Motor identity" size="md">
+        <Panel title={t("Motor identity")} size="md">
           <div className="identity-current">
-            <span>Current motor ID</span>
+            <span>{t("Current motor ID")}</span>
             <strong>{s.motor?.id ?? "—"}</strong>
           </div>
           <Field
-            label="New motor ID"
+            label={t("New motor ID")}
             type="number"
             min="1"
             max="254"
@@ -278,12 +282,12 @@ export function SetupPage({ s, a, c }) {
             disabled={!c.changeId}
           >
             <Cpu />
-            Change ID
+            {t("Change ID")}
           </Button>
         </Panel>
-        <Panel title="Firmware" size="md">
+        <Panel title={t("Firmware")} size="md">
           <div className="identity-current">
-            <span>Installed version</span>
+            <span>{t("Installed version")}</span>
             <strong className="firmware-version">
               {s.motor?.firmware || "—"}
             </strong>
@@ -295,16 +299,16 @@ export function SetupPage({ s, a, c }) {
             onClick={a.prepareFirmware}
           >
             <ArrowDownToLine />
-            Download and verify
+            {t("Download and verify")}
           </Button>
           {s.firmwareMessage && (
             <p className="field-hint" role="status">
-              {s.firmwareMessage}
+              {messageText(s.firmwareMessage)}
             </p>
           )}
           <div className="firmware-actions">
             <Button variant="link" size="sm" onClick={a.releaseNotes}>
-              Release notes
+              {t("Release notes")}
               <ArrowUpRight />
             </Button>
             <Button
@@ -314,7 +318,7 @@ export function SetupPage({ s, a, c }) {
               onClick={a.updateFirmware}
             >
               <Upload />
-              Update firmware
+              {t("Update firmware")}
             </Button>
           </div>
         </Panel>
@@ -322,18 +326,18 @@ export function SetupPage({ s, a, c }) {
       {s.registers && <RegisterPanel s={s} a={a} c={c} />}
       <Disclosure
         className="disclosure motor-specs"
-        title="Motor specifications & CAN protocol"
+        title={t("Motor specifications & CAN protocol")}
       >
         <div className="spec-grid">
           <p>
             {spec
-              ? `${spec.rated_torque} Nm rated · ${spec.peak_torque} Nm peak · ${spec.no_load_rpm} rpm · ${spec.gear_ratio}:1 · ${spec.rated_voltage} V`
-              : "Select a motor to view its specifications."}
+              ? t("{{rated}} Nm rated · {{peak}} Nm peak · {{speed}} rpm · {{ratio}}:1 · {{voltage}} V", { rated: spec.rated_torque, peak: spec.peak_torque, speed: spec.no_load_rpm, ratio: spec.gear_ratio, voltage: spec.rated_voltage })
+              : t("Select a motor to view its specifications.")}
           </p>
           <p>
             {s.preset
-              ? `Host ID ${s.connection.hostId} · position ±${numberText(s.preset.profile.position_range)} rad · speed ±${numberText(s.preset.profile.velocity_range, 2)} rad/s · torque ±${numberText(s.preset.profile.torque_range, 2)} Nm`
-              : "Protocol details appear after a motor is selected."}
+              ? t("Host ID {{id}} · position ±{{position}} rad · speed ±{{speed}} rad/s · torque ±{{torque}} Nm", { id: s.connection.hostId, position: numberText(s.preset.profile.position_range), speed: numberText(s.preset.profile.velocity_range, 2), torque: numberText(s.preset.profile.torque_range, 2) })
+              : t("Protocol details appear after a motor is selected.")}
           </p>
         </div>
       </Disclosure>

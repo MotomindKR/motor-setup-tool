@@ -1,3 +1,5 @@
+import { messageText } from "./i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import {
   Activity,
@@ -44,6 +46,7 @@ import { SetupPage } from "./pages/Setup.jsx";
 import { DxlPage } from "./pages/Dxl.jsx";
 import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
+import { progressText } from "./format.mjs";
 import { syncWindowTheme } from "./window-theme.mjs";
 
 const pages = {
@@ -106,19 +109,20 @@ function useTheme() {
 }
 
 function Status({ s, c }) {
+  const { t } = useTranslation();
   const enabled = c.manual && s.manualStatus?.enabled;
   const issue = s.motor?.issue || (c.fresh && s.manualStatus?.faults);
   const label = issue
-    ? "Needs attention"
+    ? t("Needs attention")
     : enabled
-      ? "Motor enabled"
+      ? t("Motor enabled")
       : c.manual
-        ? "Monitoring"
+        ? t("Monitoring")
         : s.busy
-          ? "Working"
+          ? t("Working")
           : c.motor
-            ? "Connected"
-            : "Not connected";
+            ? t("Connected")
+            : t("Not connected");
   return (
     <span
       className="connection-badge header-status"
@@ -140,6 +144,7 @@ function Status({ s, c }) {
 }
 
 export function App({ controller }) {
+  const { t, i18n } = useTranslation();
   const s = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const a = controller.actions,
     appearance = useTheme();
@@ -164,20 +169,20 @@ export function App({ controller }) {
     };
   }, [controller, a]);
   return (
-    <UIProvider locale="en">
+    <UIProvider locale={i18n.language}>
       <SidebarProvider className="app-frame">
         <a className="skip-link" href="#workspace">
-          Skip to workspace
+          {t("Skip to workspace")}
         </a>
         <header className="app-header">
           <div className="header-navigation">
             <SidebarTrigger />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem>Workspace</BreadcrumbItem>
+                <BreadcrumbItem>{t("Workspace")}</BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{page.title}</BreadcrumbPage>
+                  <BreadcrumbPage>{t(page.title)}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -194,12 +199,12 @@ export function App({ controller }) {
                   className="header-disable"
                   variant="ghost"
                   size="sm"
-                  aria-label="Disable motor"
+                  aria-label={t("Disable motor")}
                   onClick={a.disable}
                   disabled={!c.disable}
                 >
                   <CircleStop />
-                  Disable motor
+                  {t("Disable motor")}
                 </Button>
               </>
             )}
@@ -213,7 +218,7 @@ export function App({ controller }) {
             onSettings={a.openSettings}
             updateAvailable={s.updateResult?.available}
           />
-          <SidebarInset className="app-body" aria-label={page.title}>
+          <SidebarInset className="app-body" aria-label={t(page.title)}>
             <div id="workspace" className="workspace" tabIndex={-1}>
               {s.notice && (
                 <Alert
@@ -222,12 +227,12 @@ export function App({ controller }) {
                   role={s.notice.error ? "alert" : "status"}
                 >
                   {s.notice.error ? <CircleAlert /> : <Info />}
-                  <AlertDescription>{s.notice.message}</AlertDescription>
+                  <AlertDescription>{messageText(s.notice.message)}</AlertDescription>
                   <Button
                     className="notice-close"
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="Dismiss message"
+                    aria-label={t("Dismiss message")}
                     onClick={a.dismissNotice}
                   >
                     <X />
@@ -247,7 +252,7 @@ export function App({ controller }) {
                   <Panel
                     className="work-panel"
                     size="md"
-                    title={s.work.title}
+                    title={t(s.work.title)}
                     action={
                       <Button
                         variant="outline"
@@ -256,17 +261,17 @@ export function App({ controller }) {
                         disabled={s.busy === "firmwareUpdate"}
                       >
                         <CircleStop />
-                        Stop
+                        {t("Stop")}
                       </Button>
                     }
                   >
                     <div className="work-message">
-                      <p role="status">{s.work.message || "Please wait…"}</p>
+                      <p role="status">{s.work.message ? progressText(s.work, t) : t("Please wait…")}</p>
                       {s.work.percent != null && <span>{s.work.percent}%</span>}
                     </div>
                     <Progress
                       value={s.work.percent}
-                      aria-label={s.work.title}
+                      aria-label={t(s.work.title)}
                     />
                   </Panel>
                 )}
@@ -294,7 +299,7 @@ export function App({ controller }) {
             </DialogHeader>
             <DialogFooter>
               <Button variant="outline" onClick={a.closeConfirmation}>
-                Cancel
+                {t("Cancel")}
               </Button>
               <Button
                 variant={
@@ -302,7 +307,7 @@ export function App({ controller }) {
                 }
                 onClick={a.confirm}
               >
-                Confirm
+                {t("Confirm")}
               </Button>
             </DialogFooter>
           </DialogContent>

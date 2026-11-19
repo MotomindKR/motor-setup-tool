@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('motorApp', {
   platform: process.platform,
+  setLanguage: language => ipcRenderer.invoke('app:setLanguage', language),
   setWindowTheme: (theme, caption) => ipcRenderer.invoke('window:setTheme', theme, caption),
   run: (operation, params) => ipcRenderer.invoke('backend:run', operation, params),
   cancel: () => ipcRenderer.invoke('backend:cancel'),

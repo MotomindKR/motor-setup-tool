@@ -1400,11 +1400,12 @@ pub fn acquire(
                         let elapsed = start.elapsed().as_secs_f64().min(duration);
                         progress(WorkProgress::recording(
                             ((recorded + elapsed) / total) as f32,
-                            format!(
-                                "{} · {} · {elapsed:.1} / {duration:.0} s",
-                                if validation { "Validation" } else { "Training" },
-                                exciter.phase_name()
-                            ),
+                            ProgressLabel::Capture {
+                                trace: if validation { "Validation" } else { "Training" },
+                                phase: exciter.phase_name().into(),
+                                elapsed,
+                                duration,
+                            },
                         ));
                         last_progress = Instant::now();
                     }
@@ -1418,7 +1419,11 @@ pub fn acquire(
             }
             progress(WorkProgress::recording(
                 ((recorded + duration) / total) as f32,
-                format!("{name} recorded"),
+                if validation {
+                    "Validation recorded"
+                } else {
+                    "Training recorded"
+                },
             ));
         }
         Ok(())

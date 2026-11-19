@@ -1,3 +1,5 @@
+import { messageText } from "../i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
 import {
   Activity,
@@ -15,7 +17,8 @@ import { Slider } from "@motomindkr/ui/components/slider";
 import { Separator } from "@motomindkr/ui/components/separator";
 import { Panel, Button, Check, Empty, Metric } from "../ui.jsx";
 import { SingleTraceChart } from "../Chart.jsx";
-import { maxJogSpeed, numberText } from "../controller.mjs";
+import { maxJogSpeed } from "../controller.mjs";
+import { numberText } from "../format.mjs";
 
 const motionSignals = [
   ["Position", "position_rad", "rad", 3],
@@ -56,10 +59,11 @@ function JogButton({ direction, disabled, a, children }) {
   );
 }
 export function TestPage({ s, a, c }) {
+  const { t } = useTranslation();
   if (!c.motor)
     return (
-      <Empty compact icon={Cable} title="No motor selected">
-        Scan above to start testing.
+      <Empty compact icon={Cable} title={t("No motor selected")}>
+        {t("Scan above to start testing.")}
       </Empty>
     );
   const status = s.manualStatus;
@@ -69,20 +73,20 @@ export function TestPage({ s, a, c }) {
   const controlsLocked = (c.busy && !c.manual) || canDisable;
   const feedbackLabel =
     status?.preparing && c.manual
-      ? "Checking watchdog"
+      ? t("Checking watchdog")
       : c.fresh
         ? status.faults
-          ? "Motor fault"
+          ? t("Motor fault")
           : status.enabled
-            ? "Enabled"
-            : "Disabled"
-        : "No live feedback";
+            ? t("Enabled")
+            : t("Disabled")
+        : t("No live feedback");
   const specTorque = s.preview?.spec?.rated_torque;
   return (
     <div className="task-layout">
       <div className="task-content stack">
         <Panel
-          title="Live feedback"
+          title={t("Live feedback")}
           description={`${s.motor.model} · ID ${s.motor.id}`}
           action={
             <Badge
@@ -102,7 +106,7 @@ export function TestPage({ s, a, c }) {
             {feedbackSignals.map(([label, key, unit, digits]) => (
               <Metric
                 key={key}
-                label={label}
+                label={t(label)}
                 value={c.fresh ? numberText(displayValue(status, key), digits) : "—"}
                 unit={unit}
               />
@@ -110,13 +114,14 @@ export function TestPage({ s, a, c }) {
           </div>
           {(status?.error || status?.stop_reason) && (
             <p className="feedback-reason" role="status">
-              {status.error || status.stop_reason}
+              {messageText(status.error || status.stop_reason)}
             </p>
           )}
           {c.fresh && (
             <p className="field-hint">
-              Mode {status.mode} · Faults 0x
-              {Number(status.faults).toString(16).padStart(2, "0")}
+              {t("Mode {{mode}} · Faults 0x{{faults}}", {
+                mode: status.mode, faults: Number(status.faults).toString(16).padStart(2, "0"),
+              })}
             </p>
           )}
         </Panel>
@@ -124,24 +129,24 @@ export function TestPage({ s, a, c }) {
           motionSignals.map(([label, key, unit]) => (
             <SingleTraceChart
               key={key}
-              title={label}
+              title={t(label)}
               unit={unit}
               compact
-              label="Measured"
+              label={t("Measured")}
               x={sampleTimes}
               y={s.manualHistory.map(sample => displayValue(sample, key))}
             />
           ))
         ) : (
           <Panel>
-            <Empty icon={Activity} title="No live data">
-              <p>Start monitoring to read motor feedback.</p>
+            <Empty icon={Activity} title={t("No live data")}>
+              <p>{t("Start monitoring to read motor feedback.")}</p>
             </Empty>
           </Panel>
         )}
       </div>
       <div className="task-aside stack">
-        <Panel title="Motor controls" size="md">
+        <Panel title={t("Motor controls")} size="md">
           <Button
             className="full"
             variant="outline"
@@ -149,11 +154,11 @@ export function TestPage({ s, a, c }) {
             disabled={!c.monitor}
           >
             {c.manual ? <CircleStop /> : <Play />}
-            {c.manual ? "Stop monitoring" : "Start monitoring"}
+            {c.manual ? t("Stop monitoring") : t("Start monitoring")}
           </Button>
           <Separator className="control-divider" />
           <div className="range-label">
-            <label id="jog-speed-label">Jog speed</label>
+            <label id="jog-speed-label">{t("Jog speed")}</label>
             <span>
               {numberText(Number(s.jogSpeed), 2)} <small>rad/s</small>
             </span>
@@ -173,7 +178,7 @@ export function TestPage({ s, a, c }) {
             onChange={a.reviewJog}
             disabled={controlsLocked}
           >
-            Motor secured · shaft clear
+            {t("Motor secured · shaft clear")}
           </Check>
           <Button
             className="full"
@@ -182,29 +187,23 @@ export function TestPage({ s, a, c }) {
             disabled={canDisable ? !c.disable : !c.enable}
           >
             <Power />
-            {canDisable ? "Disable motor" : "Enable motor"}
+            {canDisable ? t("Disable motor") : t("Enable motor")}
           </Button>
           <div className="jog-controls">
             <JogButton direction={-1} a={a} disabled={!c.jog}>
               <ArrowLeft />
-              Jog −
+              {t("Jog −")}
             </JogButton>
             <JogButton direction={1} a={a} disabled={!c.jog}>
-              Jog +<ArrowRight />
+              {t("Jog +")}<ArrowRight />
             </JogButton>
           </div>
-          <p className="jog-hint">Hold to jog. Release to stop.</p>
+          <p className="jog-hint">{t("Hold to jog. Release to stop.")}</p>
           <p className="field-hint">
-            Torque limit{" "}
-            {specTorque == null
-              ? "—"
-              : numberText(
-                  Math.min(Number(s.config?.torque_limit), specTorque * 0.1),
-                  2,
-                )}{" "}
-            Nm · travel ±
-            {s.config ? numberText(Number(s.config.travel_limit), 3) : "—"} rad
-            from enable.
+            {t("Torque limit {{torque}} Nm · travel ±{{travel}} rad from enable.", {
+              torque: specTorque == null ? "—" : numberText(Math.min(Number(s.config?.torque_limit), specTorque * 0.1), 2),
+              travel: s.config ? numberText(Number(s.config.travel_limit), 3) : "—",
+            })}
           </p>
           <Separator className="control-divider" />
           <Button
@@ -214,12 +213,12 @@ export function TestPage({ s, a, c }) {
             disabled={!c.zero}
           >
             <Target />
-            Set position as zero
+            {t("Set position as zero")}
           </Button>
         </Panel>
         <p className="aside-note">
           <ShieldCheck />
-          Keep a physical stop available.
+          {t("Keep a physical stop available.")}
         </p>
       </div>
     </div>

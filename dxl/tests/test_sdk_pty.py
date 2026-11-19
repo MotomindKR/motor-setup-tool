@@ -208,7 +208,7 @@ def test_sdk_crc_error_stops_without_writing(wire):
 def test_sdk_missing_write_ack_is_uncertain_and_latches_fault(wire):
     emulator, service = wire
     emulator.drop_write_reply = True
-    with pytest.raises(DeviceError, match="일부 값"):
+    with pytest.raises(DeviceError, match="Some values"):
         service.set_direction([30], True)
     assert emulator.bus.registers[30][10] == 1
     assert service.faulted
@@ -244,7 +244,7 @@ def test_sdk_id_change_verified_with_old_new_or_missing_ack(wire, ack, new_id):
 def test_sdk_refused_id_write_is_not_verified(wire):
     emulator, service = wire
     emulator.reject_id_write = True
-    with pytest.raises(DeviceError, match="ID 저장 중단"):
+    with pytest.raises(DeviceError, match="ID change stopped"):
         service.set_id(30, 40)
     assert service.faulted
     assert service.transport.ping(30) == 1200
@@ -263,6 +263,6 @@ def test_sdk_ping_corruption_is_not_a_free_destination(wire):
 @pytest.mark.parametrize("motor_id", [-1, 253, 254, True])
 def test_sdk_never_broadcasts_id_write(wire, motor_id):
     emulator, service = wire
-    with pytest.raises(DeviceError, match="단일 모터"):
+    with pytest.raises(DeviceError, match="single motor ID"):
         service.transport.write(motor_id, 7, 1, 40)
     assert emulator.requests == []

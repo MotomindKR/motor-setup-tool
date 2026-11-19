@@ -101,6 +101,7 @@ jobs:
       - name: Check Electron code
         working-directory: electron
         env:
+          MOTOMIND_DXL_PYTHON: python
           TEST_NATIVE_BACKEND: '1'
         run: npm run check
       - name: Build desktop installers

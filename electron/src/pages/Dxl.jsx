@@ -1,6 +1,29 @@
+import { message, messageText } from "../i18n.mjs";
+import { numberText } from "../format.mjs";
+import { formatLocale } from "../language.mjs";
+import { useTranslation } from "react-i18next";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@motomindkr/ui/components/alert";
+import { Cable, RefreshCw, Search } from "lucide-react";
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxList,
+  ComboboxEmpty,
+  ComboboxItem,
+} from "@motomindkr/ui/components/combobox";
+import { Field as UIField, FieldLabel } from "@motomindkr/ui/components/field";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@motomindkr/ui/components/item";
 import { Badge } from "@motomindkr/ui/components/badge";
+import { Spinner } from "@motomindkr/ui/components/spinner";
 import { DataTable } from "@motomindkr/ui/components/data-table";
 import {
   Dialog,
@@ -13,47 +36,80 @@ import {
 import { FreshnessIndicator } from "@motomindkr/ui/components/freshness-indicator";
 import { Button, Choice, Field, Panel } from "../ui.jsx";
 
-const column = (id, header) => ({ id, header, value: (row) => row[id] });
-const angle = (key, label) => ({
-  id: key,
-  header: label,
-  value: (row) => row[key],
-  align: "right",
-  cell: (row) =>
-    `${row[key].toFixed(3)} rad / ${row[key.replace("radians", "degrees")].toFixed(1)}°`,
-});
-const columns = [
-  column("motor_id", "ID"),
-  column("name", "Model"),
-  column("firmware", "FW"),
-  {
-    id: "baud_rate",
-    header: "Baud rate (bps)",
-    value: (row) => row.baud_rate ?? "—",
-    cell: (row) => row.baud_rate?.toLocaleString("en-US") ?? "—",
-    align: "right",
-  },
-  column("operating_mode", "Mode"),
-  {
-    id: "reverse",
-    header: "Direction",
-    value: (row) => (row.reverse ? "Reverse" : "Forward"),
-  },
-  column("position", "Position (pulse)"),
-  angle("radians", "Motor angle"),
-  angle("joint_radians", "Joint angle"),
-  column("homing_offset", "Homing offset"),
-  {
-    id: "torque",
-    header: "Torque",
-    value: (row) => (row.torque ? "On" : "Off"),
-  },
-  column("hardware_error", "HW error"),
-  column("status_return", "Return level"),
-  column("current_ma", "Current (mA)"),
-  column("voltage", "Voltage (V)"),
-  column("temperature", "Temp. (°C)"),
-];
+function motorColumns(t) {
+  return [
+    { id: "motor_id", header: t("ID"), value: (row) => row.motor_id },
+    {
+      id: "name",
+      header: t("Model"),
+      value: (row) => row.name,
+      cell: (row) =>
+        row.hardware_error ? (
+          <>
+            {row.name}{" "}
+            <Badge variant="error">
+              {t("Hardware error {{code}}", { code: row.hardware_error })}
+            </Badge>
+          </>
+        ) : (
+          row.name
+        ),
+    },
+    {
+      id: "operating_mode",
+      header: t("Mode"),
+      value: (row) => row.operating_mode,
+    },
+    {
+      id: "position",
+      header: t("Position (pulse)"),
+      value: (row) => row.position,
+      align: "right",
+    },
+    {
+      id: "joint_radians",
+      header: t("Joint angle"),
+      value: (row) => row.joint_radians,
+      align: "right",
+      cell: (row) =>
+        `${numberText(row.joint_radians, 3)} rad / ${numberText(row.joint_degrees, 1)}°`,
+    },
+    {
+      id: "torque",
+      header: t("Torque"),
+      value: (row) => (row.torque ? t("On") : t("Off")),
+    },
+  ];
+}
+
+function MotorDetails({ motor }) {
+  const { t } = useTranslation();
+  const readings = [
+    [t("Firmware"), motor.firmware],
+    [t("Baud rate (bps)"), motor.baud_rate?.toLocaleString(formatLocale)],
+    [t("Direction"), motor.reverse ? t("Reverse") : t("Forward")],
+    [
+      t("Motor angle"),
+      `${numberText(motor.radians, 3)} rad / ${numberText(motor.degrees, 1)}°`,
+    ],
+    [t("Homing offset"), motor.homing_offset],
+    [t("HW error"), motor.hardware_error],
+    [t("Return level"), motor.status_return],
+    [t("Current (mA)"), motor.current_ma],
+    [t("Voltage (V)"), motor.voltage],
+    [t("Temp. (°C)"), motor.temperature],
+  ];
+  return (
+    <dl className="dxl-readings">
+      {readings.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value ?? "—"}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 const rowId = (row) => String(row.motor_id);
 const directionChoices = [
   { value: "forward", label: "Forward" },
@@ -61,6 +117,8 @@ const directionChoices = [
 ];
 
 export function DxlPage({ platform, active }) {
+  const { t } = useTranslation();
+  const columns = React.useMemo(() => motorColumns(t), [t]);
   const api = window.motorApp;
   const [ports, setPorts] = useState([]);
   const [port, setPort] = useState(platform === "linux" ? "/dev/ttyACM0" : "");
@@ -69,6 +127,7 @@ export function DxlPage({ platform, active }) {
   const [connected, setConnected] = useState(false);
   const [faulted, setFaulted] = useState(false);
   const [fresh, setFresh] = useState(false);
+  const [pollError, setPollError] = useState("");
   const [visible, setVisible] = useState(!document.hidden);
   const [motors, setMotors] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -83,12 +142,17 @@ export function DxlPage({ platform, active }) {
   const loadedPorts = useRef(false);
   const ids = selected.map(Number).sort((a, b) => a - b);
   const motorIds = motors.map((row) => row.motor_id).join(",");
+  const selectedIdsText = ids.join(", ");
+  const targets = ids.length
+    ? t("Selected IDs: {{ids}}", { ids: selectedIdsText })
+    : t("Select a motor in the table.");
   const canRead = connected && !busy;
   const hasSelection = canRead && ids.length > 0;
   const canWrite = active && visible && hasSelection && fresh && !faulted;
-  const canConfirm = confirm?.operation === "torqueOff"
-    ? active && visible && hasSelection
-    : canWrite;
+  const canConfirm =
+    confirm?.operation === "torqueOff"
+      ? active && visible && hasSelection
+      : canWrite;
   const modeChanges = motors.filter(
     (row) => selected.includes(rowId(row)) && row.operating_mode !== 5,
   );
@@ -97,6 +161,8 @@ export function DxlPage({ platform, active }) {
     setConnected(reply.connected);
     setFaulted(reply.faulted);
     if (!reply.connected) {
+      setPollError("");
+      setConfirm(null);
       setMotors([]);
       setSelected([]);
       setFresh(false);
@@ -145,7 +211,8 @@ export function DxlPage({ platform, active }) {
   useEffect(() => {
     const updateVisibility = () => setVisible(!document.hidden);
     document.addEventListener("visibilitychange", updateVisibility);
-    return () => document.removeEventListener("visibilitychange", updateVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", updateVisibility);
   }, []);
 
   useLayoutEffect(() => {
@@ -166,13 +233,16 @@ export function DxlPage({ platform, active }) {
         if (request !== generation.current) return;
         updateConnection(reply);
         if (reply.error) throw new Error(reply.error);
+        setPollError("");
         setMotors(reply.result.motors);
         setFresh(true);
       } catch (error) {
         if (request !== generation.current) return;
         setFresh(false);
-        setConfirm((pending) => pending?.operation === "torqueOff" ? pending : null);
-        setNotice({ error: error.message });
+        setConfirm((pending) =>
+          pending?.operation === "torqueOff" ? pending : null,
+        );
+        setPollError(error.message);
       } finally {
         pollPending.current = false;
       }
@@ -182,12 +252,11 @@ export function DxlPage({ platform, active }) {
     return () => clearInterval(timer);
   }, [active, api, connected, motorIds, visible]);
 
-  function load(result, selectAll) {
-    const available = result.motors.map(rowId);
-    setMotors(result.motors);
-    setSelected((previous) =>
-      selectAll ? available : previous.filter((id) => available.includes(id)),
-    );
+  function loadMotors({ motors }, selection = selected) {
+    const available = new Set(motors.map(rowId));
+    setPollError("");
+    setMotors(motors);
+    setSelected(selection.filter((id) => available.has(id)));
     setFresh(true);
   }
 
@@ -199,11 +268,14 @@ export function DxlPage({ platform, active }) {
       action: () =>
         run(operation, { ids, ...params }, (result) => {
           if (operation === "set1Mbps") {
-            load(result, true);
+            loadMotors(result);
             setActiveBaud(result.baud);
             setBaud(String(result.baud));
             setNotice({
-              message: `1 Mbps verified for ID ${ids[0]}.${result.path ? ` Backup saved to ${result.path}` : ""}`,
+              message: message("1 Mbps verified for ID {{id}}.", {
+                id: ids[0],
+              }),
+              backup: result.path,
             });
             return;
           }
@@ -218,7 +290,10 @@ export function DxlPage({ platform, active }) {
               .map((row) => row.motor_id)
               .join(", ");
             setNotice({
-              message: `Mode 5 verified for IDs ${verifiedIds}.${result.path ? ` Backup saved to ${result.path}` : ""}`,
+              message: message("Mode 5 verified for IDs {{ids}}.", {
+                ids: verifiedIds,
+              }),
+              backup: result.path,
             });
             return;
           }
@@ -236,18 +311,30 @@ export function DxlPage({ platform, active }) {
           }
           setNotice({
             message: result.path
-              ? `Saved and verified. Backup: ${result.path}`
+              ? message("Saved and verified. Backup: {{path}}", {
+                  path: result.path,
+                })
               : "Torque off verified.",
           });
         }),
     });
   }
 
+  const connectionStatus = (
+    <Badge role="status" variant={connected ? "success" : "secondary"}>
+      {busy && <Spinner aria-hidden="true" />}
+      {busy
+        ? t("Working…")
+        : connected
+          ? t("Hardware connected")
+          : t("Disconnected")}
+    </Badge>
+  );
   const newIdValue = /^[0-9]{1,3}$/.test(newId.trim()) ? Number(newId) : NaN;
   return (
     <section
-      className="dxl-workspace"
-      aria-label="Dynamixel setup"
+      className="stack dxl-workspace"
+      aria-label={t("Dynamixel setup")}
       hidden={!active}
       aria-busy={busy}
     >
@@ -257,140 +344,196 @@ export function DxlPage({ platform, active }) {
           role={notice.error ? "alert" : "status"}
         >
           <AlertDescription className="dxl-message">
-            {notice.error || notice.message}
+            {notice.error || messageText(notice.message)}
+            {notice.backup && (
+              <div>
+                {t("Backup saved to {{path}}", { path: notice.backup })}
+              </div>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {pollError && (
+        <Alert variant="error">
+          <AlertDescription className="dxl-message">
+            {pollError}
           </AlertDescription>
         </Alert>
       )}
       {faulted && (
         <Alert variant="error">
           <AlertDescription>
-            Writes are locked. Disconnect and check the motor settings after
-            reconnecting.
+            {t(
+              "Writes are locked. Disconnect and check the motor settings after reconnecting.",
+            )}
           </AlertDescription>
         </Alert>
       )}
-      <Panel
-        title="Dynamixel connection"
-        description="XL330-M288-T and XL330-M077-T via a U2D2 TTL adapter."
-      >
-        <div className="dxl-row">
-          <Field
-            label="Serial port"
-            value={port}
-            list="dxl-port-list"
-            placeholder={platform === "win32" ? "COM3" : "/dev/tty…"}
-            onChange={(event) => setPort(event.target.value)}
-            disabled={connected || busy}
-          />
-          <datalist id="dxl-port-list">
-            {ports.map((device) => (
-              <option key={device} value={device} />
-            ))}
-          </datalist>
-          <Field
-            label="Baud rate"
-            inputMode="numeric"
-            value={connected ? String(activeBaud) : baud}
-            onChange={(event) => setBaud(event.target.value)}
-            disabled={connected || busy}
-          />
-          <Button
-            variant="outline"
-            disabled={connected || busy}
-            onClick={listPorts}
-          >
-            Refresh ports
-          </Button>
-          {platform === "linux" && (
+      {connected ? (
+        <Item variant="outline">
+          <ItemMedia variant="icon">
+            <Cable />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>
+              <h2>{t("Dynamixel connection")}</h2>
+            </ItemTitle>
+            <ItemDescription>
+              {port.trim()} · {activeBaud?.toLocaleString(formatLocale)} bps
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            {connectionStatus}
             <Button
               variant="outline"
-              disabled={
-                connected ||
-                busy ||
-                !/^\/dev\/tty(?:ACM|USB)[0-9]+$/.test(port.trim())
-              }
-              onClick={() =>
-                run("authorize", { port: port.trim() }, () =>
-                  setNotice({
-                    message: `Access ready for ${port.trim()}. Connect to continue.`,
-                  }),
-                )
-              }
-            >
-              Grant port access
-            </Button>
-          )}
-        </div>
-        <div className="dxl-row">
-          {connected ? (
-            <Button
-              variant="outline"
+              size="sm"
               disabled={busy}
               onClick={() => run("disconnect")}
             >
-              Disconnect
+              {t("Disconnect")}
             </Button>
-          ) : (
-            <Button
-              disabled={
-                busy ||
-                !port.trim() ||
-                !/^[1-9][0-9]{0,7}$/.test(baud)
-              }
-              onClick={() =>
-                run(
-                  "connect",
-                  { port: port.trim(), baud: Number(baud) },
-                  (result) => {
-                    load(result, true);
-                    setActiveBaud(result.baud);
-                    setNewId("");
-                  },
-                )
-              }
-            >
-              Connect
-            </Button>
+          </ItemActions>
+        </Item>
+      ) : (
+        <Panel
+          title={t("Dynamixel connection")}
+          description={t(
+            "XL330-M288-T and XL330-M077-T via a U2D2 TTL adapter.",
           )}
-          <Badge variant="outline">
-            {connected ? "Hardware connected" : "Disconnected"}
-          </Badge>
-          {busy && <span role="status">Working…</span>}
-        </div>
-      </Panel>
-      {connected && (
-        <>
-          <Panel
-            title="Motors"
-            action={<FreshnessIndicator quality={fresh ? "live" : "stale"} />}
-          >
-            <div className="dxl-row">
-              <Button
-                variant="outline"
-                disabled={!canRead}
-                onClick={() => run("scan", {}, (result) => load(result, false))}
+          action={connectionStatus}
+        >
+          <div className="dxl-connection">
+            <UIField>
+              <FieldLabel htmlFor="dxl-port">{t("Serial port")}</FieldLabel>
+              <Combobox
+                items={ports}
+                value={port || null}
+                inputValue={port}
+                onInputValueChange={setPort}
+                onValueChange={(value) => {
+                  if (value) setPort(value);
+                }}
+                disabled={busy}
               >
-                Scan bus
-              </Button>
+                <ComboboxInput
+                  id="dxl-port"
+                  disabled={busy}
+                  placeholder={platform === "win32" ? "COM3" : "/dev/tty…"}
+                />
+                <ComboboxContent>
+                  <ComboboxEmpty>
+                    {t("No matching ports. Enter a port name to connect.")}
+                  </ComboboxEmpty>
+                  <ComboboxList>
+                    {(device) => (
+                      <ComboboxItem key={device} value={device}>
+                        {device}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
+            </UIField>
+            <Field
+              label={t("Baud rate")}
+              inputMode="numeric"
+              value={baud}
+              onChange={(event) => setBaud(event.target.value)}
+              disabled={busy}
+            />
+            <div className="dxl-actions">
               <Button
-                variant="outline"
-                disabled={!canRead || !motorIds}
+                disabled={
+                  busy || !port.trim() || !/^[1-9][0-9]{0,7}$/.test(baud)
+                }
                 onClick={() =>
                   run(
-                    "poll",
-                    { ids: motorIds.split(",").map(Number) },
-                    (result) => load(result, false),
+                    "connect",
+                    { port: port.trim(), baud: Number(baud) },
+                    (result) => {
+                      loadMotors(
+                        result,
+                        result.motors.length === 1
+                          ? result.motors.map(rowId)
+                          : [],
+                      );
+                      setActiveBaud(result.baud);
+                      setNewId("");
+                    },
                   )
                 }
               >
-                Refresh status
+                {t("Connect")}
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={listPorts}
+              >
+                <RefreshCw />
+                {t("Refresh ports")}
+              </Button>
+              {platform === "linux" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={
+                    busy || !/^\/dev\/tty(?:ACM|USB)[0-9]+$/.test(port.trim())
+                  }
+                  onClick={() =>
+                    run("authorize", { port: port.trim() }, () =>
+                      setNotice({
+                        message: message(
+                          "Access ready for {{port}}. Connect to continue.",
+                          { port: port.trim() },
+                        ),
+                      }),
+                    )
+                  }
+                >
+                  {t("Grant port access")}
+                </Button>
+              )}
             </div>
+          </div>
+        </Panel>
+      )}
+      {connected && (
+        <>
+          <Panel
+            title={t("Motors")}
+            action={
+              <div className="dxl-actions">
+                <FreshnessIndicator quality={fresh ? "live" : "stale"} />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!canRead}
+                  onClick={() => run("scan", {}, loadMotors)}
+                >
+                  <Search />
+                  {t("Scan bus")}
+                </Button>
+              </div>
+            }
+          >
             <DataTable
               data={motors}
               columns={columns}
               getRowId={rowId}
-              caption="Dynamixel motors"
+              caption={t("Dynamixel motors")}
+              renderExpanded={(row) => <MotorDetails motor={row} />}
+              labels={{
+                filter: t("Filter motors"),
+                empty: t("No results."),
+                selectAll: t("Select all filtered rows"),
+                selectRow: t("Select"),
+                details: t("Details"),
+                rows: t("rows"),
+                selected: t("selected"),
+                scrollArea: t("Dynamixel motors"),
+              }}
               selectable
               selectedIds={selected}
               onSelectionChange={(values) => {
@@ -398,23 +541,28 @@ export function DxlPage({ platform, active }) {
               }}
             />
           </Panel>
-          <Panel
-            title="EEPROM settings"
-            description="Support the mechanism before turning torque off. Hold the reference pose while saving zero at 2048 pulses (0° joint angle)."
-          >
-            <div className="dxl-row">
+          <Panel title={t("EEPROM settings")} description={targets}>
+            <p className="dxl-safety">
+              {t(
+                "Support the mechanism before turning torque off. Hold the reference pose while saving zero at 2048 pulses (0° joint angle).",
+              )}
+            </p>
+            <div className="dxl-actions">
               <Button
                 variant="outline"
                 disabled={!hasSelection}
                 onClick={() =>
                   write(
                     "torqueOff",
-                    "Turn torque off?",
-                    `Support the mechanism first. Torque will be disabled for IDs ${ids.join(", ")}.`,
+                    t("Turn torque off?"),
+                    t(
+                      "Support the mechanism first. Torque will be disabled for IDs {{ids}}.",
+                      { ids: selectedIdsText },
+                    ),
                   )
                 }
               >
-                Torque off
+                {t("Torque off")}
               </Button>
               <Button
                 variant="outline"
@@ -422,12 +570,24 @@ export function DxlPage({ platform, active }) {
                 onClick={() =>
                   write(
                     "setMode5",
-                    "Set current-based position control?",
-                    `Set Mode 5 for ${modeChanges.map((row) => `ID ${row.motor_id} (Mode ${row.operating_mode})`).join(", ")}. Torque must be off. The motor resets control settings, and the Min/Max Position Limits no longer apply.`,
+                    t("Set current-based position control?"),
+                    t(
+                      "Set Mode 5 for {{motors}}. Torque must be off. The motor resets control settings, and the Min/Max Position Limits no longer apply.",
+                      {
+                        motors: modeChanges
+                          .map((row) =>
+                            t("ID {{id}} (Mode {{mode}})", {
+                              id: row.motor_id,
+                              mode: row.operating_mode,
+                            }),
+                          )
+                          .join(", "),
+                      },
+                    ),
                   )
                 }
               >
-                Set Mode 5
+                {t("Set Mode 5")}
               </Button>
               <Button
                 variant="outline"
@@ -437,90 +597,114 @@ export function DxlPage({ platform, active }) {
                 onClick={() =>
                   write(
                     "set1Mbps",
-                    "Set 1 Mbps?",
-                    `Connect only ID ${ids[0]} to the U2D2 and turn torque off. The app will save 1,000,000 bps and verify the motor at that speed.`,
+                    t("Set 1 Mbps?"),
+                    t(
+                      "Connect only ID {{id}} to the U2D2 and turn torque off. The app will save 1,000,000 bps and verify the motor at that speed.",
+                      { id: ids[0] },
+                    ),
                   )
                 }
               >
-                Set 1 Mbps
+                {t("Set 1 Mbps")}
               </Button>
               <Button
                 disabled={!canWrite}
                 onClick={() =>
                   run("saveZero", { ids }, ({ path }) =>
                     setNotice({
-                      message: `Zero saved and verified. Backup saved to ${path}`,
+                      message: message(
+                        "Zero saved and verified. Backup saved to {{path}}",
+                        { path },
+                      ),
                     }),
                   )
                 }
               >
-                Save zero
+                {t("Save zero")}
               </Button>
             </div>
-            <div className="dxl-row">
-              <Field label="Direction">
-                <Choice
-                  value={direction}
-                  options={directionChoices}
-                  onChange={setDirection}
-                  disabled={busy}
+            <div className="dxl-edits">
+              <div className="dxl-edit">
+                <Field label={t("Direction")}>
+                  <Choice
+                    value={direction}
+                    options={directionChoices.map((choice) => ({
+                      ...choice,
+                      label: t(choice.label),
+                    }))}
+                    onChange={setDirection}
+                    disabled={busy}
+                  />
+                </Field>
+                <Button
+                  variant="outline"
+                  disabled={!canWrite}
+                  onClick={() =>
+                    write(
+                      "direction",
+                      t("Save motor direction?"),
+                      t("Set direction to {{direction}} for IDs {{ids}}.", {
+                        direction:
+                          direction === "reverse" ? t("Reverse") : t("Forward"),
+                        ids: selectedIdsText,
+                      }),
+                      { reverse: direction === "reverse" },
+                    )
+                  }
+                >
+                  {t("Save direction")}
+                </Button>
+              </div>
+              <div className="dxl-edit">
+                <Field
+                  label={t("New ID")}
+                  inputMode="numeric"
+                  value={newId}
+                  disabled={busy || ids.length !== 1}
+                  onChange={(event) => setNewId(event.target.value)}
                 />
-              </Field>
-              <Button
-                variant="outline"
-                disabled={!canWrite}
-                onClick={() =>
-                  write(
-                    "direction",
-                    "Save motor direction?",
-                    `Set direction to ${direction} for IDs ${ids.join(", ")}.`,
-                    { reverse: direction === "reverse" },
-                  )
-                }
-              >
-                Save direction
-              </Button>
-              <Field
-                label="New ID"
-                inputMode="numeric"
-                value={newId}
-                disabled={busy || ids.length !== 1}
-                onChange={(event) => setNewId(event.target.value)}
-              />
-              <Button
-                variant="outline"
-                disabled={
-                  !canWrite ||
-                  ids.length !== 1 ||
-                  !Number.isInteger(newIdValue) ||
-                  newIdValue > 252 ||
-                  newIdValue === ids[0]
-                }
-                onClick={() =>
-                  write(
-                    "setId",
-                    "Change motor ID?",
-                    `Change ID ${ids[0]} to ${newIdValue}. If motors share an ID, connect only one at a time.`,
-                    { newId: newIdValue },
-                  )
-                }
-              >
-                Save ID
-              </Button>
+                <Button
+                  variant="outline"
+                  disabled={
+                    !canWrite ||
+                    ids.length !== 1 ||
+                    !Number.isInteger(newIdValue) ||
+                    newIdValue > 252 ||
+                    newIdValue === ids[0]
+                  }
+                  onClick={() =>
+                    write(
+                      "setId",
+                      t("Change motor ID?"),
+                      t(
+                        "Change ID {{id}} to {{newId}}. If motors share an ID, connect only one at a time.",
+                        { id: ids[0], newId: newIdValue },
+                      ),
+                      { newId: newIdValue },
+                    )
+                  }
+                >
+                  {t("Save ID")}
+                </Button>
+              </div>
             </div>
           </Panel>
-          <Panel title="Settings backups">
-            <div className="dxl-row">
+          <Panel title={t("Settings backups")} description={targets}>
+            <div className="dxl-actions">
               <Button
                 variant="outline"
                 disabled={!hasSelection}
                 onClick={() =>
                   run("export", { ids }, (result) =>
-                    setNotice({ message: `Exported to ${result.path}` }),
+                    setNotice({
+                      message: message("Exported to {{path}}", {
+                        path: result.path,
+                      }),
+                    }),
                   )
                 }
               >
-                Export settings
+                {t("Export settings")}
               </Button>
               <Button
                 variant="outline"
@@ -528,19 +712,22 @@ export function DxlPage({ platform, active }) {
                 onClick={() =>
                   write(
                     "restore",
-                    "Restore zero and direction?",
-                    `Choose a backup for IDs ${ids.join(", ")}. The selected motors keep their current IDs.`,
+                    t("Restore zero and direction?"),
+                    t(
+                      "Choose a backup for IDs {{ids}}. The selected motors keep their current IDs.",
+                      { ids: selectedIdsText },
+                    ),
                   )
                 }
               >
-                Restore zero and direction
+                {t("Restore zero and direction")}
               </Button>
               <Button
                 variant="ghost"
                 disabled={busy}
                 onClick={() => run("openBackups")}
               >
-                Open backup folder
+                {t("Open backup folder")}
               </Button>
             </div>
           </Panel>
@@ -559,7 +746,7 @@ export function DxlPage({ platform, active }) {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirm(null)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               disabled={!canConfirm}
@@ -570,7 +757,7 @@ export function DxlPage({ platform, active }) {
                 void action();
               }}
             >
-              Confirm
+              {t("Confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

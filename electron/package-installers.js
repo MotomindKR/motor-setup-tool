@@ -41,9 +41,10 @@ for (const source of [sourceBinary, mujoco]) {
 if (!fs.existsSync(path.join(sourceDxl, dxlName))) throw new Error('Build the DXL worker with python dxl/build.py before packaging.');
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'dxl.js', 'register-catalog.json', 'motor-models.json', 'recordings.js', 'updater.js']) {
+for (const name of ['main.js', 'i18n.js', 'preload.js', 'backend.js', 'dxl.js', 'worker-exit.js', 'register-catalog.json', 'motor-models.json', 'recordings.js', 'updater.js']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
+fs.cpSync(path.join(__dirname, 'locales'), path.join(app, 'electron', 'locales'), { recursive: true });
 fs.cpSync(sourceDxl, dxl, { recursive: true, verbatimSymlinks: true });
 fs.mkdirSync(path.join(app, 'src'), { recursive: true });
 fs.copyFileSync(path.join(root, 'src', 'firmware_catalog.json'), path.join(app, 'src', 'firmware_catalog.json'));

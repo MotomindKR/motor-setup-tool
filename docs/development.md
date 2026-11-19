@@ -5,7 +5,7 @@
 
 ## Build and run
 
-Install Node.js 22 or newer, a C compiler/linker, and the [MuJoCo SDK](../packaging/README.md#build-locally).
+Install Node.js 22 or newer, Python 3.9 or newer with `venv` and pip, a C compiler/linker, and the [MuJoCo SDK](../packaging/README.md#build-locally).
 
 ```sh
 ./scripts/setup.sh
@@ -15,7 +15,8 @@ npm start
 ```
 
 `setup.sh` installs a workspace-local Rust toolchain if needed and builds the
-release backend. `npm start` builds the frontend and opens Electron. Development
+release backend. `npm start` prepares the Dynamixel worker in `.tools/dxl-venv`,
+builds the frontend, and opens Electron. Development
 uses `target/release/motor-setup-tool`; `MOTOMIND_BACKEND` explicitly overrides
 that path. Packaged apps always use the bundled backend.
 
@@ -26,22 +27,28 @@ open Electron and select a saved folder in **Files**.
 Data, cache, and CAN lock paths retain their v0.1.0 locations so desktop and CLI
 sessions contend for the same bus ownership. See the [CLI guide](cli.md).
 
+## Desktop translations
+
+Use `useTranslation()` in React and `t` from `electron/i18n.js` in the Electron
+main process. English UI text is the message key. Add its translation to
+`electron/locales/ko.json` and use named placeholders for values. Rust progress
+events carry their parameters so the renderer can translate them while a job runs.
+The Python serial worker receives the language with each request and loads
+`dxl/dxl_settings/ko.json` for Korean messages.
+
 ## Dynamixel development
 
-From the repository root, set up the serial worker's Python environment before
-launching Electron or running the tests that exercise the worker.
+To run worker tests from the repository root:
 
 ```sh
-python3 -m venv .tools/dxl-venv
-. .tools/dxl-venv/bin/activate
-python -m pip install -r dxl/requirements.txt pytest
-export MOTOMIND_DXL_PYTHON="$(command -v python)"
-python -m pytest -q -o pythonpath=dxl dxl/tests
-npm --prefix electron start
+npm --prefix electron run setup:dxl
+.tools/dxl-venv/bin/python -m pip install pytest
+.tools/dxl-venv/bin/python -m pytest -q -o pythonpath=dxl dxl/tests
 ```
 
-On Windows, use `python -m venv` and set `MOTOMIND_DXL_PYTHON` to the absolute
-path of `.tools\dxl-venv\Scripts\python.exe`.
+On Windows, use `.tools\dxl-venv\Scripts\python.exe`. To use an existing
+Python environment, install `dxl/requirements.txt` there and set
+`MOTOMIND_DXL_PYTHON` to its interpreter.
 
 ### U2D2 hardware checks
 
@@ -70,6 +77,7 @@ With Cargo on `PATH`:
 rustup component add rustfmt clippy
 ./scripts/check.sh
 cd electron
+npm run setup:dxl
 npm run check
 npx playwright install chromium
 npm run test:ui

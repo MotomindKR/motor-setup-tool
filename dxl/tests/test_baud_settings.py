@@ -50,7 +50,7 @@ def test_baud_preflight_rejects_unsafe_or_wrong_motor(setup, register, value):
 def test_hardware_baud_change_requires_one_responding_motor(setup):
     bus, service = setup
     bus.simulated = False
-    with pytest.raises(DeviceError, match="한 대만"):
+    with pytest.raises(DeviceError, match="only one motor"):
         service.set_1mbps(30)
     assert bus.baud == 57_600 and bus.writes == []
     assert not service.faulted
@@ -61,7 +61,7 @@ def test_hardware_baud_change_requires_one_responding_motor(setup):
 def test_same_id_at_target_speed_blocks_change(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr(bus, "ping", lambda _: 1200 if bus.baud == 1_000_000 else None)
-    with pytest.raises(DeviceError, match="이미 응답"):
+    with pytest.raises(DeviceError, match="already responds"):
         service.set_1mbps(30)
     assert bus.baud == 57_600 and bus.writes == []
     assert not service.faulted
@@ -77,7 +77,7 @@ def test_baud_probe_locks_writes_if_adapter_speed_cannot_be_restored(setup, monk
         set_baud(baud)
 
     monkeypatch.setattr(bus, "set_baud", fail_restore)
-    with pytest.raises(DeviceError, match="어댑터 속도를 복구하지 못했습니다"):
+    with pytest.raises(DeviceError, match="restore the adapter speed"):
         service.set_1mbps(30)
     assert service.faulted
     assert bus.baud == 1_000_000 and bus.writes == []
@@ -100,7 +100,7 @@ def test_missing_verification_does_not_retry_or_report_success(setup, monkeypatc
         original(*args)
         bus.registers[30][8] = 1  # The motor still responds only at the old speed.
     monkeypatch.setattr(bus, "write", write)
-    with pytest.raises(DeviceError, match=r"1000000 bps와 이전 57600"):
+    with pytest.raises(DeviceError, match=r"1000000 bps and the previous speed of 57600"):
         service.set_1mbps(30)
     assert service.faulted
     assert bus.writes == [(30, 8, 1, 3)]

@@ -17,7 +17,7 @@ def test_failed_port_open_preserves_original_error(tmp_path):
 
 
 def test_unsupported_baud_without_serial_handle():
-    with pytest.raises(DeviceError, match="통신 속도 설정 실패"):
+    with pytest.raises(DeviceError, match="set the port speed"):
         SDKTransport("unused-port", 12345)
 
 

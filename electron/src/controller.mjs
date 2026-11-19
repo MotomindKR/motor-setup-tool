@@ -1,4 +1,5 @@
-import { displayAngle } from "./format.mjs";
+import { message, t } from "./i18n.mjs";
+import { displayAngle, numberText } from "./format.mjs";
 
 const operationNames = {
   interfaces: "Checking interfaces",
@@ -18,8 +19,6 @@ const operationNames = {
   registerRead: "Reading register",
   registerWrite: "Saving register",
 };
-export const numberText = (value, digits = 3) =>
-  Number.isFinite(value) ? value.toFixed(digits) : "—";
 function readableError(message) {
   const text = String(message).replace(
     /^Error invoking remote method '[^']+':\s*/,
@@ -244,7 +243,7 @@ export function createController(bridge, env = {}) {
     set({
       notice: message
         ? {
-            message: error ? readableError(message) : String(message),
+            message: error && typeof message === "string" ? readableError(message) : message,
             error,
           }
         : null,
@@ -259,9 +258,9 @@ export function createController(bridge, env = {}) {
   const flags = () => controls(s, bridge.platform, now());
   const buildConfig = () => {
     if (!s.config || !s.motor)
-      throw new Error("Scan and select a motor first.");
+      throw new Error(t("Scan and select a motor first."));
     if ([...Object.values(s.config), ...Object.values(s.config.baseline)].includes(null))
-      throw new Error("Fill in all calibration settings.");
+      throw new Error(t("Fill in all calibration settings."));
     return {
       ...s.config,
       interface: selectedCan(s),
@@ -272,7 +271,7 @@ export function createController(bridge, env = {}) {
   };
   async function run(operation, params = {}) {
     if (s.busy || s.installingUpdate)
-      throw new Error("Wait for the current operation to finish.");
+      throw new Error(t("Wait for the current operation to finish."));
     set({
       busy: operation,
       work: {
@@ -285,7 +284,7 @@ export function createController(bridge, env = {}) {
     try {
       const result = await bridge.run(operation, params);
       if (result?.cancelled && operation !== "manual") {
-        throw new OperationCancelled("Operation stopped.");
+        throw new OperationCancelled(t("Operation stopped."));
       }
       return result;
     } finally {
@@ -412,7 +411,7 @@ export function createController(bridge, env = {}) {
       const removed = unavailableTarget && hadMotor;
       const messages = errors.map((error) => readableError(error.message));
       if (removed)
-        messages.unshift("Adapter unavailable. Reconnect it, then scan.");
+        messages.unshift(t("Adapter unavailable. Reconnect it, then scan."));
       if (messages.length)
         notice(
           messages.join(" "),
@@ -439,7 +438,7 @@ export function createController(bridge, env = {}) {
       }
       notice(
         motors.length
-          ? `${motors.length} motors found. Select one.`
+          ? message("{{count}} motors found. Select one.", { count: motors.length })
           : "No motors found. Check power and wiring.",
       );
     } catch (error) {
@@ -548,7 +547,7 @@ export function createController(bridge, env = {}) {
       });
     else if (event.type === "progress") {
       if (!s.busy) return;
-      set({ work: { ...s.work, message: event.message, percent: event.percent } });
+      set({ work: { ...s.work, message: event.message, detail: event.detail, percent: event.percent } });
     } else if (event.type === "manualStatus") {
       const value = event.value;
       if (manualEverEnabled && !value.enabled && !value.preparing) {
@@ -621,7 +620,7 @@ export function createController(bridge, env = {}) {
       set({ fileOperation: true });
       try {
         const result = await bridge.exportRun(directory, file);
-        if (result) notice(`Downloaded ${file || "calibration run"}.`);
+        if (result) notice(file ? message("Downloaded {{file}}.", { file }) : "Downloaded calibration run.");
       } catch (error) {
         reportError(error);
       } finally {
@@ -632,8 +631,8 @@ export function createController(bridge, env = {}) {
       if (!directory || flags().busy) return;
       const run = s.runs.find((item) => item.directory === directory);
       confirmAction(
-        "Delete this run?",
-        `Permanently delete its recordings and calibration files.\n${run?.model || s.report?.model || "Calibration run"}${run?.motorId ? ` · ID ${run.motorId}` : ""}\n${directory}`,
+        t("Delete this run?"),
+        t("Permanently delete its recordings and calibration files.\n{{run}}{{id}}\n{{directory}}", { run: run?.model || s.report?.model || t("Calibration run"), id: run?.motorId ? ` · ID ${run.motorId}` : "", directory }),
         async () => {
           if (flags().busy) return;
           set({ fileOperation: true });
@@ -806,8 +805,8 @@ export function createController(bridge, env = {}) {
       }
       const motor = s.motor;
       confirmAction(
-        "Set current position?",
-        `Set the stationary motor’s current position to zero. The app will display ${numberText(angle, 3)} rad at this position.`,
+        t("Set current position?"),
+        t("Set the stationary motor’s current position to zero. The app will display {{angle}} rad at this position.", { angle: numberText(angle, 3) }),
         async () => {
           if (s.motor !== motor || !flags().zero) return;
           if (s.busy === "manual") await stopMonitor();
@@ -830,8 +829,8 @@ export function createController(bridge, env = {}) {
       const motor = s.motor;
       const params = target();
       confirmAction(
-        "Change motor ID?",
-        `Change motor ID ${motor.id} to ${newId}. The app verifies the motor at its new address.`,
+        t("Change motor ID?"),
+        t("Change motor ID {{oldId}} to {{newId}}. The app verifies the motor at its new address.", { oldId: motor.id, newId }),
         async () => {
           if (s.motor !== motor || flags().busy) return;
           const result = await run("setId", {
@@ -840,9 +839,9 @@ export function createController(bridge, env = {}) {
             confirmed: true,
           });
           if (result?.previous_id !== motor.id || result.id !== newId)
-            throw new Error("The motor’s new ID could not be verified.");
+            throw new Error(t("The motor’s new ID could not be verified."));
           if (updateSelectedMotor(motor, { id: result.id }))
-            notice(`Motor ID changed to ${result.id}.`);
+            notice(message("Motor ID changed to {{id}}.", { id: result.id }));
         },
       );
     },
@@ -854,10 +853,10 @@ export function createController(bridge, env = {}) {
         const firmware = await run("firmwarePrepare", target());
         if (s.motor !== motor) return;
         if (firmware.id !== motor.id || firmware.model !== motor.model || uuidText(firmware) !== uuidText(motor))
-          throw new Error("The motor at this ID has changed. Scan again before updating firmware.");
+          throw new Error(t("The motor at this ID has changed. Scan again before updating firmware."));
         set({
           firmware,
-          firmwareMessage: `Verified · installed ${firmware.current_version} → ${firmware.version}`,
+          firmwareMessage: message("Verified · installed {{current}} → {{version}}", { current: firmware.current_version, version: firmware.version }),
         });
       } catch (error) {
         reportError(error);
@@ -869,8 +868,8 @@ export function createController(bridge, env = {}) {
       const params = target();
       const prepared = s.firmware;
       confirmAction(
-        "Update motor firmware?",
-        `Update ${motor.model} · ID ${motor.id} from ${s.firmware.current_version} to ${s.firmware.version}. Keep power and USB connected until the transfer finishes.`,
+        t("Update motor firmware?"),
+        t("Update {{model}} · ID {{id}} from {{current}} to {{version}}. Keep power and USB connected until the transfer finishes.", { model: motor.model, id: motor.id, current: s.firmware.current_version, version: s.firmware.version }),
         async () => {
           if (s.motor !== motor || s.firmware !== prepared || flags().busy) return;
           const result = await run("firmwareUpdate", {
@@ -882,19 +881,19 @@ export function createController(bridge, env = {}) {
             result?.id !== motor.id ||
             result.firmware !== prepared.version
           )
-            throw new Error("The installed firmware could not be verified.");
+            throw new Error(t("The installed firmware could not be verified."));
           if (
             !updateSelectedMotor(
               motor,
               { firmware: result.firmware },
               {
-                firmwareMessage: `Installed and verified · ${result.firmware}`,
+                firmwareMessage: message("Installed and verified · {{version}}", { version: result.firmware }),
               },
             )
           )
             return;
           notice(
-            `Firmware ${result.firmware} installed and verified. Motor disabled.`,
+            message("Firmware {{version}} installed and verified. Motor disabled.", { version: result.firmware }),
           );
         },
         true,
@@ -947,8 +946,8 @@ export function createController(bridge, env = {}) {
         value = Number(s.registerValue),
         motor = s.motor;
       confirmAction(
-        "Save register to motor?",
-        `Write ${r.name} (0x${r.index.toString(16).toUpperCase()}) from ${registerValueText(prior.value, r)} to ${registerValueText(value, r)} on motor ID ${motor.id}, then save motor settings to flash. This also saves other pending persistent settings.`,
+        t("Save register to motor?"),
+        t("Write {{name}} (0x{{address}}) from {{previous}} to {{value}} on motor ID {{id}}, then save motor settings to flash. This also saves other pending persistent settings.", { name: t(r.name), address: r.index.toString(16).toUpperCase(), previous: registerValueText(prior.value, r), value: registerValueText(value, r), id: motor.id }),
         async () => {
           if (s.motor !== motor || s.registerRead !== prior || s.registerIndex !== r.index || flags().busy) return;
           try {
@@ -969,7 +968,7 @@ export function createController(bridge, env = {}) {
                 "Saved. Power cycle the motor to verify persistence.",
             });
             notice(
-              `${r.name} saved. Power cycle the motor to verify persistence.`,
+              message("{{name}} saved. Power cycle the motor to verify persistence.", { name: t(r.name) }),
             );
           } catch (error) {
             set({ registerRead: null, registerValue: "" });
@@ -993,8 +992,8 @@ export function createController(bridge, env = {}) {
       const directory = s.directory;
       if (!directory || flags().busy || !s.reportFiles.includes("session.json")) return;
       confirmAction(
-        "Refit this recording?",
-        "Analysis artifacts in this folder will be replaced. The original recorded samples are preserved.",
+        t("Refit this recording?"),
+        t("Analysis artifacts in this folder will be replaced. The original recorded samples are preserved."),
         async () => {
           if (s.directory !== directory || flags().busy) return;
           await run("analyze", { directory });
