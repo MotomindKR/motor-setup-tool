@@ -19,6 +19,7 @@ The Dynamixel workspace configures XL330 motors over a U2D2 TTL adapter.
 | Fedora, RHEL, or openSUSE | `.rpm` for x64 or ARM64 |
 
 MuJoCo is included. A dot on **Settings** indicates an available update.
+The app follows your system language. Choose English or 한국어 in **Settings → Language**.
 
 ## Your first calibration
 

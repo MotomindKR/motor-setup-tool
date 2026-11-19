@@ -78,7 +78,7 @@ test('the worker switches to the verified one-megabit bus and keeps polling the 
   const initial = await run(worker, 'connect', demo);
   assert.equal(initial.baud, 57_600);
   assert.ok(initial.motors.every(motor => motor.baud_rate === 57_600));
-  assert.match((await worker.run('set1Mbps', { ids: [30, 31] })).error, /한 개만/);
+  assert.match((await worker.run('set1Mbps', { ids: [30, 31] })).error, /Select one motor/);
   const result = await run(worker, 'set1Mbps', { ids: [30] });
   assert.equal(result.baud, 1_000_000);
   assert.deepEqual(result.motors.map(motor => motor.motor_id), [30]);
@@ -106,4 +106,19 @@ test('invalid hardware connection reports failure without starting demo motors',
   assert.equal(reply.connected, false);
   assert.ok(reply.error);
   assert.equal((await run(worker, 'connect', demo)).demo, true);
+});
+
+test('the active worker reports errors in the selected language without reconnecting', async t => {
+  const { i18n } = require('./i18n.mjs');
+  const worker = await withWorker(t);
+  await run(worker, 'connect', demo);
+  t.after(() => i18n.changeLanguage('en'));
+  await i18n.changeLanguage('ko');
+  const korean = await worker.run('setId', { ids: [30], newId: 31 });
+  assert.equal(korean.connected, true);
+  assert.match(korean.error, /ID 31.*사용 중/);
+  await i18n.changeLanguage('en');
+  const english = await worker.run('setId', { ids: [30], newId: 31 });
+  assert.equal(english.connected, true);
+  assert.match(english.error, /ID 31 is already in use/);
 });

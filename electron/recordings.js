@@ -1,5 +1,7 @@
 'use strict';
 
+const { t } = require('./i18n.mjs');
+
 const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
@@ -22,7 +24,7 @@ const MAX_EXPORT = 512 * 1024 * 1024;
 
 async function regularFile(directory, name) {
   const stat = await fs.lstat(path.join(directory, name));
-  if (!stat.isFile()) throw new Error('Recording changed while reading; try again');
+  if (!stat.isFile()) throw new Error(t("Recording changed while reading; try again"));
   return { name, stat };
 }
 
@@ -36,7 +38,7 @@ function actuatorUuid(value) {
 const reportSummaries = new Map();
 
 async function readMetadata(directory, file, limit) {
-  if (file.stat.size > limit) throw new Error(`${file.name} is too large`);
+  if (file.stat.size > limit) throw new Error(t("{{name}} is too large", { name: file.name }));
   return json(fileChunks(directory, file));
 }
 
@@ -47,7 +49,7 @@ async function readReport(directory, full) {
   const cached = reportSummaries.get(directory);
   if (!full && cached?.revision === revision) return cached.summary;
   const report = await readMetadata(directory, file, 32_000_000);
-  if (report?.source !== 'hardware' || !Array.isArray(report.replays)) throw new Error('Select a real motor recording');
+  if (report?.source !== 'hardware' || !Array.isArray(report.replays)) throw new Error(t("Select a real motor recording"));
   const { model, motor_id, motor_uuid } = report;
   const summary = { model, motor_id, motor_uuid };
   reportSummaries.set(directory, { revision, summary });
@@ -55,9 +57,9 @@ async function readReport(directory, full) {
 }
 
 async function readRun(directory, full = false) {
-  if (typeof directory !== 'string' || !path.isAbsolute(directory) || path.dirname(directory) === directory) throw new Error('Select a calibration run');
+  if (typeof directory !== 'string' || !path.isAbsolute(directory) || path.dirname(directory) === directory) throw new Error(t("Select a calibration run"));
   const stat = await fs.lstat(directory);
-  if (!stat.isDirectory()) throw new Error('Select a calibration folder, not a link');
+  if (!stat.isDirectory()) throw new Error(t("Select a calibration folder, not a link"));
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const files = entries.filter(entry => entry.isFile() && ARTIFACTS.includes(entry.name)).map(entry => entry.name);
   async function metadata(name) {
@@ -69,7 +71,7 @@ async function readRun(directory, full = false) {
   const hardware = await metadata('hardware.json');
   const model = config?.profile?.model || report?.model;
   const motorId = config?.motor_id ?? report?.motor_id;
-  if (typeof model !== 'string' || !Object.hasOwn(motorModels, model) || !Number.isInteger(motorId) || motorId < 1 || motorId > 254) throw new Error('Folder does not contain a calibration run');
+  if (typeof model !== 'string' || !Object.hasOwn(motorModels, model) || !Number.isInteger(motorId) || motorId < 1 || motorId > 254) throw new Error(t("Folder does not contain a calibration run"));
   const name = path.basename(directory);
   const timestamp = Number(/^\d{13}(?=-|$)/.exec(name)?.[0]) || stat.mtimeMs;
   const run = { directory, name, model, motorId, uuid: actuatorUuid(report?.motor_uuid) || actuatorUuid(hardware?.uuid), timestamp, completed: Boolean(report), files };
@@ -91,10 +93,10 @@ function exportName(run, file = null) {
 }
 
 async function assertDestination(directory, destination) {
-  if (typeof destination !== 'string' || !path.isAbsolute(destination)) throw new Error('Choose a download location');
+  if (typeof destination !== 'string' || !path.isAbsolute(destination)) throw new Error(t("Choose a download location"));
   const [source, parent] = await Promise.all([fs.realpath(directory), fs.realpath(path.dirname(destination))]);
   const relative = path.relative(source, path.join(parent, path.basename(destination)));
-  if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new Error('Download outside the original run folder');
+  if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) throw new Error(t("Download outside the original run folder"));
 }
 
 async function* fileChunks(directory, file) {
@@ -102,15 +104,15 @@ async function* fileChunks(directory, file) {
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size !== file.stat.size || stat.ino !== file.stat.ino || stat.dev !== file.stat.dev) {
-      throw new Error('Recording changed while reading; try again');
+      throw new Error(t("Recording changed while reading; try again"));
     }
     let size = 0;
     for await (const chunk of handle.createReadStream({ autoClose: false })) {
       size += chunk.length;
-      if (size > stat.size) throw new Error('Recording changed while reading; try again');
+      if (size > stat.size) throw new Error(t("Recording changed while reading; try again"));
       yield chunk;
     }
-    if (size !== stat.size) throw new Error('Recording changed while reading; try again');
+    if (size !== stat.size) throw new Error(t("Recording changed while reading; try again"));
   } finally {
     await handle.close();
   }
@@ -138,10 +140,10 @@ async function zipRun(directory, files, output) {
 async function exportRun(directory, destination, file = null) {
   const run = await inspectRun(directory);
   await assertDestination(directory, destination);
-  if (file !== null && !SINGLE_FILES.includes(file)) throw new Error('Choose an available recording file');
-  if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
+  if (file !== null && !SINGLE_FILES.includes(file)) throw new Error(t("Choose an available recording file"));
+  if (file && !run.files.includes(file)) throw new Error(t("Recording file is missing"));
   const files = await Promise.all((file ? [file] : run.files).map(name => regularFile(directory, name)));
-  if (files.reduce((total, entry) => total + entry.stat.size, 0) > MAX_EXPORT) throw new Error('Run exceeds the 512 MB download limit. Open its folder to copy the files.');
+  if (files.reduce((total, entry) => total + entry.stat.size, 0) > MAX_EXPORT) throw new Error(t("Run exceeds the 512 MB download limit. Open its folder to copy the files."));
   const temporary = path.join(path.dirname(destination), `.motor-download-${randomUUID()}.tmp`);
   const handle = await fs.open(temporary, 'wx');
   try {

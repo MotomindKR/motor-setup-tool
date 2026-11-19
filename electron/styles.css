@@ -1037,27 +1037,50 @@ html[data-platform="darwin"] .app-header {
   align-items: center;
 }
 
-.dxl-workspace {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-}
 .dxl-workspace[hidden] {
   display: none;
 }
-.dxl-row {
+.dxl-connection,
+.dxl-edit {
+  display: grid;
+  align-items: end;
+  gap: 12px;
+}
+.dxl-connection {
+  grid-template-columns: minmax(10rem, 2fr) minmax(7rem, 1fr) auto;
+}
+.dxl-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
   gap: 8px;
 }
-.dxl-row + .dxl-row,
-.dxl-row + [data-slot="data-table"],
-[data-slot="data-table"] + .dxl-row {
-  margin-top: 12px;
+.dxl-edits,
+.dxl-readings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: 16px;
 }
-.dxl-row .field {
-  min-width: min(140px, 100%);
+.dxl-edits {
+  margin-top: 16px;
+}
+.dxl-edit {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.dxl-readings {
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+.dxl-readings dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+@container workspace (max-width: 760px) {
+  .dxl-connection {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  }
+  .dxl-connection > .dxl-actions {
+    grid-column: 1 / -1;
+  }
 }
 .dxl-message {
   white-space: pre-wrap;

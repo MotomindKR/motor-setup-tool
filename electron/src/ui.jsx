@@ -1,3 +1,5 @@
+import { formatLocale } from "./language.mjs";
+import { useTranslation } from "react-i18next";
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { inputNumberFormat } from "./format.mjs";
 import { Button } from "@motomindkr/ui/components/button";
@@ -95,6 +97,7 @@ export function NumericInput({
   }, [unparsedText, onValueChange]);
   return (
     <NumberField
+      locale={formatLocale}
       data-slot="number-field"
       value={value === "" || value == null ? null : Number(value)}
       onValueChange={(next, details) => {
@@ -156,11 +159,12 @@ export function Choice({
   value,
   onChange,
   options,
-  placeholder = "Select…",
+  placeholder,
   disabled,
   id,
   label,
 }) {
+  const { t } = useTranslation();
   return (
     <Select
       value={value === "" || value == null ? null : value}
@@ -169,7 +173,7 @@ export function Choice({
       disabled={disabled}
     >
       <SelectTrigger id={id} aria-label={label} className="choice">
-        <SelectValue placeholder={placeholder} />
+        <SelectValue placeholder={placeholder ?? t("Select…")} />
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} align="start">
         {options.map((o) => (

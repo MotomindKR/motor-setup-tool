@@ -1,3 +1,5 @@
+import { messageText } from "../../i18n.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
 import {
   ArrowUpRight,
@@ -15,30 +17,31 @@ import { Button, Field, Choice, Disclosure } from "../ui.jsx";
 import { uuidText } from "../controller.mjs";
 
 export function Connection({ s, a, c, platform }) {
+  const { t } = useTranslation();
   const con = s.connection;
   const bus = s.interfaces.find((item) => item.name === con.bus);
   const usb = s.usbAdapters.find((item) => item.id === con.usb);
   const status =
     con.transport === "socketcan"
       ? !bus
-        ? "No CAN interface found"
+        ? t("No CAN interface found")
         : !bus.up
-          ? "CAN bus is down"
-          : `${bus.bitrate ? `${bus.bitrate / 1e6} Mbps` : "CAN ready"}${bus.state === "ERROR-ACTIVE" ? "" : ` · ${bus.state}`}`
+          ? t("CAN bus is down")
+          : `${bus.bitrate ? `${bus.bitrate / 1e6} Mbps` : t("CAN ready")}${bus.state === "ERROR-ACTIVE" ? "" : ` · ${bus.state}`}`
       : !s.usbAdapters.length
-        ? "Connect a GS USB adapter, then refresh."
+        ? t("Connect a GS USB adapter, then refresh.")
         : !usb
-          ? "Choose a USB adapter."
+          ? t("Choose a USB adapter.")
           : usb.accessible
-            ? "Ready · 1 Mbps"
+            ? t("Ready · 1 Mbps")
             : platform === "linux"
-              ? "USB access denied. Install the USB access rule and reconnect."
-              : "USB access denied. Close other apps using the adapter.";
+              ? t("USB access denied. Install the USB access rule and reconnect.")
+              : t("USB access denied. Close other apps using the adapter.");
   const change = (key) => (value) => a.changeConnection(key, value);
   return (
     <Collapsible
       className="connection-card"
-      aria-label="Motor connection"
+      aria-label={t("Motor connection")}
       open={s.connectionOpen}
       onOpenChange={(open) => {
         if (open !== s.connectionOpen) a.toggleConnection();
@@ -49,24 +52,24 @@ export function Connection({ s, a, c, platform }) {
           render={<Button variant="ghost" className="connection-toggle" />}
         >
           <Cable />
-          <span>Connection</span>
+          <span>{t("Connection")}</span>
           <ChevronDown className={s.connectionOpen ? "rotated" : ""} />
         </CollapsibleTrigger>
         {s.motor && (
           <span className="connection-summary">
-            {s.motor.model || "Motor"} · ID {s.motor.id} ·{" "}
+            {s.motor.model || t("Motor")} · ID {s.motor.id} ·{" "}
             {con.transport === "socketcan" ? con.bus : "GS USB"}
           </span>
         )}
         <Button
           variant="ghost"
           size="sm"
-          aria-label="Refresh adapters"
+          aria-label={t("Refresh adapters")}
           onClick={a.refreshInterfaces}
           disabled={c.busy}
         >
           <RefreshCw className={s.refreshingAdapters ? "spinning" : ""} />
-          {s.refreshingAdapters ? "Checking…" : "Refresh"}
+          {s.refreshingAdapters ? t("Checking…") : t("Refresh")}
         </Button>
       </div>
       <CollapsibleContent className="connection-fields">
@@ -78,7 +81,7 @@ export function Connection({ s, a, c, platform }) {
           }}
         >
           {platform === "linux" && (
-            <Field label="Adapter">
+            <Field label={t("Adapter")}>
               <Choice
                 value={con.transport}
                 onChange={change("transport")}
@@ -91,7 +94,7 @@ export function Connection({ s, a, c, platform }) {
             </Field>
           )}
           {con.transport === "socketcan" ? (
-            <Field label="CAN bus">
+            <Field label={t("CAN bus")}>
               <Choice
                 value={con.bus}
                 onChange={change("bus")}
@@ -99,35 +102,35 @@ export function Connection({ s, a, c, platform }) {
                   value: item.name,
                   label: item.name,
                 }))}
-                placeholder="No interfaces found"
+                placeholder={t("No interfaces found")}
                 disabled={c.busy || !s.interfaces.length}
               />
             </Field>
           ) : (
-            <Field label="USB adapter">
+            <Field label={t("USB adapter")}>
               <Choice
                 value={con.usb}
                 onChange={change("usb")}
                 options={s.usbAdapters.map((item) => ({
                   value: item.id,
-                  label: `GS USB · ${item.bus_id}:${item.address}${item.accessible ? "" : " · Access denied"}`,
+                  label: `GS USB · ${item.bus_id}:${item.address}${item.accessible ? "" : t(" · Access denied")}`,
                 }))}
-                placeholder="No USB adapters found"
+                placeholder={t("No USB adapters found")}
                 disabled={c.busy || !s.usbAdapters.length}
               />
             </Field>
           )}
           {s.motors.length > 0 && (
-            <Field label="Motor">
+            <Field label={t("Motor")}>
               <Choice
                 value={s.motor ? String(s.motor.id) : ""}
                 onChange={a.selectMotor}
                 options={s.motors.map((item) => ({
                   value: String(item.id),
-                  label: `${item.model || "Unknown model"} · ID ${item.id}`,
+                  label: `${item.model || t("Unknown model")} · ID ${item.id}`,
                 }))}
                 disabled={c.busy}
-                placeholder="Select a motor"
+                placeholder={t("Select a motor")}
               />
             </Field>
           )}
@@ -136,10 +139,10 @@ export function Connection({ s, a, c, platform }) {
             variant={s.motor ? "outline" : "default"}
             onClick={a.scan}
             disabled={c.busy || !c.ready}
-            title="Scanning may stop motors on this bus"
+            title={t("Scanning may stop motors on this bus")}
           >
             <Search />
-            {s.busy === "scan" ? "Scanning…" : "Scan motors"}
+            {s.busy === "scan" ? t("Scanning…") : t("Scan motors")}
           </Button>
         </div>
         <div className="connection-meta">
@@ -154,15 +157,15 @@ export function Connection({ s, a, c, platform }) {
               disabled={c.busy || !bus}
               onClick={a.restartCan}
             >
-              {c.ready ? "Restart CAN" : "Bring up CAN"}
+              {c.ready ? t("Restart CAN") : t("Bring up CAN")}
               <ArrowUpRight />
             </Button>
           )}
         </div>
-        <Disclosure className="connection-options" title="Connection options">
+        <Disclosure className="connection-options" title={t("Connection options")}>
           <div className="connection-host">
             <Field
-              label="Host ID"
+              label={t("Host ID")}
               type="number"
               min="1"
               max="254"
@@ -180,14 +183,14 @@ export function Connection({ s, a, c, platform }) {
           )}
           {s.motor && (
             <p className="motor-identity">
-              Firmware {s.motor.firmware || "unknown"} · UUID{" "}
-              {uuidText(s.motor) || "unknown"}
+              {t("Firmware")} {s.motor.firmware || t("unknown")} · UUID{" "}
+              {uuidText(s.motor) || t("unknown")}
             </p>
           )}
         </Disclosure>
         {s.motor?.issue && (
           <p className="feedback-reason" role="alert">
-            {s.motor.issue}
+            {messageText(s.motor.issue)}
           </p>
         )}
       </CollapsibleContent>

@@ -60,7 +60,8 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     });
     await page.evaluate(() => { window.motorApp.dxl = window.testDxl; });
     await navigate(page, "Dynamixel");
-    await page.getByLabel("Serial port").fill("/dev/ttyACM1");
+    await page.getByLabel("Serial port", { exact: true }).fill("/dev/ttyACM1");
+    await page.getByRole("option", { name: "/dev/ttyACM1" }).click();
     await page.getByRole("button", { name: "Grant port access" }).click();
     await expect(page.getByText("Access ready for /dev/ttyACM1. Connect to continue.")).toBeVisible();
     expect(authorized).toEqual(["/dev/ttyACM1"]);
@@ -70,10 +71,11 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await expect(page.getByRole("checkbox", { name: "Demo motors" })).toHaveCount(0);
     await serialPort.clear();
     await expect(connect).toBeDisabled();
-    await serialPort.fill("/dev/ttyACM1");
+    await serialPort.fill("/dev/ttyUSB3");
+    await serialPort.press("Tab");
     await connect.click();
     await expect(page.getByText("Hardware connected")).toBeVisible();
-    expect(connections).toEqual([{ port: "/dev/ttyACM1", baud: 1_000_000 }]);
+    expect(connections).toEqual([{ port: "/dev/ttyUSB3", baud: 1_000_000 }]);
     const { motor_id: zeroId } = discovered[0];
     const { motor_id: modeId, operating_mode: oldMode } =
       discovered.find((motor) => motor.motor_id !== zeroId && motor.operating_mode !== 5);
@@ -122,15 +124,15 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await expect(page.getByText(`Mode 5 verified for IDs ${modeId}.`, { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: "Set Mode 5" })).toBeDisabled();
 
-    await expect(page.getByLabel("Baud rate")).toHaveValue("57600");
-    await expect(motors.getByRole("columnheader", { name: "Baud rate (bps)" })).toBeVisible();
     const settingsRow = motors.getByRole("row").filter({ has: selectMotor(modeId) });
-    await expect(settingsRow.getByRole("cell", { name: "57,600", exact: true })).toBeVisible();
+    await settingsRow.getByRole("button", { name: `Details ${modeId}` }).click();
+    await expect(motors.getByText("Baud rate (bps)", { exact: true })).toBeVisible();
+    await expect(motors.getByText("57,600", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Set 1 Mbps" }).click();
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByText(`1 Mbps verified for ID ${modeId}.`, { exact: false })).toBeVisible();
-    await expect(page.getByLabel("Baud rate")).toHaveValue("1000000");
-    await expect(motors.getByRole("cell", { name: "1,000,000", exact: true })).toBeVisible();
+    await expect(page.getByText("/dev/ttyUSB3 · 1,000,000 bps")).toBeVisible();
+    await expect(motors.getByText("1,000,000", { exact: true })).toBeVisible();
     await expect(selectMotor(modeId)).toBeChecked();
     await expect(selectMotor(newId)).toHaveCount(0);
   } finally {
@@ -755,4 +757,28 @@ test("connected calibration stays readable at narrow widths and in dark mode", a
     path: info.outputPath("ready-dark.png"),
     fullPage: true,
   });
+});
+
+test("switching language preserves the motor session and persists across launches", async ({ page }) => {
+  await connect(page);
+  await navigate(page, "Settings");
+  await page.getByRole("combobox", { name: "Language", exact: true }).click();
+  await page.getByRole("option", { name: "한국어", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "ko");
+  await expect(page.getByRole("dialog", { name: "앱 설정" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "보정 시작" })).toBeVisible();
+  for (const [tab, heading] of [
+    ["테스트", "모터 제어"], ["설정", "모터 레지스터"],
+    ["다이나믹셀", "다이나믹셀 연결"], ["파일", "저장된 기록"],
+  ]) {
+    await navigate(page, tab);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+  await page.reload();
+  await navigate(page, "앱 설정");
+  await expect(page.getByRole("combobox", { name: "언어" })).toContainText("한국어");
+  await page.getByRole("combobox", { name: "언어" }).click();
+  await page.getByRole("option", { name: "English", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
 });

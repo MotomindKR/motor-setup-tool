@@ -1,3 +1,6 @@
+import { messageText } from "../../i18n.mjs";
+import { formatLocale } from "../language.mjs";
+import { useTranslation } from "react-i18next";
 import React from "react";
 import {
   CheckCircle2,
@@ -39,6 +42,7 @@ import { numberText } from "../controller.mjs";
 import { conciseNumber } from "../format.mjs";
 
 function RunMenu({ directory, files = [], a, disabled, compact = false }) {
+  const { t } = useTranslation();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -47,7 +51,7 @@ function RunMenu({ directory, files = [], a, disabled, compact = false }) {
             variant={compact ? "ghost" : "outline"}
             size={compact ? "icon-sm" : "sm"}
             disabled={disabled}
-            aria-label={compact ? "Run actions" : undefined}
+            aria-label={compact ? t("Run actions") : undefined}
           />
         }
       >
@@ -55,18 +59,18 @@ function RunMenu({ directory, files = [], a, disabled, compact = false }) {
           <MoreHorizontal />
         ) : (
           <>
-            <Download /> Download
+            <Download /> {t("Download")}
           </>
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => a.exportRun(directory)}>
-          <Download /> Entire run (.zip)
+          <Download /> {t("Entire run (.zip)")}
         </DropdownMenuItem>
         {[
-          ["training.csv", "Training recording (.csv)"],
-          ["validation.csv", "Validation recording (.csv)"],
-          ["calibration.json", "Calibration (.json)"],
+          ["training.csv", t("Training recording (.csv)")],
+          ["validation.csv", t("Validation recording (.csv)")],
+          ["calibration.json", t("Calibration (.json)")],
         ]
           .filter(([file]) => files.includes(file))
           .map(([file, label]) => (
@@ -83,7 +87,7 @@ function RunMenu({ directory, files = [], a, disabled, compact = false }) {
           variant="destructive"
           onClick={() => a.deleteRun(directory)}
         >
-          <Trash2 /> Delete run
+          <Trash2 /> {t("Delete run")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -101,6 +105,7 @@ const traces = [
 ];
 
 const MotionCharts = React.memo(function MotionCharts({ replay, visible, residual, reference }) {
+  const { t } = useTranslation();
   return axes.map(({ key, label, unit }) => {
     const measured = replay[`measured_${key}`];
     const offset = key === "position" ? reference : 0;
@@ -110,15 +115,16 @@ const MotionCharts = React.memo(function MotionCharts({ replay, visible, residua
         let y = replay[`${prefix}_${key}`];
         if (residual) y = y.map((value, i) => value - measured[i]);
         else if (offset) y = y.map(value => value + offset);
-        return { label, color, x: replay.t, y };
+        return { label: t(label), color, x: replay.t, y };
       });
     return (
-      <Chart key={key} title={residual ? `${label} residual` : label} unit={unit} series={series} />
+      <Chart key={key} title={residual ? t("{{label}} residual", { label: t(label) }) : t(label)} unit={unit} series={series} />
     );
   });
 });
 
 function Recording({ s, a, c }) {
+  const { t } = useTranslation();
   const r = s.report;
   const run = s.runs.find((item) => item.directory === s.directory);
   const motorId = r?.motor_id ?? run?.motorId;
@@ -135,19 +141,19 @@ function Recording({ s, a, c }) {
           </h2>
           <p className="report-path" title={s.directory}>
             {Number.isFinite(recordedAt)
-              ? new Date(recordedAt).toLocaleString(undefined, {
+              ? new Date(recordedAt).toLocaleString(formatLocale, {
                   dateStyle: "medium",
                   timeStyle: "short",
                 })
               : folder}
           </p>
           <p className="recording-identity">
-            Actuator UUID <code>{s.reportUuid || "Not recorded"}</code>
+            {t("Actuator UUID")} <code>{s.reportUuid || t("Not recorded")}</code>
           </p>
         </div>
         <Badge variant={r?.accepted ? "success" : "warning"}>
           {r?.accepted ? <CheckCircle2 /> : <CircleAlert />}
-          {r ? (r.accepted ? "Validated" : "Needs improvement") : "No report"}
+          {r ? (r.accepted ? t("Validated") : t("Needs improvement")) : t("No report")}
         </Badge>
       </div>
       <div className="report-actions">
@@ -159,15 +165,15 @@ function Recording({ s, a, c }) {
         />
         <Button variant="outline" size="sm" onClick={a.showFolder}>
           <FolderOpen />
-          Show folder
+          {t("Show folder")}
         </Button>
         <Button variant="ghost" size="sm" onClick={a.copyPath}>
           <Copy />
-          Copy path
+          {t("Copy path")}
         </Button>
         <Button variant="ghost" size="sm" onClick={a.refit} disabled={c.busy || !s.reportFiles.includes("session.json")}>
           <RefreshCw />
-          Refit recording
+          {t("Refit recording")}
         </Button>
       </div>
       {r && <Report s={s} a={a} />}
@@ -176,6 +182,7 @@ function Recording({ s, a, c }) {
 }
 
 function Report({ s, a }) {
+  const { t } = useTranslation();
   const r = s.report;
   const replay = r.replays.find((item) => item.name === s.trace);
   const ref = Number(r.reference_angle_rad) || 0;
@@ -183,12 +190,12 @@ function Report({ s, a }) {
     <>
       <div className="report-toolbar">
         <Segments
-          label="Recording segment"
+          label={t("Recording segment")}
           value={s.trace}
           onChange={a.setTrace}
           options={[
-            ["validation", "Validation"],
-            ["training", "Training"],
+            ["validation", t("Validation")],
+            ["training", t("Training")],
           ]}
         />
         {s.chart !== "torque" && (
@@ -200,7 +207,7 @@ function Report({ s, a }) {
                 onChange={() => a.toggleSeries(key)}
               >
                 <i className={`swatch swatch-${key}`} />
-                {label}
+                {t(label)}
               </Check>
             ))}
           </div>
@@ -213,37 +220,37 @@ function Report({ s, a }) {
               {axes.map(({ key, label, unit }) => (
                 <Metric
                   key={key}
-                  label={`${label} error · RMSE`}
+                  label={t("{{label}} error · RMSE", { label: t(label) })}
                   value={numberText(replay[`post_${key}_rmse`], 4)}
                   unit={unit}
-                  detail={`Before ${numberText(replay[`pre_${key}_rmse`], 4)} ${unit}`}
+                  detail={t("Before {{value}} {{unit}}", { value: numberText(replay[`pre_${key}_rmse`], 4), unit })}
                 />
               ))}
             </div>
           </Panel>
           <Segments
-            label="Chart view"
+            label={t("Chart view")}
             value={s.chart}
             onChange={a.setChart}
             options={[
-              ["motion", "Motion"],
-              ["residuals", "Residuals"],
-              ["torque", "Torque"],
+              ["motion", t("Motion")],
+              ["residuals", t("Residuals")],
+              ["torque", t("Torque")],
             ]}
           />
           {s.chart === "torque" ? (
             <Chart
-              title="Torque"
+              title={t("Torque")}
               unit="Nm"
               series={[
                 {
-                  label: "Commanded",
+                  label: t("Commanded"),
                   x: replay.command_t || [],
                   y: replay.command_torque || [],
                   color: "--premium",
                 },
                 {
-                  label: "Reported",
+                  label: t("Reported"),
                   x: replay.t,
                   y: replay.reported_torque || [],
                   color: "--foreground",
@@ -264,39 +271,39 @@ function Report({ s, a }) {
           <Empty
             compact
             icon={FileChartColumn}
-            title="No data for this segment"
+            title={t("No data for this segment")}
           >
-            <p>Choose another recording segment.</p>
+            <p>{t("Choose another recording segment.")}</p>
           </Empty>
         </Panel>
       )}
       <Disclosure
         className="disclosure fitted-parameters"
-        title="Fitted parameters & diagnostics"
+        title={t("Fitted parameters & diagnostics")}
       >
         <div className="parameter-grid">
           {[
-            ["Armature", "armature", "kg m²", 1],
-            ["Damping", "damping", "Nm s/rad", 1],
-            ["Friction", "friction", "Nm", 1],
-            ["Delay", "delay", "ms", 1000],
+            [t("Armature"), "armature", "kg m²", 1],
+            [t("Damping"), "damping", "Nm s/rad", 1],
+            [t("Friction"), "friction", "Nm", 1],
+            [t("Delay"), "delay", "ms", 1000],
           ].map(([label, key, unit, scale]) => (
             <Metric
               key={key}
               label={label}
               value={conciseNumber(r.fitted[key] * scale)}
               unit={unit}
-              detail={`Before ${conciseNumber(r.baseline[key] * scale)}`}
+              detail={t("Before {{value}}", { value: conciseNumber(r.baseline[key] * scale) })}
             />
           ))}
         </div>
         <p className="diagnostics">
           {[
             `MuJoCo ${r.mujoco_version}`,
-            `${r.diagnostics?.moving_windows || 0} moving seed windows`,
-            ...(r.warnings || []),
+            t("{{count}} moving seed windows", { count: r.diagnostics?.moving_windows || 0 }),
+            ...(r.warnings || []).map(messageText),
             r.reference_angle_rad
-              ? `Reference ${numberText(r.reference_angle_rad, 2)} rad`
+              ? t("Reference {{angle}} rad", { angle: numberText(r.reference_angle_rad, 2) })
               : "",
           ]
             .filter(Boolean)
@@ -307,12 +314,13 @@ function Report({ s, a }) {
   );
 }
 export function FilesPage({ s, a, c }) {
+  const { t } = useTranslation();
   return (
     <div className="files-layout">
       <Panel
         className="recording-list"
         size="md"
-        title="Saved runs"
+        title={t("Saved runs")}
         action={
           <div className="saved-run-actions">
             <Button
@@ -320,14 +328,14 @@ export function FilesPage({ s, a, c }) {
               size="sm"
               onClick={() => a.openRun()}
               disabled={c.busy}
-              aria-label="Open recording"
+              aria-label={t("Open recording")}
             >
-              <FolderOpen /> Open
+              <FolderOpen /> {t("Open")}
             </Button>
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Refresh recordings"
+              aria-label={t("Refresh recordings")}
               onClick={a.refreshRuns}
               disabled={s.runsLoading}
             >
@@ -361,15 +369,15 @@ export function FilesPage({ s, a, c }) {
                   </ItemTitle>
                   <ItemDescription>
                     {Number.isFinite(item.timestamp)
-                      ? new Date(item.timestamp).toLocaleString(undefined, {
+                      ? new Date(item.timestamp).toLocaleString(formatLocale, {
                           dateStyle: "medium",
                           timeStyle: "short",
                         })
                       : item.name}
                   </ItemDescription>
                   <span className="recording-uuid">
-                    {item.uuid ? `UUID ${item.uuid}` : "UUID not recorded"}
-                    {item.completed === false ? " · No report" : ""}
+                    {item.uuid ? `UUID ${item.uuid}` : t("UUID not recorded")}
+                    {item.completed === false ? t(" · No report") : ""}
                   </span>
                 </ItemContent>
               </Button>
@@ -387,7 +395,7 @@ export function FilesPage({ s, a, c }) {
         </div>
         {!s.runs.length && (
           <p className="field-hint">
-            {s.runsLoading ? "Loading recordings…" : "No saved runs."}
+            {s.runsLoading ? t("Loading recordings…") : t("No saved runs.")}
           </p>
         )}
       </Panel>
@@ -396,8 +404,8 @@ export function FilesPage({ s, a, c }) {
           <Recording s={s} a={a} c={c} />
         ) : (
           <Panel className="files-empty">
-            <Empty icon={FolderOpen} title="No recording open">
-              <p>Choose a saved run or open a recording.</p>
+            <Empty icon={FolderOpen} title={t("No recording open")}>
+              <p>{t("Choose a saved run or open a recording.")}</p>
             </Empty>
           </Panel>
         )}

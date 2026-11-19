@@ -1,3 +1,5 @@
+import { messageText } from "../i18n.mjs";
+import { formatLocale } from "./language.mjs";
 export function inputNumberFormat({ step, min, significantDigits } = {}) {
   if (significantDigits || step === "any") {
     return {
@@ -20,7 +22,7 @@ export function inputNumberFormat({ step, min, significantDigits } = {}) {
 
 export function conciseNumber(value, significantDigits = 6) {
   return value !== "" && value != null && Number.isFinite(Number(value))
-    ? Number(value).toLocaleString(undefined, {
+    ? Number(value).toLocaleString(formatLocale, {
         useGrouping: false,
         maximumSignificantDigits: significantDigits,
       })
@@ -29,4 +31,13 @@ export function conciseNumber(value, significantDigits = 6) {
 
 export function displayAngle(radians, unit) {
   return unit === "deg" ? radians * (180 / Math.PI) : radians;
+}
+
+export function progressText({ message, detail }, t) {
+  if (!detail) return messageText(message);
+  const values = { ...detail };
+  for (const key of ["stage", "phase", "trace"]) {
+    if (values[key]) values[key] = t(values[key]);
+  }
+  return t(`progress.${detail.kind}`, { ...values, defaultValue: message });
 }

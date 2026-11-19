@@ -72,7 +72,7 @@ def test_id_change_checks_source_before_writing(setup, register, value):
 def test_occupied_id_is_rejected_even_for_unsupported_device(setup, target_model):
     bus, service = setup
     bus.registers[40] = {0: target_model}
-    with pytest.raises(DeviceError, match="이미 사용 중"):
+    with pytest.raises(DeviceError, match="already in use"):
         service.set_id(30, 40)
     assert bus.writes == [] and not service.backup_dir.exists()
 
@@ -95,7 +95,7 @@ def test_target_occupation_is_rechecked_before_write(setup, monkeypatch):
         calls.append(motor_id)
         return None if len(calls) == 1 else 1200
     monkeypatch.setattr(bus, "ping", ping)
-    with pytest.raises(DeviceError, match="직전에 사용 중"):
+    with pytest.raises(DeviceError, match="came into use"):
         service.set_id(30, 40)
     assert calls == [40, 40] and bus.writes == []
     assert not service.faulted
@@ -109,7 +109,7 @@ def test_source_config_change_during_id_setup_prevents_write(setup, monkeypatch)
         bus.registers[30][10] = 1
         return None
     monkeypatch.setattr(bus, "ping", ping)
-    with pytest.raises(DeviceError, match="설정이 바뀌었습니다"):
+    with pytest.raises(DeviceError, match="settings changed"):
         service.set_id(30, 40)
     assert bus.writes == []
 
@@ -143,7 +143,7 @@ def test_uncertain_id_write_is_journaled_and_never_retried(setup, monkeypatch, f
     monkeypatch.setattr(bus, "write", write)
     if failure == "old_id_still_present":
         monkeypatch.setattr(bus, "ping", lambda i: 1200 if i == 30 else original_ping(i))
-    with pytest.raises(DeviceError, match="ID 30 → 40가"):
+    with pytest.raises(DeviceError, match="from 30 to 40"):
         service.set_id(30, 40)
     assert attempts == [(30, 7, 1, 40)] and service.faulted
     document = json.loads(next(service.backup_dir.glob("*.json")).read_text())
@@ -151,6 +151,6 @@ def test_uncertain_id_write_is_journaled_and_never_retried(setup, monkeypatch, f
     assert document["changes"][0]["before"]["motor_id"] == 30
     if failure != "silent_rejection":
         assert bus.ping(40) == 1200
-    with pytest.raises(DeviceError, match="잠겼습니다"):
+    with pytest.raises(DeviceError, match="locked"):
         service.set_direction([30 if failure == "silent_rejection" else 40], True)
     assert len(attempts) == 1

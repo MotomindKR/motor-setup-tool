@@ -66,13 +66,13 @@ def test_mode_three_offset_bound_and_target_limits(setup):
     bus, service = setup
     bus.registers[30][11] = 3
     bus.physical[30] = 300
-    with pytest.raises(DeviceError, match="범위 초과"):
+    with pytest.raises(DeviceError, match="exceeds the range"):
         service.save_zero([30])
     bus.physical[30] = 1024
     service.save_zero([30])
     assert service.read_state(30).homing_offset == 1024
     bus.registers[30][48] = 1000
-    with pytest.raises(DeviceError, match="위치 한계"):
+    with pytest.raises(DeviceError, match="position limits"):
         service.save_zero([30])
 
 
@@ -128,7 +128,7 @@ def test_joint_display_does_not_hide_whole_turn_error(setup):
 def test_mode_change_during_capture_rejected(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr("dxl_settings.service.time.sleep", lambda _: bus.registers[30].__setitem__(11, 3))
-    with pytest.raises(DeviceError, match="설정이 변했습니다"):
+    with pytest.raises(DeviceError, match="settings changed"):
         service.save_zero([30])
     assert bus.writes == []
 
@@ -137,7 +137,7 @@ def test_mode_change_during_capture_rejected(setup, monkeypatch):
 def test_mode_five_zero_offset_overflow_rejected(setup, physical):
     bus, service = setup
     bus.physical[30] = physical
-    with pytest.raises(DeviceError, match="범위 초과"):
+    with pytest.raises(DeviceError, match="exceeds the range"):
         service.save_zero([30])
     assert bus.writes == []
 
@@ -146,7 +146,7 @@ def test_mode_five_zero_offset_overflow_rejected(setup, physical):
 def test_non_position_modes_cannot_calibrate(setup, mode):
     bus, service = setup
     bus.registers[30][11] = mode
-    with pytest.raises(DeviceError, match="위치 제어"):
+    with pytest.raises(DeviceError, match="position mode"):
         service.save_zero([30])
     assert bus.writes == []
 
@@ -180,7 +180,7 @@ def test_moved_pose_or_changed_direction_before_zero_write_is_rejected(setup, mo
         return read_states(ids)
 
     monkeypatch.setattr(service, "read_states", change_after_sampling)
-    with pytest.raises(DeviceError, match="저장 전에.*바뀌었습니다"):
+    with pytest.raises(DeviceError, match="changed before saving"):
         service.save_zero([30])
     assert bus.writes == []
 
@@ -188,7 +188,7 @@ def test_moved_pose_or_changed_direction_before_zero_write_is_rejected(setup, mo
 def test_motion_during_capture_rejected(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr("dxl_settings.service.time.sleep", lambda _: bus.physical.__setitem__(30, 2000))
-    with pytest.raises(DeviceError, match="고정"):
+    with pytest.raises(DeviceError, match="Hold"):
         service.save_zero([30])
 
 
@@ -232,21 +232,21 @@ def test_partial_write_timeout_is_journaled_and_not_rolled_back(setup, monkeypat
         if motor_id == 31:
             raise DeviceError("response timeout")  # Device accepted write, reply lost.
     monkeypatch.setattr(bus, "write", write)
-    with pytest.raises(DeviceError, match="일부 값"):
+    with pytest.raises(DeviceError, match="Some values"):
         service.set_direction([30, 31, 32], True)
     assert bus.registers[30][10] == bus.registers[31][10] == 1
     assert bus.registers[32][10] == 0
     document = json.loads(next(service.backup_dir.glob("*.json")).read_text())
     assert document["status"] == "failed"
     assert [c["status"] for c in document["changes"]] == ["verified", "writing", "pending"]
-    with pytest.raises(DeviceError, match="잠겼습니다"):
+    with pytest.raises(DeviceError, match="locked"):
         service.set_direction([32], True)
 
 
 def test_silent_write_failure_is_not_success(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr(bus, "write", lambda *_: None)
-    with pytest.raises(DeviceError, match="저장값 불일치"):
+    with pytest.raises(DeviceError, match="read back"):
         service.set_direction([30], True)
     assert service.faulted
 
@@ -258,7 +258,7 @@ def test_position_verification_after_offset_write(setup, monkeypatch):
         original(*args)
         bus.physical[30] += 100
     monkeypatch.setattr(bus, "write", write)
-    with pytest.raises(DeviceError, match="영점 저장 후 위치"):
+    with pytest.raises(DeviceError, match="position after saving zero"):
         service.save_zero([30])
 
 
@@ -271,7 +271,7 @@ def test_whole_turn_mismatch_never_accepted_as_zero(setup, monkeypatch, turn_del
         bus.physical[30] += turn_delta
     monkeypatch.setattr(bus, "write", write)
     before = service.read_state(30)
-    with pytest.raises(DeviceError, match="차이"):
+    with pytest.raises(DeviceError, match="difference"):
         service.save_zero([30])
     assert service.faulted
     document = json.loads(next(service.backup_dir.glob("*.json")).read_text())
@@ -281,7 +281,7 @@ def test_whole_turn_mismatch_never_accepted_as_zero(setup, monkeypatch, turn_del
     assert change["readback"] == change["after"]["homing_offset"] == 2048 - before.position
     assert change["after"]["position"] == 2048 + turn_delta
     assert len(bus.writes) == 1
-    with pytest.raises(DeviceError, match="잠겼습니다"):
+    with pytest.raises(DeviceError, match="locked"):
         service.save_zero([30])
     assert len(bus.writes) == 1
 
@@ -384,8 +384,8 @@ def test_torque_off_rejects_unknown_models_and_requires_readback(setup, monkeypa
     monkeypatch.setattr(bus, "write", ignore_torque_off_on_31)
     with pytest.raises(DeviceError) as error:
         service.torque_off([30, 31, 32])
-    assert "ID 30: 지원하지 않는 모델" in str(error.value)
-    assert "ID 31: 토크 OFF 확인 실패" in str(error.value)
+    assert "ID 30: unsupported model" in str(error.value)
+    assert "ID 31: Could not verify torque off" in str(error.value)
     assert bus.writes == [(32, 64, 1, 0)]
 
 
@@ -409,7 +409,7 @@ def test_mode_five_requires_all_changed_motors_to_pass_preflight(setup, register
 def test_mode_five_requires_readback_and_locks_further_writes_on_failure(setup, monkeypatch):
     bus, service = setup
     monkeypatch.setattr(bus, "write", lambda *_: None)
-    with pytest.raises(DeviceError, match="저장값 불일치 @11"):
+    with pytest.raises(DeviceError, match="register 11 read back"):
         service.set_mode5([36])
     assert service.faulted
     journal = json.loads(next(service.backup_dir.glob("*.json")).read_text())
@@ -420,7 +420,7 @@ def test_mode_five_requires_readback_and_locks_further_writes_on_failure(setup, 
 def test_unknown_model_not_interpreted_as_xl330(setup):
     bus, service = setup
     bus.registers[30][0] = 999
-    with pytest.raises(DeviceError, match="지원하지 않는 모델"):
+    with pytest.raises(DeviceError, match="unsupported model"):
         service.read_state(30)
     assert bus.writes == []
 

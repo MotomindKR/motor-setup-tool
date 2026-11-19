@@ -1,5 +1,7 @@
 'use strict';
 
+const { i18n, t } = require('./i18n.mjs');
+
 const { execFile, spawn } = require('node:child_process');
 const { constants } = require('node:fs');
 const fs = require('node:fs/promises');
@@ -48,7 +50,7 @@ class DxlWorker {
         if (failure) return;
         const reply = JSON.parse(line);
         if (typeof reply?.connected !== 'boolean' || typeof reply.faulted !== 'boolean') {
-          throw new Error('Invalid DXL worker response');
+          throw new Error(t("Invalid DXL worker response"));
         }
         this.pending.shift();
         request.resolve(reply);
@@ -63,7 +65,7 @@ class DxlWorker {
         output.close();
         this.child = null;
         this.closing = false;
-        const message = stderr.trim() || failure?.message || `DXL worker exited (${code})`;
+        const message = stderr.trim() || failure?.message || t("DXL worker exited ({{code}})", { code });
         for (const request of this.pending.splice(0)) {
           request.resolve({ connected: false, faulted: false, error: message });
         }
@@ -73,13 +75,13 @@ class DxlWorker {
   }
 
   async run(operation, params = {}) {
-    if (!operations.has(operation)) throw new Error('Unknown DXL operation');
-    if (this.closing) throw new Error('DXL worker is closing');
+    if (!operations.has(operation)) throw new Error(t("Unknown DXL operation"));
+    if (this.closing) throw new Error(t("DXL worker is closing"));
     // A foreground operation can queue behind one status read.
     if (this.active && (operation === 'poll' || this.pending.length >= 2 || this.pending[0].operation !== 'poll')) {
-      throw new Error('Wait for the current DXL operation');
+      throw new Error(t("Wait for the current DXL operation"));
     }
-    const line = JSON.stringify({ operation, params }) + '\n';
+    const line = JSON.stringify({ operation, params, language: i18n.language }) + '\n';
     if (!this.child) this.start();
     return new Promise(resolve => {
       this.pending.push({ operation, resolve });
@@ -98,12 +100,12 @@ class DxlWorker {
 }
 
 async function grantPortAccess(port) {
-  if (process.platform !== 'linux') throw new Error('Port authorization is available on Linux');
+  if (process.platform !== 'linux') throw new Error(t("Port authorization is available on Linux"));
   if (typeof port !== 'string' || !/^\/dev\/tty(?:ACM|USB)[0-9]+$/.test(port)) {
-    throw new Error('Choose a /dev/ttyACM or /dev/ttyUSB port');
+    throw new Error(t("Choose a /dev/ttyACM or /dev/ttyUSB port"));
   }
   const device = await fs.lstat(port).catch(() => null);
-  if (!device?.isCharacterDevice()) throw new Error(`Connect the adapter and confirm that ${port} exists`);
+  if (!device?.isCharacterDevice()) throw new Error(t("Connect the adapter and confirm that {{port}} exists", { port }));
   const flags = constants.R_OK | constants.W_OK;
   try {
     await fs.access(port, flags);
@@ -116,14 +118,14 @@ async function grantPortAccess(port) {
   try {
     await Promise.all([fs.access(pkexec, constants.X_OK), fs.access(setfacl, constants.X_OK)]);
   } catch {
-    throw new Error('Install the acl and polkit packages to request serial port access');
+    throw new Error(t("Install the acl and polkit packages to request serial port access"));
   }
   try {
     await promisify(execFile)(pkexec, ['--disable-internal-agent', setfacl, '-m',
       `u:${process.getuid()}:rw`, '--', port], { timeout: 120_000 });
   } catch (error) {
-    if (error.code === 126) throw new Error('Administrator authorization was cancelled');
-    throw new Error(`Could not authorize ${port}. ${error.stderr?.trim() || 'Check the desktop authentication agent.'}`);
+    if (error.code === 126) throw new Error(t("Administrator authorization was cancelled"));
+    throw new Error(t("Could not authorize {{port}}. {{error}}", { port, error: error.stderr?.trim() || t("Check the desktop authentication agent.") }));
   }
   await fs.access(port, flags);
 }

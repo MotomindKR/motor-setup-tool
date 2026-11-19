@@ -124,7 +124,9 @@ fn finish(
     for (index, trace) in session.traces.iter().enumerate() {
         progress(WorkProgress::fitting(
             0.9 + 0.08 * index as f32 / session.traces.len() as f32,
-            format!("Replaying {} in MuJoCo", trace.name),
+            ProgressLabel::Replay {
+                trace: trace.name.clone(),
+            },
         ));
         let pre = engine::replay(trace, &session.config.baseline, cancel)?;
         let post = engine::replay(trace, &fitted, cancel)?;

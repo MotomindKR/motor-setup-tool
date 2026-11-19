@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React from "react";
 import { Settings2 } from "lucide-react";
 import { MotomindLogo } from "@motomindkr/ui/components/motomind-logo";
@@ -25,6 +26,7 @@ export function AppSidebar({
   onSettings,
   updateAvailable,
 }) {
+  const { t } = useTranslation();
   const { state, isMobile, setOpenMobile } = useSidebar();
   const compact = state === "collapsed" && !isMobile;
   const navigate = (tab) => {
@@ -45,9 +47,9 @@ export function AppSidebar({
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup className="app-sidebar-group">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("Workspace")}</SidebarGroupLabel>
           <SidebarGroupContent>
-            <nav aria-label="Tool sections">
+            <nav aria-label={t("Tool sections")}>
               <SidebarMenu className="app-sidebar-menu">
                 {Object.entries(pages).map(([key, page]) => {
                   const Icon = page.icon;
@@ -57,12 +59,12 @@ export function AppSidebar({
                         size="lg"
                         isActive={activeTab === key}
                         aria-current={activeTab === key ? "page" : undefined}
-                        aria-label={page.label}
-                        tooltip={page.label}
+                        aria-label={t(page.label)}
+                        tooltip={t(page.label)}
                         onClick={() => navigate(key)}
                       >
                         <Icon />
-                        <span>{page.label}</span>
+                        <span>{t(page.label)}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );
@@ -77,10 +79,10 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              aria-label="Settings"
-              aria-description={updateAvailable ? "Update available" : undefined}
+              aria-label={t("Settings")}
+              aria-description={updateAvailable ? t("Update available") : undefined}
               tooltip={
-                updateAvailable ? "Settings · Update available" : "Settings"
+                updateAvailable ? t("Settings · Update available") : t("Settings")
               }
               onClick={() => {
                 if (isMobile) setOpenMobile(false);
@@ -91,7 +93,7 @@ export function AppSidebar({
                 <Settings2 />
                 {updateAvailable && <span className="settings-update-dot" />}
               </span>
-              <span>Settings</span>
+              <span>{t("Settings")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

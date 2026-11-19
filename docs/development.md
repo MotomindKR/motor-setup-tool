@@ -26,6 +26,15 @@ open Electron and select a saved folder in **Files**.
 Data, cache, and CAN lock paths retain their v0.1.0 locations so desktop and CLI
 sessions contend for the same bus ownership. See the [CLI guide](cli.md).
 
+## Desktop translations
+
+Use `useTranslation()` in React and `t` from `electron/i18n.mjs` in the Electron
+main process. English UI text is the message key. Add its translation to
+`electron/locales/ko.json` and use named placeholders for values. Rust progress
+events carry their parameters so the renderer can translate them while a job runs.
+The Python serial worker receives the language with each request and loads
+`dxl/dxl_settings/ko.json` for Korean messages.
+
 ## Dynamixel development
 
 From the repository root, set up the serial worker's Python environment before

@@ -1,5 +1,7 @@
 'use strict';
 
+const { t } = require('./i18n.mjs');
+
 const { execFile, spawn } = require('node:child_process');
 const { once } = require('node:events');
 const { createInterface } = require('node:readline');
@@ -11,13 +13,13 @@ const registerCatalog = require('./register-catalog.json');
 
 function integer(value, name, min = 1, max = 254) {
   const n = Number(value);
-  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be ${min}–${max}`);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(t("{{name}} must be {{min}}–{{max}}", { name, min, max }));
   return String(n);
 }
 
 function number(value, name, min, max) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${name} must be ${min}–${max}`);
+  if (!Number.isFinite(n) || n < min || n > max) throw new Error(t("{{name}} must be {{min}}–{{max}}", { name, min, max }));
   return String(n);
 }
 
@@ -33,27 +35,27 @@ function validCan(value) {
 function busArgs(params) {
   const can = params.can;
   if (!validCan(can)) {
-    throw new Error('Select a valid CAN interface');
+    throw new Error(t("Select a valid CAN interface"));
   }
-  return ['--can', can, '--host-id', integer(params.hostId ?? 253, 'Host ID')];
+  return ['--can', can, '--host-id', integer(params.hostId ?? 253, t("Host ID"))];
 }
 
 function target(params) {
-  return [...busArgs(params), '--id', integer(params.id, 'Motor ID')];
+  return [...busArgs(params), '--id', integer(params.id, t("Motor ID"))];
 }
 
 function selectedTarget(params) {
-  if (!/^[a-f0-9]{16}$/i.test(params.expectedUuid)) throw new Error('Scan and select a motor with a valid UUID');
+  if (!/^[a-f0-9]{16}$/i.test(params.expectedUuid)) throw new Error(t("Scan and select a motor with a valid UUID"));
   return [...target(params), '--expected-uuid', params.expectedUuid];
 }
 
 function setupRegister(value, writable = false, model) {
-  if (typeof model !== 'string' || !Object.hasOwn(motorModels, model)) throw new Error('Select a supported motor model');
+  if (typeof model !== 'string' || !Object.hasOwn(motorModels, model)) throw new Error(t("Select a supported motor model"));
   const index = Number(value);
   const base = registerCatalog.find(item => Number(item.index) === index);
   const item = base ? { ...base, ...base.overrides?.[model] } : null;
   if (!Number.isInteger(index) || !item?.readable || (writable && (!item.writable || !item.editable || item.persistence !== 'save_to_flash'))) {
-    throw new Error('Select a documented register allowed for this operation');
+    throw new Error(t("Select a documented register allowed for this operation"));
   }
   return item;
 }
@@ -65,54 +67,54 @@ function argsFor(operation, params = {}) {
     case 'canUp':
     case 'canRestart': {
       const can = params.can;
-      if (typeof can !== 'string' || !/^[a-zA-Z0-9_.-]{1,15}$/.test(can)) throw new Error('Select a valid SocketCAN interface');
+      if (typeof can !== 'string' || !/^[a-zA-Z0-9_.-]{1,15}$/.test(can)) throw new Error(t("Select a valid SocketCAN interface"));
       return ['can', operation === 'canUp' ? 'up' : 'restart', can, '--auth', 'polkit'];
     }
     case 'scan': return ['scan', ...busArgs(params)];
     case 'plan': {
-      if (typeof params.model !== 'string' || !Object.hasOwn(motorModels, params.model)) throw new Error('Unknown motor model');
+      if (typeof params.model !== 'string' || !Object.hasOwn(motorModels, params.model)) throw new Error(t("Unknown motor model"));
       return ['plan', '--model', params.model, '--setup'];
     }
     case 'calibrate': {
-      if (params.reviewed !== true) throw new Error('Review the motor limits and secure the motor first');
-      if (!params.config || typeof params.config !== 'object') throw new Error('Calibration configuration missing');
-      if (params.output != null && (typeof params.output !== 'string' || !path.isAbsolute(params.output))) throw new Error('Select a valid calibration folder');
+      if (params.reviewed !== true) throw new Error(t("Review the motor limits and secure the motor first"));
+      if (!params.config || typeof params.config !== 'object') throw new Error(t("Calibration configuration missing"));
+      if (params.output != null && (typeof params.output !== 'string' || !path.isAbsolute(params.output))) throw new Error(t("Select a valid calibration folder"));
       return ['calibrate', ...selectedTarget(params), ...(params.output ? ['--output', params.output] : []), '--config-stdin', '--yes'];
     }
     case 'analyze': {
-      if (typeof params.directory !== 'string' || !path.isAbsolute(params.directory)) throw new Error('Select a saved run');
+      if (typeof params.directory !== 'string' || !path.isAbsolute(params.directory)) throw new Error(t("Select a saved run"));
       return ['analyze', params.directory];
     }
     case 'manual': {
-      if (!params.config || typeof params.config !== 'object') throw new Error('Manual configuration missing');
+      if (!params.config || typeof params.config !== 'object') throw new Error(t("Manual configuration missing"));
       return ['manual-session', ...selectedTarget(params)];
     }
     case 'stop': return ['stop', ...target(params)];
     case 'zero': {
-      if (params.confirmed !== true) throw new Error('Confirm the stationary motor first');
+      if (params.confirmed !== true) throw new Error(t("Confirm the stationary motor first"));
       return ['zero', ...selectedTarget(params), '--yes'];
     }
     case 'setId': {
-      if (params.confirmed !== true) throw new Error('Confirm the ID change first');
-      return ['set-id', ...selectedTarget(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
+      if (params.confirmed !== true) throw new Error(t("Confirm the ID change first"));
+      return ['set-id', ...selectedTarget(params), '--new-id', integer(params.newId, t("New motor ID")), '--yes'];
     }
     case 'firmwarePrepare': return ['firmware', 'prepare', ...target(params)];
     case 'firmwareUpdate': {
-      if (params.confirmed !== true) throw new Error('Confirm firmware update and stable power first');
+      if (params.confirmed !== true) throw new Error(t("Confirm firmware update and stable power first"));
       const prepared = JSON.stringify(params.prepared);
-      if (!prepared || prepared.length > 4096) throw new Error('Prepare firmware for the selected motor first');
+      if (!prepared || prepared.length > 4096) throw new Error(t("Prepare firmware for the selected motor first"));
       return ['firmware', 'update', ...target(params), '--prepared', prepared, '--yes'];
     }
     case 'registerRead': return ['register', 'read', ...target(params), '--index', setupRegister(params.index, false, params.model).index];
     case 'registerWrite': {
-      if (params.confirmed !== true) throw new Error('Confirm the persistent register change first');
+      if (params.confirmed !== true) throw new Error(t("Confirm the persistent register change first"));
       const item = setupRegister(params.index, true, params.model);
-      const value = number(params.value, 'Register value', item.min, item.max);
-      if (typeof params.uuid !== 'string' || !/^[a-fA-F0-9]{16}$/.test(params.uuid)) throw new Error('Read the motor identity again');
-      if (typeof params.expectedRaw !== 'string' || !/^[a-fA-F0-9]{8}$/.test(params.expectedRaw)) throw new Error('Read the register again');
+      const value = number(params.value, t("Register value"), item.min, item.max);
+      if (typeof params.uuid !== 'string' || !/^[a-fA-F0-9]{16}$/.test(params.uuid)) throw new Error(t("Read the motor identity again"));
+      if (typeof params.expectedRaw !== 'string' || !/^[a-fA-F0-9]{8}$/.test(params.expectedRaw)) throw new Error(t("Read the register again"));
       return ['register', 'write', ...target(params), '--index', item.index, '--value', value, '--uuid', params.uuid, '--expected-raw', params.expectedRaw, '--yes'];
     }
-    default: throw new Error('Unknown operation');
+    default: throw new Error(t("Unknown operation"));
   }
 }
 
@@ -120,22 +122,22 @@ function backendPath(root, resourcesPath = null, override = process.env.MOTOMIND
   const binary = process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
   if (resourcesPath) {
     const bundled = path.join(resourcesPath, 'backend', binary);
-    if (!fs.existsSync(bundled)) throw new Error(`Bundled Rust backend missing: ${bundled}`);
+    if (!fs.existsSync(bundled)) throw new Error(t("Bundled Rust backend missing: {{file}}", { file: bundled }));
     return bundled;
   }
   if (override) {
     if (fs.existsSync(override)) return path.resolve(override);
-    throw new Error(`Rust backend missing: ${override}`);
+    throw new Error(t("Rust backend missing: {{file}}", { file: override }));
   }
   const release = path.join(root, 'target', 'release', binary);
   if (fs.existsSync(release)) return release;
-  throw new Error('Rust backend missing. Build it with cargo build --release.');
+  throw new Error(t("Rust backend missing. Build it with cargo build --release."));
 }
 
-function exitError(code, signal, stderr, name = 'Backend') {
+function exitError(code, signal, stderr, name = t("Backend")) {
   const detail = stderr.trim();
-  if (signal) return new Error(`${name} terminated by ${signal}${detail ? `\n${detail}` : ''}`);
-  return new Error(detail || `${name} exited with status ${code}`);
+  if (signal) return new Error(t("{{name}} terminated by {{signal}}{{detail}}", { name, signal, detail: detail ? `\n${detail}` : '' }));
+  return new Error(detail || t("{{name}} exited with status {{code}}", { name, code }));
 }
 
 class Backend {
@@ -156,10 +158,10 @@ class Backend {
   }
 
   run(operation, params = {}) {
-    if (this.active) throw new Error('Finish or stop the current operation first');
+    if (this.active) throw new Error(t("Finish or stop the current operation first"));
     const args = argsFor(operation, params);
     const input = operation === 'calibrate' || operation === 'manual' ? JSON.stringify(params.config) : null;
-    if (input && input.length > 10_000) throw new Error('Configuration is too large');
+    if (input && input.length > 10_000) throw new Error(t("Configuration is too large"));
     return new Promise((resolve, reject) => {
       const child = spawn(this.binary, ['--desktop', ...args], { stdio: 'pipe', shell: false, env: this.environment });
       const job = { child, operation };
@@ -174,7 +176,7 @@ class Backend {
         const event = JSON.parse(line);
         switch (event.type) {
           case 'result':
-            if (result !== undefined || !Object.hasOwn(event, 'value')) throw new Error('Invalid backend result');
+            if (result !== undefined || !Object.hasOwn(event, 'value')) throw new Error(t("Invalid backend result"));
             result = event.value;
             break;
           case 'progress':
@@ -183,21 +185,21 @@ class Backend {
             this.emit(event);
             break;
           default:
-            throw new Error('Unknown backend event');
+            throw new Error(t("Unknown backend event"));
         }
       };
       child.stdout.setEncoding('utf8').on('data', chunk => {
         if (protocolError) return;
         pending += chunk;
         try {
-          if (pending.length > 32_000_000) throw new Error('Backend output exceeded the size limit');
+          if (pending.length > 32_000_000) throw new Error(t("Backend output exceeded the size limit"));
           let newline;
           while ((newline = pending.indexOf('\n')) !== -1) {
             onLine(pending.slice(0, newline));
             pending = pending.slice(newline + 1);
           }
         } catch (error) {
-          protocolError = new Error(`Invalid backend response: ${error.message}`);
+          protocolError = new Error(t("Invalid backend response: {{error}}", { error: error.message }));
           pending = '';
           this.cancel();
         }
@@ -216,7 +218,7 @@ class Backend {
           reject(exitError(code, signal, stderr));
           return;
         }
-        if (pending || result === undefined) return reject(new Error('Backend exited with an incomplete response'));
+        if (pending || result === undefined) return reject(new Error(t("Backend exited with an incomplete response")));
         resolve(result);
       });
     });
@@ -230,17 +232,17 @@ class Backend {
   }
 
   manualIntent(value) {
-    if (this.active?.operation !== 'manual') throw new Error('Start monitoring first');
+    if (this.active?.operation !== 'manual') throw new Error(t("Start monitoring first"));
     const direction = Number(value.direction);
     const speed = Number(value.speed);
     if (typeof value.enabled !== 'boolean' || typeof value.reviewed !== 'boolean' || !Number.isInteger(direction) || direction < -1 || direction > 1 || !Number.isFinite(speed) || speed < 0.01 || speed > 1) {
-      throw new Error('Invalid manual intent');
+      throw new Error(t("Invalid manual intent"));
     }
     const input = this.active.child.stdin;
     if (input.writableEnded) return;
     if (input.destroyed || input.writableLength > 1024) {
       this.cancel();
-      throw new Error('Manual control input stalled; motor is being disabled');
+      throw new Error(t("Manual control input stalled; motor is being disabled"));
     }
     input.write(`${JSON.stringify({ type: 'intent', enabled: value.enabled, direction, speed, reviewed: value.reviewed })}\n`);
   }
@@ -252,7 +254,7 @@ class Backend {
     try {
       const ready = once(lines, 'line').then(([line]) => line);
       if (await Promise.race([ready, finished.then(() => null)]) !== 'locked') {
-        throw new Error('Could not lock the recording');
+        throw new Error(t("Could not lock the recording"));
       }
       return await action();
     } finally {
@@ -264,15 +266,15 @@ class Backend {
 
   preview(config) {
     const input = JSON.stringify(config);
-    if (!config || typeof config !== 'object' || input.length > 10_000) throw new Error('Invalid preview configuration');
+    if (!config || typeof config !== 'object' || input.length > 10_000) throw new Error(t("Invalid preview configuration"));
     return new Promise((resolve, reject) => {
       const child = execFile(this.binary, ['preview'], { env: this.environment, maxBuffer: 2_000_000 }, (error, stdout, stderr) => {
         if (error) {
           return reject(typeof error.code === 'number' || error.signal
-            ? exitError(error.code, error.signal, stderr.slice(-4000), 'Preview backend')
+            ? exitError(error.code, error.signal, stderr.slice(-4000), t("Preview backend"))
             : error);
         }
-        try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Invalid preview result')); }
+        try { resolve(JSON.parse(stdout)); } catch { reject(new Error(t("Invalid preview result"))); }
       });
       child.stdin.on('error', () => {});
       child.stdin.end(input);

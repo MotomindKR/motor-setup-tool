@@ -398,28 +398,105 @@ pub enum WorkPhase {
     Recording,
     Fitting,
 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProgressLabel {
+    Text {
+        text: &'static str,
+    },
+    Scan {
+        id: u8,
+    },
+    Capture {
+        trace: &'static str,
+        phase: String,
+        elapsed: f64,
+        duration: f64,
+    },
+    FitIteration {
+        stage: &'static str,
+        iteration: usize,
+        total: usize,
+    },
+    FitComplete {
+        stage: &'static str,
+    },
+    Replay {
+        trace: String,
+    },
+    PrepareFirmware {
+        model: String,
+        version: String,
+    },
+    WriteFirmware {
+        sent: usize,
+        total: usize,
+    },
+    UpdatedFirmware {
+        model: String,
+        id: u8,
+        version: String,
+    },
+}
+
+impl From<&'static str> for ProgressLabel {
+    fn from(text: &'static str) -> Self {
+        Self::Text { text }
+    }
+}
+
+impl std::fmt::Display for ProgressLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use ProgressLabel::*;
+        match self {
+            Text { text } => f.write_str(text),
+            Scan { id } => write!(f, "Checking CAN IDs · {id} / 254"),
+            Capture {
+                trace,
+                phase,
+                elapsed,
+                duration,
+            } => write!(f, "{trace} · {phase} · {elapsed:.1} / {duration:.0} s"),
+            FitIteration {
+                stage,
+                iteration,
+                total,
+            } => write!(f, "{stage} · iteration {iteration} / {total}"),
+            FitComplete { stage } => write!(f, "{stage} complete"),
+            Replay { trace } => write!(f, "Replaying {trace} in MuJoCo"),
+            PrepareFirmware { model, version } => {
+                write!(f, "Preparing official {model} firmware {version}")
+            }
+            WriteFirmware { sent, total } => write!(f, "Writing firmware · {sent}/{total} packets"),
+            UpdatedFirmware { model, id, version } => {
+                write!(f, "{model} ID {id} updated to {version} · motor stopped")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkProgress {
     pub phase: WorkPhase,
     pub fraction: f32,
-    pub label: String,
+    pub label: ProgressLabel,
 }
 impl WorkProgress {
     pub fn scanning(id: u8) -> Self {
         Self {
             phase: WorkPhase::Scanning,
             fraction: id as f32 / 254.,
-            label: format!("Checking CAN IDs · {id} / 254"),
+            label: ProgressLabel::Scan { id },
         }
     }
-    pub fn recording(fraction: f32, label: impl Into<String>) -> Self {
+    pub fn recording(fraction: f32, label: impl Into<ProgressLabel>) -> Self {
         Self {
             phase: WorkPhase::Recording,
             fraction: fraction.clamp(0., 1.),
             label: label.into(),
         }
     }
-    pub fn fitting(fraction: f32, label: impl Into<String>) -> Self {
+    pub fn fitting(fraction: f32, label: impl Into<ProgressLabel>) -> Self {
         Self {
             phase: WorkPhase::Fitting,
             fraction: fraction.clamp(0., 1.),

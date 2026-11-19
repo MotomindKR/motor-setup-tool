@@ -1,3 +1,5 @@
+import { formatLocale } from "./language.mjs";
+import { useTranslation } from "react-i18next";
 import React, { useMemo } from "react";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import {
@@ -8,7 +10,7 @@ import {
 import { Panel, Empty } from "./ui.jsx";
 
 const maxPointsPerTrace = 2000;
-const formatYAxisTick = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 }).format;
+
 function chartRows(series) {
   const rows = new Map();
   series.forEach((trace, index) => {
@@ -46,6 +48,8 @@ function chartRows(series) {
   return [...rows.values()].sort((a, b) => a.t - b.t);
 }
 export function Chart({ title, unit, series, compact = false }) {
+  const { t } = useTranslation();
+  const formatYAxisTick = new Intl.NumberFormat(formatLocale, { maximumSignificantDigits: 3 }).format;
   const data = useMemo(() => chartRows(series), [series]);
   const config = Object.fromEntries(
     series.map((trace, i) => [
@@ -53,7 +57,7 @@ export function Chart({ title, unit, series, compact = false }) {
       { label: trace.label, color: `var(${trace.color})` },
     ]),
   );
-  const description = `${title} in ${unit} over time in seconds. ${series.map((trace) => trace.label).join(", ")}.`;
+  const description = t("{{title}} in {{unit}} over time in seconds. {{series}}.", { title, unit, series: series.map((trace) => trace.label).join(", ") });
   return (
     <Panel
       className={`chart-card ${compact ? "chart-compact" : ""}`}
@@ -112,9 +116,9 @@ export function Chart({ title, unit, series, compact = false }) {
           </LineChart>
         </ChartContainer>
       ) : (
-        <Empty compact title="No data to display" />
+        <Empty compact title={t("No data to display")} />
       )}
-      <p className="chart-axis">Time (s)</p>
+      <p className="chart-axis">{t("Time (s)")}</p>
     </Panel>
   );
 }

@@ -4,7 +4,7 @@ use crate::{
     bridge,
     hardware::{Bus, DiscoveredMotor},
     protocol,
-    types::Config,
+    types::{Config, ProgressLabel},
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -113,7 +113,7 @@ pub fn prepare(
     c: &Config,
     motor: DiscoveredMotor,
     cancel: &AtomicBool,
-    progress: impl Fn(String),
+    progress: impl Fn(ProgressLabel),
 ) -> Result<Prepared> {
     crate::cancel::check(cancel)?;
     let current_version = motor
@@ -121,10 +121,10 @@ pub fn prepare(
         .context("Motor firmware version unavailable")?;
     check_model(&current_version, &c.profile.model)?;
     let r = release(&c.profile.model)?;
-    progress(format!(
-        "Preparing official {} firmware {}",
-        r.model, r.version
-    ));
+    progress(ProgressLabel::PrepareFirmware {
+        model: r.model.clone(),
+        version: r.version.clone(),
+    });
     let directory = crate::paths::cache_dir()?.join("firmware");
     fs::create_dir_all(&directory)?;
     let path = directory.join(&r.filename);
@@ -174,7 +174,7 @@ fn transfer(
     host: u8,
     uuid: [u8; 8],
     exchange: &mut impl FnMut(u8, u16, [u8; 8]) -> Result<(u8, [u8; 8])>,
-    progress: &impl Fn(f32, String),
+    progress: &impl Fn(f32, ProgressLabel),
 ) -> Result<()> {
     ensure!(
         exchange(11, host as u16, uuid)?.0 == 0,
@@ -198,7 +198,10 @@ fn transfer(
         if index % 100 == 0 || index == count {
             progress(
                 0.95 * index as f32 / count as f32,
-                format!("Writing firmware · {index}/{count} packets"),
+                ProgressLabel::WriteFirmware {
+                    sent: index,
+                    total: count,
+                },
             );
         }
         thread::sleep(Duration::from_millis(1));
@@ -213,7 +216,7 @@ pub fn update(
     c: &Config,
     prepared: &Prepared,
     cancel: &AtomicBool,
-    progress: impl Fn(f32, String),
+    progress: impl Fn(f32, ProgressLabel),
 ) -> Result<String> {
     ensure!(
         prepared.matches(c),
@@ -309,10 +312,11 @@ pub fn update(
         bus.stopped()?;
         progress(
             1.,
-            format!(
-                "{} ID {} updated to {installed} · motor stopped",
-                official.model, c.motor_id
-            ),
+            ProgressLabel::UpdatedFirmware {
+                model: official.model.clone(),
+                id: c.motor_id,
+                version: installed.clone(),
+            },
         );
         Ok(installed)
     })();

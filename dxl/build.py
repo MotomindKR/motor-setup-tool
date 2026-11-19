@@ -17,6 +17,7 @@ subprocess.run([
     "--name", "dxl-worker", "--paths", str(root / "dxl"),
     "--distpath", str(output), "--workpath", str(output / "build"),
     "--specpath", str(output / "build"),
+    "--add-data", f"{root / 'dxl/dxl_settings/ko.json'}:dxl_settings",
     "--copy-metadata", "dynamixel-sdk", "--copy-metadata", "pyserial",
     str(root / "dxl" / "dxl_settings" / "worker.py"),
 ], check=True, cwd=root)

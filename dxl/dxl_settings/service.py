@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
+from .messages import translate
 from .transport import (
     BAUD_RATE_ADDRESS, BAUD_RATES, CURRENT_BASED_POSITION_MODE, OPERATING_MODE_ADDRESS,
     TARGET_BAUD, TARGET_BAUD_CODE, DeviceError, Transport, signed,
@@ -50,7 +51,7 @@ class MotorState:
 
     @property
     def name(self) -> str:
-        return MODELS.get(self.model, f"미지원 모델 ({self.model})")
+        return MODELS.get(self.model, translate("Unsupported model ({model})", model=self.model))
 
     @property
     def reverse(self) -> bool:
@@ -82,10 +83,15 @@ class IdChangeResult:
 
 def validate_offset(mode: int, value: int) -> None:
     if mode not in POSITION_MODES:
-        raise DeviceError(f"위치 제어 모드 3/4/5에서 보정하세요. 현재 모드: {mode}")
+        raise DeviceError("Calibration requires position mode 3, 4, or 5. Current mode: {mode}.", mode=mode)
     limit = 1024 if mode == 3 else 1_044_479
     if type(value) is not int or not -limit <= value <= limit:
-        raise DeviceError(f"모드 {mode}의 Homing Offset 범위 초과: {value} (±{limit})")
+        raise DeviceError(
+            "Homing offset {value} exceeds the range for mode {mode} (±{limit}).",
+            mode=mode,
+            value=value,
+            limit=limit,
+        )
 
 
 def validate_zero_mode(state: MotorState) -> None:
@@ -129,11 +135,11 @@ class SettingsService:
 
     def _read_supported_model(self, motor_id: int) -> int:
         if type(motor_id) is not int or not 0 <= motor_id <= 252:
-            raise DeviceError("모터 ID는 0~252여야 합니다.")
+            raise DeviceError("Choose a motor ID from 0 to 252.")
         model = self.transport.read(motor_id, 0, 2)
         if model not in MODELS:
             # Do not interpret unknown models with the XL330 register map.
-            raise DeviceError(f"ID {motor_id}: 지원하지 않는 모델 {model}")
+            raise DeviceError("ID {motor_id}: unsupported model {model}", motor_id=motor_id, model=model)
         return model
 
     def read_state(self, motor_id: int) -> MotorState:
@@ -149,26 +155,33 @@ class SettingsService:
     def read_states(self, ids) -> tuple[MotorState, ...]:
         ids = tuple(ids)
         if not ids or len(ids) != len(set(ids)):
-            raise DeviceError("서로 다른 모터 ID를 하나 이상 선택하세요.")
+            raise DeviceError("Select at least one motor. Each ID must be unique.")
         return tuple(self.read_state(i) for i in ids)
 
     def scan(self) -> tuple[MotorState, ...]:
         devices = self.transport.scan()
         ids = sorted(i for i, model in devices.items() if model in MODELS)
         if not ids:
-            raise NoSupportedMotors("XL330-M288-T / M077-T를 찾지 못했습니다. 포트·baud·전원을 확인하세요.")
+            raise NoSupportedMotors("No XL330-M288-T or XL330-M077-T found. Check the port, baud rate, and motor power.")
         return self.read_states(ids)
 
     def _editable(self, states) -> None:
         if self.faulted:
-            raise DeviceError("저장 실패 후 쓰기가 잠겼습니다. 연결을 끊고 실제 값을 다시 읽으세요.")
+            raise DeviceError("Writes are locked. Reconnect and read the motor settings.")
         for state in states:
             if state.torque != 0:
-                raise DeviceError(f"ID {state.motor_id}: 팔을 지지하고 [선택 토크 OFF] 후 저장하세요.")
+                raise DeviceError(
+                    "ID {motor_id}: support the mechanism and turn torque off before saving.",
+                    motor_id=state.motor_id,
+                )
             if state.hardware_error:
-                raise DeviceError(f"ID {state.motor_id}: Hardware Error = {state.hardware_error}")
+                raise DeviceError(
+                    "ID {motor_id}: hardware error {hardware_error}",
+                    motor_id=state.motor_id,
+                    hardware_error=state.hardware_error,
+                )
             if state.status_return != 2:
-                raise DeviceError(f"ID {state.motor_id}: Status Return Level(68)=2가 필요합니다.")
+                raise DeviceError("ID {motor_id}: Status Return Level (68) must be 2.", motor_id=state.motor_id)
 
     @staticmethod
     def _same_config(before: MotorState, now: MotorState) -> bool:
@@ -188,10 +201,10 @@ class SettingsService:
         changes = []
         for before, state in zip(first, second):
             if not self._same_config(before, state) or abs(state.position - before.position) > TOLERANCE:
-                raise DeviceError(f"ID {state.motor_id}: 자세/설정이 변했습니다. 고정 후 다시 읽으세요.")
+                raise DeviceError("ID {motor_id}: pose or settings changed. Hold the pose and read again.", motor_id=state.motor_id)
             validate_zero_mode(state)
             if state.operating_mode == 3 and not state.min_position <= DEFAULT_ZERO_PULSE <= state.max_position:
-                raise DeviceError(f"ID {state.motor_id}: 기준 pulse가 모터 위치 한계를 벗어납니다.")
+                raise DeviceError("ID {motor_id}: the reference position is outside the position limits.", motor_id=state.motor_id)
             offset = zero_offset(state)
             validate_offset(state.operating_mode, offset)
             changes.append((state.motor_id, 20, 4, offset))
@@ -200,13 +213,16 @@ class SettingsService:
         self._editable(states)
         for old, now in zip(second, states):
             if not self._same_config(old, now) or abs(now.position - old.position) > TOLERANCE:
-                raise DeviceError(f"ID {now.motor_id}: 저장 전에 자세/설정이 바뀌었습니다. 기준 자세를 고정하고 다시 저장하세요.")
+                raise DeviceError(
+                    "ID {motor_id}: pose or settings changed before saving. Hold the reference pose and try again.",
+                    motor_id=now.motor_id,
+                )
         path, _ = self._commit("zero", states, changes, target=DEFAULT_ZERO_PULSE)
         return path
 
     def set_direction(self, ids, reverse: bool) -> Path:
         if type(reverse) is not bool:
-            raise DeviceError("방향은 정방향 또는 역방향이어야 합니다.")
+            raise DeviceError("Choose forward or reverse.")
         states = self.read_states(ids)
         self._editable(states)
         changes = [(s.motor_id, 10, 1, (s.drive_mode & ~1) | int(reverse)) for s in states]
@@ -226,15 +242,15 @@ class SettingsService:
         """Change one primary ID, with a journal and verification at the new ID."""
         for value in (motor_id, new_id):
             if type(value) is not int or not 0 <= value <= 252:
-                raise DeviceError("모터 ID는 0~252 정수여야 합니다.")
+                raise DeviceError("Choose a motor ID from 0 to 252.")
         if motor_id == new_id:
-            raise DeviceError("현재 ID와 새 ID가 같습니다.")
+            raise DeviceError("The new ID matches the current ID.")
         before = self.read_state(motor_id)
         self._editable((before,))
         if self.transport.read(motor_id, 7, 1) != motor_id:
-            raise DeviceError("선택 ID와 모터의 ID(7)가 다릅니다. 실제 연결을 확인하세요.")
+            raise DeviceError("The selected ID does not match register 7. Check the connected motor.")
         if self.transport.ping(new_id) is not None:
-            raise DeviceError(f"ID {new_id}는 이미 사용 중입니다. 다른 ID를 입력하세요.")
+            raise DeviceError("ID {new_id} is already in use. Choose another ID.", new_id=new_id)
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         prefix = 'demo' if self.transport.simulated else 'motor'
@@ -251,9 +267,9 @@ class SettingsService:
             self._editable((now,))
             if (not self._same_config(before, now)
                     or self.transport.read(motor_id, 7, 1) != motor_id):
-                raise DeviceError("ID 저장 직전 모터 설정이 바뀌었습니다. 다시 읽으세요.")
+                raise DeviceError("Motor settings changed before the ID write. Read them again.")
             if self.transport.ping(new_id) is not None:
-                raise DeviceError(f"ID {new_id}가 저장 직전에 사용 중으로 확인되었습니다.")
+                raise DeviceError("ID {new_id} came into use before the write.", new_id=new_id)
             change.update(before=asdict(now), status="writing")
             atomic_json(path, journal)
             write_unverified = True
@@ -264,13 +280,13 @@ class SettingsService:
             atomic_json(path, journal)
             self._editable((after,))
             if change["readback"] != new_id:
-                raise DeviceError(f"새 ID {new_id}의 ID(7) 저장값 불일치")
+                raise DeviceError("ID {new_id}: register 7 does not match the new ID.", new_id=new_id)
             if not self._same_config(replace(now, motor_id=new_id), after):
-                raise DeviceError("ID 변경 후 모델·펌웨어·영점·방향·모드 설정 불일치")
+                raise DeviceError("Model, firmware, zero, direction, or mode changed after the ID write.")
             old_response = self.transport.ping(motor_id)
             change["old_id_response"] = old_response
             if old_response is not None:
-                raise DeviceError(f"이전 ID {motor_id}가 여전히 응답합니다. 중복 ID/연결을 확인하세요.")
+                raise DeviceError("The old ID {motor_id} still responds. Check for duplicate IDs.", motor_id=motor_id)
             write_unverified = False
             change["status"] = "verified"
             journal["status"] = "verified"
@@ -278,16 +294,19 @@ class SettingsService:
         except Exception as exc:
             if write_unverified:
                 self.faulted = True
-                recovery = (f"ID {motor_id} → {new_id}가 이미 적용되었을 수 있습니다. "
-                            "추가 저장 없이 재연결 후 모터 검색으로 확인하세요.")
+                recovery = translate(
+                    "The ID change from {motor_id} to {new_id} may have been applied. Reconnect and scan before writing again.",
+                    motor_id=motor_id,
+                    new_id=new_id,
+                )
             else:
-                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
+                recovery = translate("Read the motor settings again before retrying.")
             journal.update(status="failed", error=str(exc))
             try:
                 atomic_json(path, journal)
             except OSError:
                 pass
-            raise DeviceError(f"ID 저장 중단: {exc}\n{recovery}\n백업: {path}") from exc
+            raise DeviceError("ID change stopped: {error}\n{recovery}\nBackup: {path}", error=exc, recovery=recovery, path=path) from exc
         return IdChangeResult(motor_id, after, path)
 
     def set_1mbps(self, motor_id: int) -> tuple[Path | None, MotorState]:
@@ -304,9 +323,9 @@ class SettingsService:
         old_baud = transport.baud
         before = self.read_state(motor_id)
         if before.baud_rate != old_baud:
-            raise DeviceError("연결 속도와 모터의 Baud Rate(8) 값이 일치하지 않습니다.")
+            raise DeviceError("The port speed does not match the motor's Baud Rate register (8).")
         if transport.read(motor_id, 7, 1) != motor_id:
-            raise DeviceError("선택 ID와 모터의 ID(7)가 다릅니다.")
+            raise DeviceError("The selected ID does not match register 7.")
         if old_baud == TARGET_BAUD:
             return None, before
         self._editable((before,))
@@ -333,15 +352,15 @@ class SettingsService:
                 adapter_speed_restored = True
             record_step("target_speed_probe")
             if occupied is not None:
-                raise DeviceError(f"{TARGET_BAUD} bps에서 ID {motor_id}가 이미 응답합니다.")
+                raise DeviceError("ID {motor_id} already responds at {baud} bps.", baud=TARGET_BAUD, motor_id=motor_id)
             if not transport.simulated and transport.scan() != {motor_id: before.model}:
-                raise DeviceError("속도를 변경할 모터 한 대만 U2D2에 연결하세요.")
+                raise DeviceError("Connect only one motor to the U2D2 to change its baud rate.")
             record_step("source_bus_scan")
 
             now = self.read_state(motor_id)
             self._editable((now,))
             if not self._same_config(before, now) or transport.read(motor_id, 7, 1) != motor_id:
-                raise DeviceError("속도 저장 직전 모터 설정이 바뀌었습니다. 다시 읽으세요.")
+                raise DeviceError("Motor settings changed before the baud write. Read them again.")
             change.update(before=asdict(now), status="writing")
             atomic_json(path, journal)
             record_step("prewrite_checks_and_backup")
@@ -356,7 +375,7 @@ class SettingsService:
             self._editable((after,))
             if (transport.read(motor_id, 7, 1) != motor_id
                     or not self._same_config(replace(now, baud_code=TARGET_BAUD_CODE), after)):
-                raise DeviceError(f"ID {motor_id}: 새 속도에서 모터 설정 재확인 실패")
+                raise DeviceError("ID {motor_id}: could not verify settings at the new baud rate.", motor_id=motor_id)
             write_unverified = False
             change["status"] = journal["status"] = "verified"
             record_step("readback")
@@ -372,12 +391,16 @@ class SettingsService:
             except OSError:
                 pass
             if write_unverified:
-                recovery = f"재연결 후 {TARGET_BAUD} bps와 이전 {old_baud} bps에서 확인하세요."
+                recovery = translate(
+                    "Reconnect and check both {baud} bps and the previous speed of {old_baud} bps.",
+                    baud=TARGET_BAUD,
+                    old_baud=old_baud,
+                )
             elif not adapter_speed_restored:
-                recovery = f"어댑터 속도를 복구하지 못했습니다. {old_baud} bps로 재연결하세요."
+                recovery = translate("Could not restore the adapter speed. Reconnect at {old_baud} bps.", old_baud=old_baud)
             else:
-                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
-            raise DeviceError(f"속도 저장 중단: {exc}\n{recovery}\n백업: {path}") from exc
+                recovery = translate("Read the motor settings again before retrying.")
+            raise DeviceError("Baud change stopped: {error}\n{recovery}\nBackup: {path}", error=exc, recovery=recovery, path=path) from exc
         return path, after
 
     def torque_off(self, ids) -> None:
@@ -388,7 +411,7 @@ class SettingsService:
                 self._read_supported_model(motor_id)
                 self.transport.write(motor_id, 64, 1, 0)
                 if self.transport.read(motor_id, 64, 1) != 0:
-                    raise DeviceError("토크 OFF 확인 실패")
+                    raise DeviceError("Could not verify torque off")
             except Exception as exc:
                 errors.append(f"ID {motor_id}: {exc}")
         if errors:
@@ -413,22 +436,22 @@ class SettingsService:
         if (not isinstance(data, dict) or data.get("schema_version") != 1
                 or type(data.get("simulated")) is not bool
                 or data["simulated"] != self.transport.simulated):
-            raise DeviceError("백업 형식 또는 실물/가상 모드가 일치하지 않습니다.")
+            raise DeviceError("The backup format or hardware/simulation mode does not match.")
         if data.get("kind") not in ("write_backup", "settings_snapshot"):
-            raise DeviceError("지원하지 않는 백업 종류입니다.")
+            raise DeviceError("Unsupported backup type.")
         motors = data.get("motors")
         if not isinstance(motors, list) or not motors:
-            raise DeviceError("백업에 모터 정보가 없습니다.")
+            raise DeviceError("The backup contains no motors.")
         by_id = {}
         for motor in motors:
             if not isinstance(motor, dict):
-                raise DeviceError("잘못된 모터 백업 항목")
+                raise DeviceError("Invalid motor entry in the backup.")
             for key in ("motor_id", "model", "drive_mode", "operating_mode", "homing_offset"):
                 if type(motor.get(key)) is not int:
-                    raise DeviceError(f"잘못된 백업 필드: {key}")
+                    raise DeviceError("Invalid backup field: {key}", key=key)
             i = motor["motor_id"]
             if not 0 <= i <= 252 or i in by_id or not 0 <= motor["drive_mode"] <= 13:
-                raise DeviceError("백업의 모터 ID/방향 값이 잘못됐거나 중복되었습니다.")
+                raise DeviceError("The backup contains an invalid motor ID or direction, or a duplicate ID.")
             by_id[i] = motor
         states = self.read_states(ids)
         self._editable(states)
@@ -436,7 +459,7 @@ class SettingsService:
         for state in states:
             old = by_id.get(state.motor_id)
             if old is None or old["model"] != state.model or old["operating_mode"] != state.operating_mode:
-                raise DeviceError(f"ID {state.motor_id}: 백업의 ID·모델·동작 모드가 일치하지 않습니다.")
+                raise DeviceError("ID {motor_id}: the backup ID, model, or operating mode does not match.", motor_id=state.motor_id)
             validate_offset(state.operating_mode, old["homing_offset"])
             # Restore only direction bit; preserve unrelated profile/auto-torque bits.
             drive = (state.drive_mode & ~1) | (old["drive_mode"] & 1)
@@ -463,9 +486,9 @@ class SettingsService:
                 now = self.read_state(i)
                 self._editable((now,))
                 if not self._same_config(expected[i], now):
-                    raise DeviceError(f"ID {i}: 저장 도중 설정이 바뀌었습니다.")
+                    raise DeviceError("ID {motor_id}: settings changed while saving.", motor_id=i)
                 if target is not None and abs(now.position - expected[i].position) > TOLERANCE:
-                    raise DeviceError(f"ID {i}: 저장 도중 자세가 바뀌었습니다.")
+                    raise DeviceError("ID {motor_id}: pose changed while saving.", motor_id=i)
                 change["before"] = asdict(now)
                 field = SETTING_FIELDS[address]
                 current = getattr(now, field)
@@ -481,20 +504,36 @@ class SettingsService:
                         readback = signed(readback, 32)
                     change["readback"] = readback
                     if readback != value:
-                        raise DeviceError(f"ID {i}: 저장값 불일치 @{address}: {readback} != {value}")
+                        raise DeviceError(
+                            "ID {motor_id}: register {address} read back {actual}; expected {value}.",
+                            motor_id=i,
+                            address=address,
+                            actual=readback,
+                            value=value,
+                        )
                 after = self.read_state(i)
                 change["after"] = asdict(after)
                 self._editable((after,))
                 confirmed_value = getattr(after, field)
                 if confirmed_value != value:
-                    raise DeviceError(f"ID {i}: 저장값 불일치 @{address}: {confirmed_value} != {value}")
+                    raise DeviceError(
+                        "ID {motor_id}: register {address} read back {actual}; expected {value}.",
+                        motor_id=i,
+                        address=address,
+                        actual=confirmed_value,
+                        value=value,
+                    )
                 if target is not None and abs(after.position - target) > TOLERANCE:
-                    raise DeviceError(f"ID {i}: 영점 저장 후 위치 {after.position}, 기준 {target} 불일치 "
-                                      f"(차이 {after.position - target} pulse, "
-                                      f"모드 {after.operating_mode}, "
-                                      f"{'역방향' if after.reverse else '정방향'}, "
-                                      f"Homing Offset {after.homing_offset}). "
-                                      "추가 저장 없이 실제 값을 확인하세요.")
+                    raise DeviceError(
+                        "ID {motor_id}: position after saving zero was {position}, expected {target} (difference {difference} pulses, mode {mode}, {direction}, homing offset {offset}). Check the position before writing again.",
+                        motor_id=i,
+                        position=after.position,
+                        target=target,
+                        difference=after.position - target,
+                        mode=after.operating_mode,
+                        direction=translate("Reverse") if after.reverse else translate("Forward"),
+                        offset=after.homing_offset,
+                    )
                 if write_unverified:
                     write_unverified = False
                     change["status"] = "verified"
@@ -505,9 +544,9 @@ class SettingsService:
         except Exception as exc:
             if write_unverified:
                 self.faulted = True
-                recovery = "일부 값은 저장되었을 수 있습니다. 재연결 후 확인하세요."
+                recovery = translate("Some values may have been saved. Reconnect and check the motor settings.")
             else:
-                recovery = "모터 상태를 다시 읽은 뒤 필요한 경우 다시 시도하세요."
+                recovery = translate("Read the motor settings again before retrying.")
             journal.update(status="failed", error=str(exc))
             try:
                 atomic_json(path, journal)
@@ -515,6 +554,11 @@ class SettingsService:
                 pass  # Pre-write journal still records the possibly attempted write.
             completed = [f'ID {c["motor_id"]} @{c["address"]}' for c in journal["changes"]
                          if c["status"] in ("verified", "unchanged")]
-            raise DeviceError(f"저장 중단: {exc}\n완료: {', '.join(completed) or '없음'}\n"
-                              f"{recovery}\n백업: {path}") from exc
+            raise DeviceError(
+                "Write stopped: {error}\nCompleted: {completed}\n{recovery}\nBackup: {path}",
+                error=exc,
+                completed=", ".join(completed) or translate("None"),
+                recovery=recovery,
+                path=path,
+            ) from exc
         return path, tuple(expected.values())
