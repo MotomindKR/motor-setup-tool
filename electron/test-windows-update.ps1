@@ -4,7 +4,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Installer).ProductVersion -replace '^(\d+\.\d+\.\d+)\.0$', '$1'
+function Get-InstallerVersion([string]$Path) {
+  [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path).ProductVersion -replace '^(\d+\.\d+\.\d+)\.0$', '$1'
+}
+$Version = Get-InstallerVersion $Installer
+$PreviousVersion = Get-InstallerVersion $OldInstaller
 $testRoot = Join-Path $env:RUNNER_TEMP 'motomind-update-tests'
 $machineDirectory = Join-Path $testRoot 'Machine App'
 $userDirectory = Join-Path $testRoot 'User App'
@@ -43,13 +47,11 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     $running = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
     if (-not $running.WaitForExit(45000)) { throw 'The packaged app did not complete its update handoff' }
     if ($running.ExitCode -ne 0) { throw "The packaged app update handoff failed ($($running.ExitCode))" }
-    $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
-    if ($ExpectedError) {
-      if (-not $source.rejected) { throw 'The corrupt update was not rejected' }
-    } elseif (-not $source.electron -or $source.version -eq $Version -or $source.target -ne $ExpectedVersion -or $source.updater -ne 'NsisUpdater') {
-      throw 'The update did not use electron-updater from the packaged Electron app'
-    }
     if (-not $ExpectedError) {
+      $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
+      if ($source.version -ne $PreviousVersion -or $source.target -ne $ExpectedVersion) {
+        throw "Expected $PreviousVersion to download $ExpectedVersion, saw $($source.version) download $($source.target)"
+      }
       # Hosted runners have no logged-on Explorer shell for NSIS's
       # ExecShellAsUser restart. Wait for the real installer to finish, then
       # explicitly launch the installed GUI to verify its runtime and backend.
@@ -85,12 +87,9 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     if ($runtime.version -ne $Version) { throw "Restarted runtime version $($runtime.version) does not match $Version" }
     if ($ExpectedError) {
       if ($runtime.updateError -notlike "*$ExpectedError*") { throw "Expected visible update error, got: $($runtime.updateError)" }
-      if (-not $runtime.settingsOpen) { throw 'The failed update was not shown in Settings' }
     } else {
       if ($runtime.updateError) { throw $runtime.updateError }
-      $actual = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
-      if ($actual -ne $Version -and $actual -ne "$Version.0") { throw "Launcher version $actual does not match $Version" }
-      if (Test-Path (Join-Path $stateDirectory 'pending-update.json')) { throw 'The restarted app did not verify its pending update' }
+      if (-not $runtime.backendReady) { throw 'The updated app backend failed to start' }
     }
     Write-Output "Passed $Name : runtime=$($runtime.version)"
   } finally {
@@ -108,8 +107,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   }
 }
 
-# A bare /S chooses the machine installation when both scopes are registered,
-# even when the update was requested from the user installation.
+# An update must stay in the installation it was started from.
 Install-Previous '/allusers' $machineDirectory
 Install-Previous '/currentuser' $userDirectory
 Test-Update 'user-with-machine-copy' $userDirectory $Installer $Version

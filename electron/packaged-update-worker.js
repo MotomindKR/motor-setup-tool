@@ -49,16 +49,14 @@ async function serve() {
   const native = require('electron-updater').autoUpdater;
   native.setFeedURL({ provider: 'generic', url: `http://127.0.0.1:${server.address().port}` });
   native.disableDifferentialDownload = true;
-  native.on('update-downloaded', () => fs.writeFileSync(config.handoff, JSON.stringify({
-    version: app.getVersion(), target: config.version, updater: native.constructor.name,
-    electron: process.versions.electron, executable: app.getPath('exe'), pid: process.pid,
+  native.on('update-downloaded', info => fs.writeFileSync(config.handoff, JSON.stringify({
+    version: app.getVersion(), target: info.version,
   })));
 
   async function exercise(window) {
     const evaluate = source => window.webContents.executeJavaScript(source);
     await waitFor(() => evaluate(`document.querySelector('button[aria-label="Refresh adapters"]')?.disabled === false`), 'Startup did not finish');
     if (config.badChecksum) {
-      // The upgraded app checks in the background. The baseline checks on demand.
       await waitFor(() => evaluate('(async () => (await window.motorApp.updateInfo()).updateResult?.available)()'), 'The background check did not offer an update');
     } else {
       assert.equal(await evaluate('(async () => (await window.motorApp.checkUpdate()).available)()'), true);
@@ -71,14 +69,13 @@ async function serve() {
       return;
     }
     await assert.rejects(evaluate('window.motorApp.installUpdate()'), /checksum mismatch/i);
+    assert.equal(fs.existsSync(config.handoff), false, 'The updater accepted the corrupt download');
     const visibleError = await waitFor(async () => {
-      const text = await evaluate(`document.querySelector('[role="dialog"]')?.textContent || ""`);
-      return /checksum mismatch/i.test(text) && text;
+      const text = await evaluate(`document.querySelector('[role="dialog"]')?.innerText || ""`);
+      return /Settings/i.test(text) && /checksum mismatch/i.test(text) && text;
     }, 'Checksum failure was not visible in Settings');
-    assert.equal(fs.existsSync(path.join(config.directory, 'pending-update.json')), false);
     fs.writeFileSync(config.screenshot, (await window.webContents.capturePage()).toPNG());
-    fs.writeFileSync(`${config.screenshot}.json`, JSON.stringify({ version: app.getVersion(), updateError: visibleError, settingsOpen: true }));
-    fs.writeFileSync(config.handoff, JSON.stringify({ rejected: true, updater: native.constructor.name }));
+    fs.writeFileSync(`${config.screenshot}.json`, JSON.stringify({ version: app.getVersion(), updateError: visibleError }));
     app.exit(0);
   }
   app.once('browser-window-created', (_event, window) => {

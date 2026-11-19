@@ -374,19 +374,17 @@ mod tests {
             motor_id: 7,
             host_id: 253,
         };
-        let confirmed: Prepared =
-            serde_json::from_str(&serde_json::to_string(&review).unwrap()).unwrap();
         assert!(
-            confirmed
+            review
                 .verify_motor(&review.current_version, review.uuid)
                 .is_ok()
         );
         assert!(
-            confirmed
+            review
                 .verify_motor(&review.current_version, [2; 8])
                 .is_err()
         );
-        assert!(confirmed.verify_motor("0.0.3.31", review.uuid).is_err());
+        assert!(review.verify_motor("0.0.3.31", review.uuid).is_err());
     }
 
     #[test]

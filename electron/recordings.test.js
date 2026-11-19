@@ -48,7 +48,7 @@ test('individual downloads preserve CSV bytes and cannot overwrite run artifacts
   await assert.rejects(exportRun(directory, output, '../training.csv'), /available recording/);
   await assert.rejects(exportRun(directory, output, 'calibration.json'), /missing/);
   await assert.rejects(exportRun(directory, 'recording.csv', 'validation.csv'), /download location/);
-  assert.equal((await fs.readdir(base)).some(name => name.endsWith('.tmp')), false);
+  assert.deepEqual(await fs.readFile(output), await fs.readFile(path.join(directory, 'validation.csv')));
 });
 
 test('incomplete calibration runs can be managed without a completed report', async t => {
@@ -94,17 +94,12 @@ test('deletion removes an empty run folder and rejects unrelated folders', async
   await assert.rejects(fs.stat(directory), { code: 'ENOENT' });
 });
 
-test('refreshing the recordings list observes a report replaced by a refit', async t => {
+test('the saved-run list and open report show the latest recorded identity', async t => {
   const { directory } = await fixture(t);
-  for (const name of ['config.json', 'hardware.json']) await fs.unlink(path.join(directory, name));
-  const file = path.join(directory, 'report.json');
-  assert.equal((await inspectRun(directory)).uuid, null);
-  const report = JSON.parse(await fs.readFile(file));
+  assert.equal((await inspectRun(directory)).uuid, '0102030405060708');
+  const { report } = await loadRun(directory);
   report.motor_uuid = '0123456789abcdef';
-  await fs.writeFile(file + '.tmp', JSON.stringify(report));
-  await fs.rename(file + '.tmp', file);
+  await fs.writeFile(path.join(directory, 'report.json'), JSON.stringify(report));
   assert.equal((await inspectRun(directory)).uuid, '0123456789ABCDEF');
-  await fs.writeFile(path.join(directory, 'hardware.json'), JSON.stringify({ uuid: '0000000000000000' }));
   assert.equal((await loadRun(directory)).uuid, '0123456789ABCDEF');
-  assert.deepEqual((await loadRun(directory)).report, report);
 });

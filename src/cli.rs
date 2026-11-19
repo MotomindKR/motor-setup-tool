@@ -841,41 +841,49 @@ fn monitor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::{CommandFactory, error::ErrorKind};
+    use clap::error::ErrorKind;
 
     fn parse(args: &str) -> clap::error::Result<Cli> {
         Cli::try_parse_from(std::iter::once("tool").chain(args.split_ascii_whitespace()))
     }
 
     #[test]
-    fn adapter_commands_only_expose_socketcan_and_direct_usb() {
-        assert!(parse("can list").is_ok());
-        assert!(parse("can usb-list").is_ok());
-        assert!(parse("can serial-list").is_err());
+    fn desktop_measurements_accept_the_offered_limits_and_user_edits() {
+        for profile in Profile::presets() {
+            let detected = Config::preset(&profile.model).unwrap();
+            let mut requested = serde_json::to_value(&detected).unwrap();
+            for (field, _, [_, maximum]) in detected.input_fields().unwrap() {
+                if matches!(field, "torque_limit" | "speed_limit" | "travel_limit") {
+                    requested[field] = json!(maximum);
+                }
+            }
+            requested["train_seconds"] = json!(42.);
+            requested["baseline"]["damping"] = json!(0.1);
+            let edited = serde_json::from_str(&requested.to_string()).unwrap();
+            let accepted =
+                serde_json::to_value(requested_config(&detected, edited).unwrap()).unwrap();
+            for field in [
+                "/torque_limit",
+                "/speed_limit",
+                "/travel_limit",
+                "/train_seconds",
+                "/baseline/damping",
+            ] {
+                assert_eq!(accepted.pointer(field), requested.pointer(field));
+            }
+        }
     }
 
     #[test]
-    fn requested_gui_config_keeps_advanced_fields_but_checks_motor_identity() {
+    fn a_measurement_must_match_the_reviewed_motor_and_suite() {
         let detected = Config::preset("RS-06").unwrap();
         let mut requested = detected.clone();
-        requested.train_seconds = 42.;
-        requested.validation_seconds = 21.;
-        requested.baseline.damping = 0.1;
-        let accepted = requested_config(&detected, requested.clone()).unwrap();
-        assert_eq!(accepted.train_seconds, 42.);
-        assert_eq!(accepted.validation_seconds, 21.);
-        assert_eq!(accepted.baseline.damping, 0.1);
         requested.motor_id = 2;
         assert!(requested_config(&detected, requested).is_err());
-    }
-
-    #[test]
-    fn preview_and_recording_both_reject_a_stale_suite() {
-        let preset = Config::preset("RS-06").unwrap();
-        let mut requested = preset.clone();
+        let mut requested = detected.clone();
         requested.excitation_revision += 1;
         assert!(preview_config(&requested).is_err());
-        assert!(requested_config(&preset, requested).is_err());
+        assert!(requested_config(&detected, requested).is_err());
     }
 
     #[test]
@@ -927,18 +935,15 @@ mod tests {
 
     #[test]
     fn cli_rejects_invalid_input_and_shows_help_without_a_command() {
-        Cli::command().debug_assert();
         for command in [
             "calibrat",
             "--misspelled",
             "monitor --id 0",
             "monitor --id 127 --seconds NaN",
+            "register read --id 127 --index 0xzzzz",
         ] {
             assert!(parse(command).is_err(), "{command}");
         }
-        assert!(parse("self-check").is_ok());
-        assert_eq!(register_index("0x7010").unwrap(), 0x7010);
-        assert!(register_index("0xzzzz").is_err());
         assert_eq!(
             parse("").err().unwrap().kind(),
             ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand

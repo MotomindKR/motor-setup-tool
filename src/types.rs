@@ -383,22 +383,6 @@ mod tests {
         assert!(c.validate().is_err());
     }
     #[test]
-    fn maximum_speed_survives_a_desktop_json_round_trip() {
-        for model in MODELS.keys() {
-            let mut config = Config::preset(model).unwrap();
-            let (_, _, [_, maximum]) = config
-                .input_fields()
-                .unwrap()
-                .find(|(name, _, _)| *name == "speed_limit")
-                .unwrap();
-            config.speed_limit = maximum;
-            let wire = serde_json::to_string(&config).unwrap();
-            let received: Config = serde_json::from_str(&wire).unwrap();
-            assert_eq!(received.speed_limit, maximum, "{model}");
-            received.validate().unwrap();
-        }
-    }
-    #[test]
     fn excitation_is_bounded_even_when_overspeed() {
         let c = Config::default();
         for i in 0..1000 {

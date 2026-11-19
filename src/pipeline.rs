@@ -519,7 +519,8 @@ mod tests {
     fn cancellation_preserves_saved_results() {
         let (session, parameters) = fixture();
         let run = tempfile::tempdir().unwrap();
-        fs::write(run.path().join("replay_wrapper.py"), "original").unwrap();
+        let previous_calibration = run.path().join("calibration.json");
+        fs::write(&previous_calibration, r#"{"accepted":true}"#).unwrap();
         let fit = fit::Fit {
             parameters,
             converged: true,
@@ -539,10 +540,9 @@ mod tests {
         );
         assert!(result.unwrap_err().is::<crate::cancel::Cancelled>());
         assert_eq!(
-            fs::read(run.path().join("replay_wrapper.py")).unwrap(),
-            b"original"
+            fs::read_to_string(previous_calibration).unwrap(),
+            r#"{"accepted":true}"#
         );
-        assert_eq!(fs::read_dir(run.path()).unwrap().count(), 1);
     }
 
     #[test]

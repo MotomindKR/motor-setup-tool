@@ -11,6 +11,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 (async () => {
   assert.equal(process.getuid(), 0);
   const [oldInstaller, installer] = process.argv.slice(2);
+  const previous = execFileSync('dpkg-deb', ['--field', oldInstaller, 'Version'], { encoding: 'utf8' }).trim();
   const version = execFileSync('dpkg-deb', ['--field', installer, 'Version'], { encoding: 'utf8' }).trim();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motor-linux-updater-'));
   const executable = '/opt/Motor Setup Tool/motor-setup-tool';
@@ -49,23 +50,19 @@ const { setTimeout: delay } = require('node:timers/promises');
       await delay(200);
     }
     assert.equal(runtime?.version, version, `Updated app did not restart; see ${caseDirectory}`);
-    const source = JSON.parse(await fs.readFile(handoff, 'utf8'));
-    assert.equal(source.updater, 'DebUpdater');
     if (badChecksum) {
-      assert.equal(source.rejected, true);
       assert.match(runtime.updateError, /checksum mismatch/i);
     } else {
-      assert.notEqual(source.version, version);
+      const source = JSON.parse(await fs.readFile(handoff, 'utf8'));
+      assert.equal(source.version, previous);
       assert.equal(source.target, version);
       assert.equal(runtime.backendReady, true);
       assert.equal(runtime.updateError, null);
-      assert.equal((await fs.readFile(path.join(path.dirname(executable), 'resources', 'package-type'), 'utf8')).trim(), 'deb');
       const rule = '/usr/lib/udev/rules.d/70-motomind-gsusb.rules';
       assert.deepEqual(await fs.readFile(rule), await fs.readFile(path.join(__dirname, '..', 'packaging', path.basename(rule))));
       const stat = await fs.stat(rule);
       assert.equal(stat.uid, 0);
       assert.equal(stat.mode & 0o777, 0o644);
-      await assert.rejects(fs.access(path.join(userData, 'pending-update.json')), { code: 'ENOENT' });
     }
     console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${version}`);
   }

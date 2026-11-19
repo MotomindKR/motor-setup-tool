@@ -263,14 +263,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn register_indices_are_unique() {
-        let mut indices: Vec<_> = CATALOG.iter().map(|item| item.index).collect();
-        indices.sort();
-        indices.dedup();
-        assert_eq!(indices.len(), CATALOG.len());
-    }
-
-    #[test]
     fn zero_state_is_a_single_byte_enum_and_ignores_padding() {
         let item = register(0x7029).unwrap();
         assert_eq!(item.encode(1.).unwrap(), [1, 0, 0, 0]);

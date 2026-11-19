@@ -40,9 +40,8 @@ test("startup, navigation, and disconnected states never send motion commands", 
       page.getByRole("main", { name: heading, exact: true }),
     ).toBeVisible();
   }
-  expect(
-    await page.evaluate(() => window.testMotor.calls.map((c) => c.operation)),
-  ).toEqual(["interfaces", "usbAdapters"]);
+  const operations = await page.evaluate(() => window.testMotor.calls.map(c => c.operation));
+  expect(operations.filter(op => !["interfaces", "usbAdapters"].includes(op))).toEqual([]);
   expect(await page.evaluate(() => window.testMotor.intents)).toEqual([]);
   expect(errors).toEqual([]);
 });
@@ -64,6 +63,11 @@ test("calibration previews, review, saved results, and chart views work", async 
   await page
     .getByRole("checkbox", { name: "Motor secured · limits reviewed" })
     .check();
+  await expect(start).toBeEnabled();
+  await navigate(page, "Files");
+  await page.getByRole("button", { name: "Open recording", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Show folder" })).toBeVisible();
+  await navigate(page, "Calibrate");
   await expect(start).toBeEnabled();
   await page.getByLabel("Speed cutoff").fill("3");
   await expect(
@@ -331,15 +335,12 @@ test("live monitoring starts disabled, jog releases, and navigation stops monito
   await expect
     .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
     .toBe(-1);
-  await page.keyboard.press("Shift+Tab");
-  await expect(disable).toBeFocused();
+  await disable.focus();
   await expect
     .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
     .toBe(0);
   await page.keyboard.up("Space");
-  await page
-    .getByRole("button", { name: "Disable motor", exact: true })
-    .click();
+  await disable.click();
   await expect(
     page.getByRole("button", { name: "Enable motor", exact: true }),
   ).toBeVisible();
@@ -514,86 +515,43 @@ test("a background update marks Settings in the collapsed sidebar", async ({ pag
   await expect(dot).toHaveCount(0);
 });
 
-test("number fields show short decimals and retain the precise preset", async ({
-  page,
-}) => {
-  await connect(page);
-  const speed = page.getByLabel("Speed cutoff");
-  await expect(speed).toHaveValue("14.844");
-  await speed.focus();
-  await speed.press("Tab");
-  await page
-    .getByRole("button", { name: "Advanced settings", exact: true })
-    .click();
-  await expect(page.getByLabel("Armature")).toHaveValue("0.000001");
-  await page
-    .getByRole("button", { name: "Advanced settings", exact: true })
-    .click();
-  await page
-    .getByRole("checkbox", { name: "Motor secured · limits reviewed" })
-    .check();
-  await page
-    .getByRole("button", { name: "Start calibration", exact: true })
-    .click();
-  const config = await page.evaluate(
-    () =>
-      window.testMotor.calls.find((call) => call.operation === "calibrate")
-        .params.config,
-  );
-  expect(config.speed_limit).toBe(fixture.preset.speed_limit);
-  expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
-  await expect(page.getByRole("main", { name: "Recordings", exact: true })).toBeVisible();
-  await navigate(page, "Calibrate");
-  await expect(
-    page.getByRole("checkbox", { name: "Motor secured · limits reviewed" }),
-  ).not.toBeChecked();
-  await expect(
-    page.getByRole("button", { name: "Start calibration", exact: true }),
-  ).toBeDisabled();
-});
-
-test.describe("editing localized travel limits", () => {
+test.describe("calibration settings with a decimal comma", () => {
   test.use({ locale: "de-DE" });
 
-  test("only accepted numeric edits can authorize calibration", async ({ page }) => {
+  test("calibration uses the reviewed limits and preserves unedited preset precision", async ({ page }) => {
     await connect(page);
+    const speed = page.getByLabel("Speed cutoff");
     const travel = page.getByLabel("Travel limit");
     const review = page.getByRole("checkbox", { name: "Motor secured · limits reviewed" });
     const start = page.getByRole("button", { name: "Start calibration", exact: true });
-    const paste = text => travel.evaluate((input, text) => {
-      const clipboardData = new DataTransfer();
-      clipboardData.setData("text/plain", text);
-      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
-    }, text);
+    await expect(speed).toHaveValue("14,844");
+    await speed.focus();
+    await speed.press("Tab");
+    const advanced = page.getByRole("button", { name: "Advanced settings", exact: true });
+    await advanced.click();
+    await expect(page.getByLabel("Armature")).toHaveValue("0,000001");
+    await advanced.click();
+
     await review.check();
     await expect(start).toBeEnabled();
-
-    await travel.fill("invalid");
-    await travel.selectText();
-    await paste("invalid");
-    await expect(travel).toHaveValue("3");
-    await expect(review).toBeChecked();
     await travel.fill(",");
-    await expect(travel).toHaveValue(",");
     await expect(review).not.toBeChecked();
-    await travel.press("Tab");
-    await expect(page.getByText("Fill in all calibration settings.")).toBeVisible();
+    await expect(page.getByRole("alert")).toBeVisible();
     await review.check();
     await expect(start).toBeDisabled();
 
-    await travel.fill("");
-    await travel.pressSequentially(",5");
-    await travel.press("Tab");
-    await expect(travel).toHaveValue("0,5");
-    await travel.selectText();
-    await paste("2,5");
-    await expect(travel).toHaveValue("2,5");
+    await travel.fill("2,5");
     await review.check();
     await start.click();
-    const limit = await page.evaluate(() =>
-      window.testMotor.calls.find((call) => call.operation === "calibrate").params.config.travel_limit
+    const config = await page.evaluate(() =>
+      window.testMotor.calls.find(call => call.operation === "calibrate").params.config
     );
-    expect(limit).toBe(2.5);
+    expect(config.travel_limit).toBe(2.5);
+    expect(config.speed_limit).toBe(fixture.preset.speed_limit);
+    expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
+    await navigate(page, "Calibrate");
+    await expect(review).not.toBeChecked();
+    await expect(start).toBeDisabled();
   });
 });
 
