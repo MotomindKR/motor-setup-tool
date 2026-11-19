@@ -7,13 +7,12 @@ import {
 } from "@motomindkr/ui/components/chart";
 import { Panel, Empty } from "./ui.jsx";
 
-// Keep each trace on its recorded timestamps, including independently sampled
-// torque commands. Limit rendered SVG points without changing stored samples.
+const maxPointsPerTrace = 2000;
+const formatYAxisTick = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 }).format;
 function chartRows(series) {
   const rows = new Map();
   series.forEach((trace, index) => {
     const count = Math.min(trace.x.length, trace.y.length);
-    const stride = Math.max(1, Math.ceil(count / 2000));
     const add = (i) => {
       const t = trace.x[i],
         value = trace.y[i];
@@ -22,8 +21,27 @@ function chartRows(series) {
       row[`trace${index}`] = value;
       rows.set(t, row);
     };
-    for (let i = 0; i < count; i += stride) add(i);
-    if (count) add(count - 1);
+    if (count <= maxPointsPerTrace) {
+      for (let i = 0; i < count; i++) add(i);
+      return;
+    }
+    // Retain each bucket’s endpoints and extrema on their original timestamps.
+    const width = Math.ceil((4 * count) / maxPointsPerTrace);
+    for (let start = 0; start < count; start += width) {
+      const end = Math.min(start + width, count);
+      let low, high;
+      for (let i = start; i < end; i++) {
+        if (!Number.isFinite(trace.x[i]) || !Number.isFinite(trace.y[i])) continue;
+        if (low === undefined || trace.y[i] < trace.y[low]) low = i;
+        if (high === undefined || trace.y[i] > trace.y[high]) high = i;
+      }
+      add(start);
+      if (low !== undefined) {
+        add(low);
+        add(high);
+      }
+      add(end - 1);
+    }
   });
   return [...rows.values()].sort((a, b) => a.t - b.t);
 }
@@ -69,11 +87,7 @@ export function Chart({ title, unit, series, compact = false }) {
               tickLine={false}
               width={54}
               domain={["auto", "auto"]}
-              tickFormatter={(value) =>
-                Number(value).toLocaleString(undefined, {
-                  maximumSignificantDigits: 3,
-                })
-              }
+              tickFormatter={formatYAxisTick}
             />
             <ChartTooltip
               content={
@@ -103,4 +117,9 @@ export function Chart({ title, unit, series, compact = false }) {
       <p className="chart-axis">Time (s)</p>
     </Panel>
   );
+}
+
+export function SingleTraceChart({ label, x, y, color = "--info-foreground", ...chart }) {
+  const series = useMemo(() => [{ label, x, y, color }], [label, x, y, color]);
+  return <Chart {...chart} series={series} />;
 }

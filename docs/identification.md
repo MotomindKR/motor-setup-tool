@@ -2,62 +2,24 @@
 
 [Developer guide](development.md) · [Simulation and exports](simulation.md)
 
-The default run records **40 s training + 20 s independent validation**. Only
-training selects parameters. Replay uses the transmitted, quantized commands
-and recorded observation timestamps, not regenerated waveforms.
+Calibration records a training trajectory and an independent validation trajectory.
+Only training data selects parameters. Replay uses the quantized commands sent
+to the motor and their recorded timestamps.
 
 ## Motion plan
 
-| Training interval | Excitation | Purpose |
-|---|---|---|
-| 0–10 s | Paired positive/negative speed steps at 20%, 45%, 75%, 100% amplitude | Wider speed coverage |
-| 10–22 s | Logarithmic velocity-target sine sweep, 0.15–8 Hz | Accelerations and effective delay |
-| 22–30 s | Three-frequency multisine | Dynamic excitation |
-| 30–36 s | Alternating torque bursts, 20–100% torque limit, 60–160 ms widths | Acceleration and torque range |
-| 36–40 s | Zero commanded torque while enabled | Coast-down |
+Speed steps, a sweep, and multisine motion excite different parts of the speed
+range. Torque bursts measure acceleration directly. Coast-down reveals friction
+as the shaft slows. Validation changes the waveform to test the fit on new motion.
 
-| Setting | Default or behavior |
-|---|---|
-| Preset | One per motor; intervals scale with recording duration |
-| Validation | Different frequencies, speeds, pulses, and amplitudes |
-| Requested speed | Up to 75% of configured speed cutoff |
-| Preset speed cutoff | 45% of the smaller of no-load speed and wire range |
-| Torque / travel | Bench torque cap below; ±24 rad from initial position |
+Run `motor-setup-tool plan --model RS-00` to see a model's current limits and
+defaults. The calibration preview shows requested motion. Each run saves its
+actual segment timings and limits in `experiment_plan.json`.
 
-**Advanced** can change sweep range, duration, and limits. Speed stages use a
-bounded host PI controller; bursts request bounded torque. Above 85% of the
-speed cutoff, the generator opposes motion. Near 75% of travel, it returns
-toward center. Acquisition limits, CAN checks, cancellation, and the watchdog
-remain active. Firmware operation-mode Kp/Kd stay at zero.
-
-The preview shows requested inputs, not predicted response. High-frequency
-tracking may be limited. `excitation_revision` identifies the generator;
-recorded commands remain the replay input. Opening the app starts no motion.
-
-## Motor specifications versus test settings
-
-[Official July 2026 product table](https://github.com/RobStride/Product_Information/blob/0f4ad74fdb67023e75bbcbeebecd6f1a003ce000/README.md).
-These are output-side quantities. Rated torque assumes specified cooling.
-For RS04 the lower published 35 Nm rating is used for bench-policy calculations.
-
-| Model | Rated Nm | Peak Nm | Nominal no-load rpm | Ratio | Rated V |
-|---|---:|---:|---:|---:|---:|
-| RS00 | 5 | 14 | 315 | 10 | 48 |
-| RS01 | 7 | 17 | 315 | 7.75 | 36 |
-| RS02 | 7 | 17 | 410 | 7.75 | 48 |
-| RS03 | 21 | 60 | 195 | 9 | 48 |
-| RS04 | 35 | 120 | 200 | 9 | 48 |
-| RS05 | 1.8 | 5.5 | 480 | 7.75 | 48 |
-| RS06 | 11 | 36 | 480 | 9 | 48 |
-
-| Bench policy | Formula |
-|---|---|
-| Torque cap | min(25% rated, 10% peak, 10% wire range) |
-| Speed cap | min(50% no-load, 50% wire range) |
-| Preset speed cutoff | 45% of the smaller of no-load speed and wire range |
-
-These are application policy, not manufacturer safety guarantees. Temperature
-limits use reported motor temperature, not ambient rating.
+Rated torque assumes the manufacturer's cooling conditions. The app derives
+bench limits from the model ratings and wire ranges. For RS-04 it uses the lower
+published torque rating. [Model catalog](../electron/motor-models.json) ·
+[Vendor specifications](https://github.com/RobStride/Product_Information/blob/0f4ad74fdb67023e75bbcbeebecd6f1a003ce000/README.md)
 
 ## Fitting stages
 

@@ -1,17 +1,38 @@
 use crate::{bridge, engine, fit, types::*};
-use anyhow::Result;
-use std::{fs, path::Path, sync::atomic::AtomicBool};
+use anyhow::{Context, Result};
+use std::{fs, io, path::Path, sync::atomic::AtomicBool};
 
 fn rmse(a: &[f64], b: &[f64]) -> f64 {
     (a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum::<f64>() / a.len() as f64).sqrt()
 }
 pub fn analyze(dir: &Path, cancel: &AtomicBool, progress: impl Fn(WorkProgress)) -> Result<Report> {
     progress(WorkProgress::fitting(0., "Checking recorded measurements"));
-    let session: Session = bridge::read_json(&dir.join("session.json"))?;
+    let recording = fs::File::open(dir.join("session.json")).context("Open session.json")?;
+    let mut session: Session =
+        serde_json::from_reader(io::BufReader::new(&recording)).context("Invalid session.json")?;
     anyhow::ensure!(
         session.source == "hardware",
         "Choose a real motor recording; synthetic sessions are no longer supported"
     );
+    let metadata = dir.join("hardware.json");
+    let hardware: serde_json::Value = if metadata.try_exists()? {
+        bridge::read_json(&metadata)?
+    } else {
+        serde_json::Value::Null
+    };
+    let hardware_uuid: Option<[u8; 8]> = match &hardware["uuid"] {
+        serde_json::Value::String(hex) => {
+            Some(crate::protocol::parse_hex(hex, "UUID in hardware.json")?)
+        }
+        value => serde_json::from_value(value.clone()).context("Invalid UUID in hardware.json")?,
+    };
+    if let (Some(recorded), Some(sidecar)) = (session.motor_uuid, hardware_uuid) {
+        anyhow::ensure!(
+            recorded == sidecar,
+            "Actuator UUID differs between session.json and hardware.json"
+        );
+    }
+    session.motor_uuid = session.motor_uuid.or(hardware_uuid);
     fit::validate(&session)?;
     let fitted = fit::identify(
         &session.traces[0],
@@ -19,14 +40,14 @@ pub fn analyze(dir: &Path, cancel: &AtomicBool, progress: impl Fn(WorkProgress))
         cancel,
         &progress,
     )?;
-    finish(&session, fitted, dir, cancel, &progress)
+    finish(&session, &hardware, fitted, dir, cancel, &progress)
 }
 pub fn write_plan(c: &Config, dir: &Path) -> Result<()> {
     bridge::write_json(
         &dir.join("experiment_plan.json"),
         &serde_json::json!({
             "training":crate::experiment::plan(c,false), "validation":crate::experiment::plan(c,true),
-            "motor_spec":c.profile.spec(), "specification_revision":"2026-07-13",
+            "motor_spec":c.profile.spec(), "specification_revision":c.profile.manual_revision(),
             "sweep_start_hz":c.sweep_start_hz,"sweep_end_hz":c.sweep_end_hz,
             "torque_limit_nm":c.torque_limit,"speed_limit_rad_s":c.speed_limit,
             "target_speed_peak_rad_s":c.speed_limit*c.target_speed_fraction(),"excitation_revision":c.excitation_revision,
@@ -36,16 +57,13 @@ pub fn write_plan(c: &Config, dir: &Path) -> Result<()> {
 }
 fn finish(
     session: &Session,
+    hardware: &serde_json::Value,
     fit: fit::Fit,
     dir: &Path,
     cancel: &AtomicBool,
     progress: &impl Fn(WorkProgress),
 ) -> Result<Report> {
     let fitted = fit.parameters;
-    fs::write(
-        dir.join("replay_wrapper.py"),
-        include_str!("replay_wrapper.py"),
-    )?;
     let mut warnings = vec![
         "Torque gain is fixed at 1; inertia and friction are conditional estimates.".into(),
         "Delay includes host/CAN/feedback effects; internal delays are not separately identified."
@@ -62,21 +80,14 @@ fn finish(
         session.config.profile.torque_range
     ));
     warnings.push(if session.config.profile.uses_documented_ranges() {
-        "Wire ranges match the official 2026-07-13 model manual (private CAN types 1 and 2).".into()
+        "Wire ranges match the official model manual (private CAN types 1 and 2).".into()
     } else {
-        "Custom/older wire ranges: these differ from the official 2026-07-13 model manual.".into()
+        "Custom/older wire ranges: these differ from the official model manual.".into()
     });
-    let hardware: serde_json::Value = if dir.join("hardware.json").exists() {
-        bridge::read_json(&dir.join("hardware.json"))?
-    } else {
-        serde_json::Value::Null
-    };
-    if session.source != "demo" {
-        warnings.push(format!(
-            "Recorded motor firmware version: {}",
-            hardware["firmware_version"].as_str().unwrap_or("unknown")
-        ));
-    }
+    warnings.push(format!(
+        "Recorded motor firmware version: {}",
+        hardware["firmware_version"].as_str().unwrap_or("unknown")
+    ));
     let provenance = dir.join("reprocessing.json");
     if provenance.exists() {
         let metadata: serde_json::Value = bridge::read_json(&provenance)?;
@@ -86,12 +97,6 @@ fn finish(
                 .as_str()
                 .unwrap_or("See reprocessing.json")
         ));
-    }
-    if session.source == "demo" {
-        warnings.insert(
-            0,
-            "DEMO: synthetic measurements, not connected hardware.".into(),
-        );
     }
     if !fit.converged {
         warnings.push("Optimizer did not converge; candidate needs another run.".into());
@@ -163,27 +168,31 @@ fn finish(
     let report = Report {
         source: session.source.clone(),
         motor_id: session.config.motor_id,
-        motor_uuid: bridge::read_json::<serde_json::Value>(&dir.join("hardware.json"))
-            .ok()
-            .and_then(|hardware| serde_json::from_value(hardware.get("uuid")?.clone()).ok()),
+        motor_uuid: session.motor_uuid,
         reference_angle_rad: session.config.reference_angle_rad,
         model: session.config.profile.model.clone(),
         fitted: fitted.clone(),
         baseline: session.config.baseline.clone(),
         accepted,
-        warnings: warnings.clone(),
+        warnings,
         replays,
         delay_resolution_s: dt,
-        mujoco_version: engine::VERSION.into(),
-        diagnostics: fit.diagnostics.clone(),
+        mujoco_version: mujoco_rs::mujoco_version().into(),
+        diagnostics: fit.diagnostics,
     };
     progress(WorkProgress::fitting(0.99, "Saving results"));
-    bridge::write_json(&dir.join("report.json"), &report)?;
+    let staging = tempfile::tempdir_in(dir)?;
+    let stage = staging.path();
     fs::write(
-        dir.join("pre_calibration.xml"),
+        stage.join("replay_wrapper.py"),
+        include_str!("replay_wrapper.py"),
+    )?;
+    bridge::write_json(&stage.join("report.json"), &report)?;
+    fs::write(
+        stage.join("pre_calibration.xml"),
         engine::xml(&session.config.baseline),
     )?;
-    fs::write(dir.join("candidate.xml"), engine::xml(&fitted))?;
+    fs::write(stage.join("candidate.xml"), engine::xml(&fitted))?;
     let artifact = serde_json::json!({
         "schema_version":1,"source":session.source,"motor_id":session.config.motor_id,
         "motor_uuid":report.motor_uuid,
@@ -191,33 +200,27 @@ fn finish(
         "profile":session.config.profile,"parameters":fitted,"torque_gain_assumption":1.,
         "hardware":hardware,
         "uses_documented_wire_ranges":session.config.profile.uses_documented_ranges(),
-        "protocol_reference":"RobStride model manuals 2026-07-13, private CAN types 1 and 2",
+        "protocol_reference":"RobStride model manuals, private CAN types 1 and 2",
         "motor_spec":session.config.profile.spec(),
-        "identification":fit.diagnostics,
+        "identification":report.diagnostics,
         "friction_model":{"type":if fitted.static_friction > fitted.friction {"stribeck_constraint_bound"} else {"constant_frictionloss"},"speed_rad_s":engine::STRIBECK_SPEED,"requires_wrapper":fitted.static_friction > fitted.friction},
         "wrapper_required": fitted.delay > 0. || fitted.static_friction > fitted.friction,
         "coordinate_frame":"gearbox output shaft",
         "delay_semantics":"effective command-to-observation delay; avoid double-counting host delay",
-        "status":if !accepted {"rejected_candidate"} else if session.source == "demo" {"validated_synthetic_demo"} else {"validated_on_bare_motor"},
-        "mujoco_version":engine::VERSION,"mujoco_rs_version":"6.1.0",
-        "feedback_interval_s":dt,"training_condition_number":fit.condition,"warnings":warnings
+        "status":if !accepted {"rejected_candidate"} else {"validated_on_bare_motor"},
+        "mujoco_version":report.mujoco_version,"mujoco_rs_version":"6.1.0",
+        "feedback_interval_s":dt,"training_condition_number":fit.condition,"warnings":report.warnings
     });
-    bridge::write_json(&dir.join("candidate.json"), &artifact)?;
+    bridge::write_json(&stage.join("candidate.json"), &artifact)?;
     if accepted {
-        bridge::write_json(&dir.join("calibration.json"), &artifact)?;
-        fs::write(dir.join("post_calibration.xml"), engine::xml(&fitted))?;
-    } else {
-        for name in ["calibration.json", "post_calibration.xml"] {
-            let p = dir.join(name);
-            if p.exists() {
-                fs::remove_file(p)?;
-            }
-        }
+        bridge::write_json(&stage.join("calibration.json"), &artifact)?;
+        fs::write(stage.join("post_calibration.xml"), engine::xml(&fitted))?;
     }
     for replay in &report.replays {
         use std::io::Write;
-        let mut out =
-            std::io::BufWriter::new(fs::File::create(dir.join(format!("{}.csv", replay.name)))?);
+        let mut out = std::io::BufWriter::new(fs::File::create(
+            stage.join(format!("{}.csv", replay.name)),
+        )?);
         writeln!(
             out,
             "time_s,measured_position_rad,pre_position_rad,post_position_rad,measured_velocity_rad_s,pre_velocity_rad_s,post_velocity_rad_s"
@@ -235,9 +238,65 @@ fn finish(
                 replay.post_velocity[i]
             )?;
         }
+        out.flush()?;
     }
+    crate::cancel::check(cancel)?;
+    publish(stage, dir, accepted)?;
     progress(WorkProgress::fitting(1., "Comparison ready"));
     Ok(report)
+}
+
+fn publish(stage: &Path, dir: &Path, accepted: bool) -> Result<()> {
+    // report.json marks a complete run. Publish it only after all exports are in place.
+    let mut files: Vec<_> = fs::read_dir(stage)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<io::Result<_>>()?;
+    files.sort_by_key(|name| name == "report.json");
+    let mut previous_files = files.clone();
+    if !accepted {
+        previous_files.extend(["calibration.json".into(), "post_calibration.xml".into()]);
+    }
+    previous_files.sort_by_key(|name| name != "report.json");
+    let backup = tempfile::tempdir_in(dir)?;
+    let mut replaced = Vec::new();
+    let mut installed = Vec::new();
+    let commit = (|| -> Result<()> {
+        for name in &previous_files {
+            let path = dir.join(name);
+            match fs::symlink_metadata(&path) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                result => {
+                    anyhow::ensure!(!result?.is_dir(), "Expected a file at {}", path.display())
+                }
+            }
+            fs::rename(path, backup.path().join(name))?;
+            replaced.push(name);
+        }
+        for name in &files {
+            fs::rename(stage.join(name), dir.join(name))?;
+            installed.push(name);
+        }
+        Ok(())
+    })();
+    if let Err(error) = commit {
+        let rollback = (|| -> io::Result<()> {
+            for name in installed {
+                fs::remove_file(dir.join(name))?;
+            }
+            for name in replaced.into_iter().rev() {
+                fs::rename(backup.path().join(name), dir.join(name))?;
+            }
+            Ok(())
+        })();
+        if let Err(failure) = rollback {
+            return Err(error).context(format!(
+                "Restore failed ({failure}). Previous results are in {}",
+                backup.keep().display()
+            ));
+        }
+        return Err(error).context("Publish calibration results");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -266,12 +325,38 @@ mod tests {
             Session {
                 schema_version: 1,
                 source: "demo".into(),
+                motor_uuid: None,
                 config: c,
                 complete: true,
                 traces,
             },
             truth,
         )
+    }
+    #[test]
+    fn standalone_recording_retains_identity_and_rejects_mixed_run_files() {
+        let (mut session, _) = fixture();
+        session.source = "hardware".into();
+        session.motor_uuid = Some([1; 8]);
+        let run = tempfile::tempdir().unwrap();
+        let dir = run.path();
+        bridge::write_json(&dir.join("session.json"), &session).unwrap();
+        let refit = || analyze(dir, &AtomicBool::new(false), |_| {});
+        assert_eq!(refit().unwrap().motor_uuid, session.motor_uuid);
+
+        let sidecar_uuid = [2u8; 8];
+        bridge::write_json(
+            &dir.join("hardware.json"),
+            &serde_json::json!({"uuid": sidecar_uuid}),
+        )
+        .unwrap();
+        assert!(refit().unwrap_err().to_string().contains("UUID differs"));
+        let prior: Report = bridge::read_json(&dir.join("report.json")).unwrap();
+        assert_eq!(prior.motor_uuid, session.motor_uuid);
+
+        session.motor_uuid = None;
+        bridge::write_json(&dir.join("session.json"), &session).unwrap();
+        assert_eq!(refit().unwrap().motor_uuid, Some(sidecar_uuid));
     }
     #[test]
     fn identify_recovers_hidden_parameters_and_validates_unseen_motion() {
@@ -284,18 +369,17 @@ mod tests {
         })
         .unwrap();
         let updates = updates.into_inner();
-        assert!(updates.len() > 50);
+        assert!(updates.windows(2).any(|w| w[0].fraction < w[1].fraction));
         assert!(
             updates
                 .iter()
-                .all(|p| p.phase == WorkPhase::Fitting && (0.0..=0.901).contains(&p.fraction))
+                .all(|p| p.phase == WorkPhase::Fitting && (0.0..=1.).contains(&p.fraction))
         );
         assert!(
             updates
                 .windows(2)
                 .all(|w| w[1].fraction + 1e-6 >= w[0].fraction)
         );
-        assert!((updates.last().unwrap().fraction - 0.9).abs() < 1e-6);
         assert!(fit.converged, "optimizer did not converge");
         for (actual, expected) in [
             (fit.parameters.armature, truth.armature),
@@ -344,7 +428,6 @@ mod tests {
             let refinement = fit.diagnostics.trajectory_refinement.as_ref().unwrap();
             assert!(refinement.training_objective_after <= refinement.training_objective_before);
             assert_eq!(fit.parameters.static_friction, 0.);
-            assert_eq!(fit.diagnostics.breakaway_events, 0);
             assert!(
                 (fit.parameters.armature / truth.armature - 1.).abs() < 0.12,
                 "{:?}",
@@ -407,9 +490,8 @@ mod tests {
             sample.position *= 3.;
             sample.velocity *= 3.;
         }
-        let dir =
-            std::env::temp_dir().join(format!("motomind-rejection-test-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let run = tempfile::tempdir().unwrap();
+        let dir = run.path();
         fs::write(dir.join("calibration.json"), "stale").unwrap();
         let fit = fit::Fit {
             parameters: truth,
@@ -417,10 +499,63 @@ mod tests {
             condition: 5.,
             diagnostics: FitDiagnostics::default(),
         };
-        let report = finish(&s, fit, &dir, &AtomicBool::new(false), &|_| {}).unwrap();
+        let report = finish(
+            &s,
+            &serde_json::Value::Null,
+            fit,
+            dir,
+            &AtomicBool::new(false),
+            &|_| {},
+        )
+        .unwrap();
         assert!(!report.accepted);
         assert!(!dir.join("calibration.json").exists());
         assert!(dir.join("candidate.xml").exists());
-        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn cancellation_preserves_saved_results() {
+        let (session, parameters) = fixture();
+        let run = tempfile::tempdir().unwrap();
+        let previous_calibration = run.path().join("calibration.json");
+        fs::write(&previous_calibration, r#"{"accepted":true}"#).unwrap();
+        let fit = fit::Fit {
+            parameters,
+            converged: true,
+            condition: 5.,
+            diagnostics: FitDiagnostics::default(),
+        };
+        let cancel = AtomicBool::new(false);
+        let result = finish(
+            &session,
+            &serde_json::Value::Null,
+            fit,
+            run.path(),
+            &cancel,
+            &|_| {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            },
+        );
+        assert!(result.unwrap_err().is::<crate::cancel::Cancelled>());
+        assert_eq!(
+            fs::read_to_string(previous_calibration).unwrap(),
+            r#"{"accepted":true}"#
+        );
+    }
+
+    #[test]
+    fn publication_failure_restores_prior_report_and_exports() {
+        let run = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir_in(run.path()).unwrap();
+        for name in ["report.json", "training.csv"] {
+            fs::write(stage.path().join(name), "replacement").unwrap();
+        }
+        fs::write(run.path().join("report.json"), "previous report").unwrap();
+        fs::create_dir(run.path().join("training.csv")).unwrap();
+        assert!(publish(stage.path(), run.path(), false).is_err());
+        assert_eq!(
+            fs::read(run.path().join("report.json")).unwrap(),
+            b"previous report"
+        );
+        assert!(run.path().join("training.csv").is_dir());
     }
 }

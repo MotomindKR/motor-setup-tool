@@ -1,7 +1,11 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
+const { once } = require('node:events');
+const { createInterface } = require('node:readline');
+const { promisify } = require('node:util');
 const path = require('node:path');
+const motorModels = require('./motor-models.json');
 const fs = require('node:fs');
 const registerCatalog = require('./register-catalog.json');
 
@@ -26,16 +30,25 @@ function validCan(value) {
   return false;
 }
 
-function target(params) {
+function busArgs(params) {
   const can = params.can;
   if (!validCan(can)) {
     throw new Error('Select a valid CAN interface');
   }
-  return ['--can', can, '--host-id', integer(params.hostId ?? 253, 'Host ID'), '--id', integer(params.id, 'Motor ID')];
+  return ['--can', can, '--host-id', integer(params.hostId ?? 253, 'Host ID')];
+}
+
+function target(params) {
+  return [...busArgs(params), '--id', integer(params.id, 'Motor ID')];
+}
+
+function selectedTarget(params) {
+  if (!/^[a-f0-9]{16}$/i.test(params.expectedUuid)) throw new Error('Scan and select a motor with a valid UUID');
+  return [...target(params), '--expected-uuid', params.expectedUuid];
 }
 
 function setupRegister(value, writable = false, model) {
-  if (!/^(?:RS-0[0-6]|RS-10P)$/.test(model)) throw new Error('Select a supported motor model');
+  if (typeof model !== 'string' || !Object.hasOwn(motorModels, model)) throw new Error('Select a supported motor model');
   const index = Number(value);
   const base = registerCatalog.find(item => Number(item.index) === index);
   const item = base ? { ...base, ...base.overrides?.[model] } : null;
@@ -49,29 +62,22 @@ function argsFor(operation, params = {}) {
   switch (operation) {
     case 'interfaces': return ['can', 'list'];
     case 'usbAdapters': return ['can', 'usb-list'];
-    case 'canUp': {
-      const can = params.can;
-      if (typeof can !== 'string' || !/^[a-zA-Z0-9_.-]{1,15}$/.test(can)) throw new Error('Select a valid SocketCAN interface');
-      return ['can', 'up', can, '--auth', 'polkit'];
-    }
+    case 'canUp':
     case 'canRestart': {
       const can = params.can;
       if (typeof can !== 'string' || !/^[a-zA-Z0-9_.-]{1,15}$/.test(can)) throw new Error('Select a valid SocketCAN interface');
-      return ['can', 'restart', can, '--auth', 'polkit'];
+      return ['can', operation === 'canUp' ? 'up' : 'restart', can, '--auth', 'polkit'];
     }
-    case 'scan': {
-      target({ ...params, id: 1 });
-      return ['scan', '--can', params.can, '--host-id', integer(params.hostId ?? 253, 'Host ID')];
-    }
+    case 'scan': return ['scan', ...busArgs(params)];
     case 'plan': {
-      if (!/^(?:RS-0[0-6]|RS-10P)$/.test(params.model)) throw new Error('Unknown motor model');
-      return ['plan', '--model', params.model];
+      if (typeof params.model !== 'string' || !Object.hasOwn(motorModels, params.model)) throw new Error('Unknown motor model');
+      return ['plan', '--model', params.model, '--setup'];
     }
     case 'calibrate': {
       if (params.reviewed !== true) throw new Error('Review the motor limits and secure the motor first');
       if (!params.config || typeof params.config !== 'object') throw new Error('Calibration configuration missing');
       if (params.output != null && (typeof params.output !== 'string' || !path.isAbsolute(params.output))) throw new Error('Select a valid calibration folder');
-      return ['calibrate', ...target(params), ...(params.output ? ['--output', params.output] : []), '--config-stdin', '--yes'];
+      return ['calibrate', ...selectedTarget(params), ...(params.output ? ['--output', params.output] : []), '--config-stdin', '--yes'];
     }
     case 'analyze': {
       if (typeof params.directory !== 'string' || !path.isAbsolute(params.directory)) throw new Error('Select a saved run');
@@ -79,25 +85,23 @@ function argsFor(operation, params = {}) {
     }
     case 'manual': {
       if (!params.config || typeof params.config !== 'object') throw new Error('Manual configuration missing');
-      return ['manual-session', ...target(params)];
+      return ['manual-session', ...selectedTarget(params)];
     }
     case 'stop': return ['stop', ...target(params)];
     case 'zero': {
       if (params.confirmed !== true) throw new Error('Confirm the stationary motor first');
-      return ['zero', ...target(params), '--yes'];
+      return ['zero', ...selectedTarget(params), '--yes'];
     }
     case 'setId': {
       if (params.confirmed !== true) throw new Error('Confirm the ID change first');
-      return ['set-id', ...target(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
+      return ['set-id', ...selectedTarget(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
     }
     case 'firmwarePrepare': return ['firmware', 'prepare', ...target(params)];
     case 'firmwareUpdate': {
       if (params.confirmed !== true) throw new Error('Confirm firmware update and stable power first');
-      return ['firmware', 'update', ...target(params), '--yes'];
-    }
-    case 'registerList': {
-      if (!/^(?:RS-0[0-6]|RS-10P)$/.test(params.model)) throw new Error('Select a supported motor model');
-      return ['register', 'list', '--model', params.model];
+      const prepared = JSON.stringify(params.prepared);
+      if (!prepared || prepared.length > 4096) throw new Error('Prepare firmware for the selected motor first');
+      return ['firmware', 'update', ...target(params), '--prepared', prepared, '--yes'];
     }
     case 'registerRead': return ['register', 'read', ...target(params), '--index', setupRegister(params.index, false, params.model).index];
     case 'registerWrite': {
@@ -157,69 +161,71 @@ class Backend {
     const input = operation === 'calibrate' || operation === 'manual' ? JSON.stringify(params.config) : null;
     if (input && input.length > 10_000) throw new Error('Configuration is too large');
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, args, { stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'], shell: false, env: this.environment });
-      const job = { child, operation, transferStarted: false, cancelRequested: false };
+      const child = spawn(this.binary, ['--desktop', ...args], { stdio: 'pipe', shell: false, env: this.environment });
+      const job = { child, operation };
       this.active = job;
-      this.emit({ type: 'start', operation });
-      if (input) {
-        child.stdin.on('error', () => {});
-        child.stdin.write(`${input}\n`);
-        if (operation === 'calibrate') child.stdin.end();
-      }
-      let stdout = '';
+      child.stdin.on('error', () => {}); // A worker can exit before reading its input.
+      if (input) child.stdin.write(`${input}\n`);
+      let pending = '';
+      let result;
+      let protocolError;
       let stderr = '';
-      let lines = '';
-      let settled = false;
-      child.stdout.on('data', chunk => {
-        const text = chunk.toString();
-        if (operation === 'manual') {
-          lines += text;
-          let index;
-          while ((index = lines.indexOf('\n')) >= 0) {
-            const line = lines.slice(0, index);
-            lines = lines.slice(index + 1);
-            try { this.emit({ type: 'manualStatus', value: JSON.parse(line) }); } catch { /* partial or malformed line */ }
+      const onLine = line => {
+        const event = JSON.parse(line);
+        switch (event.type) {
+          case 'result':
+            if (result !== undefined || !Object.hasOwn(event, 'value')) throw new Error('Invalid backend result');
+            result = event.value;
+            break;
+          case 'progress':
+          case 'manualStatus':
+          case 'recordingCreated':
+            this.emit(event);
+            break;
+          default:
+            throw new Error('Unknown backend event');
+        }
+      };
+      child.stdout.setEncoding('utf8').on('data', chunk => {
+        if (protocolError) return;
+        pending += chunk;
+        try {
+          if (pending.length > 32_000_000) throw new Error('Backend output exceeded the size limit');
+          let newline;
+          while ((newline = pending.indexOf('\n')) !== -1) {
+            onLine(pending.slice(0, newline));
+            pending = pending.slice(newline + 1);
           }
-        } else {
-          stdout += text;
-          if (stdout.length > 32_000_000) this.cancel();
+        } catch (error) {
+          protocolError = new Error(`Invalid backend response: ${error.message}`);
+          pending = '';
+          this.cancel();
         }
       });
-      child.stderr.on('data', chunk => {
-        const text = chunk.toString();
-        stderr = (stderr + text).slice(-16_000);
-        if (operation === 'firmwareUpdate' && stderr.includes('Firmware transfer starting.')) job.transferStarted = true;
-        this.emit({ type: 'progress', message: text.trim(), transferStarted: job.transferStarted });
+      child.stderr.setEncoding('utf8').on('data', chunk => {
+        stderr = (stderr + chunk).slice(-16_000);
       });
-      child.on('error', error => {
-        if (settled) return;
-        settled = true;
-        this.active = null;
-        this.emit({ type: 'finish', operation, ok: false });
-        reject(error);
-      });
+      let spawnError;
+      child.once('error', error => { spawnError = error; });
       child.on('close', (code, signal) => {
-        if (settled) return;
-        settled = true;
         this.active = null;
-        this.emit({ type: 'finish', operation, ok: code === 0, cancelled: job.cancelRequested });
-        if (job.cancelRequested) return resolve({ cancelled: true });
+        this.emit({ type: 'finish' });
+        if (spawnError) return reject(spawnError);
+        if (protocolError) return reject(protocolError);
         if (code !== 0) {
           reject(exitError(code, signal, stderr));
           return;
         }
-        if (operation === 'manual') return resolve(null);
-        try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Backend returned invalid JSON')); }
+        if (pending || result === undefined) return reject(new Error('Backend exited with an incomplete response'));
+        resolve(result);
       });
     });
   }
 
   cancel() {
     if (!this.active) return false;
-    if (this.active.transferStarted) throw new Error('Firmware transfer is in progress; wait for it to finish');
-    this.active.cancelRequested = true;
-    // A failed spawn has no PID. Its error event will clear the active job.
-    if (this.active.child.pid != null) this.active.child.kill('SIGTERM');
+    const input = this.active.child.stdin;
+    if (!input.writableEnded && !input.destroyed) input.end();
     return true;
   }
 
@@ -231,6 +237,7 @@ class Backend {
       throw new Error('Invalid manual intent');
     }
     const input = this.active.child.stdin;
+    if (input.writableEnded) return;
     if (input.destroyed || input.writableLength > 1024) {
       this.cancel();
       throw new Error('Manual control input stalled; motor is being disabled');
@@ -238,21 +245,37 @@ class Backend {
     input.write(`${JSON.stringify({ type: 'intent', enabled: value.enabled, direction, speed, reviewed: value.reviewed })}\n`);
   }
 
+  async withRecordingLock(directory, action) {
+    const finished = promisify(execFile)(this.binary, ['lock-recording', directory], { env: this.environment, windowsHide: true });
+    const { child } = finished;
+    const lines = createInterface({ input: child.stdout });
+    try {
+      const ready = once(lines, 'line').then(([line]) => line);
+      if (await Promise.race([ready, finished.then(() => null)]) !== 'locked') {
+        throw new Error('Could not lock the recording');
+      }
+      return await action();
+    } finally {
+      lines.close();
+      child.stdin.end();
+      await finished;
+    }
+  }
+
   preview(config) {
     const input = JSON.stringify(config);
     if (!config || typeof config !== 'object' || input.length > 10_000) throw new Error('Invalid preview configuration');
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, ['preview'], { stdio: ['pipe', 'pipe', 'pipe'], shell: false, env: this.environment });
-      let stdout = '', stderr = '';
-      child.stdin.on('error', () => {});
-      child.stdin.end(input);
-      child.stdout.on('data', chunk => { stdout += chunk; if (stdout.length > 2_000_000) child.kill('SIGTERM'); });
-      child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
-      child.on('error', reject);
-      child.on('close', (code, signal) => {
-        if (code !== 0) return reject(exitError(code, signal, stderr, 'Preview backend'));
+      const child = execFile(this.binary, ['preview'], { env: this.environment, maxBuffer: 2_000_000 }, (error, stdout, stderr) => {
+        if (error) {
+          return reject(typeof error.code === 'number' || error.signal
+            ? exitError(error.code, error.signal, stderr.slice(-4000), 'Preview backend')
+            : error);
+        }
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Invalid preview result')); }
       });
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
     });
   }
 }

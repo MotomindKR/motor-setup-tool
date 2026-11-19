@@ -6,9 +6,10 @@ const path = require('node:path');
 const { format } = require('node:util');
 
 class ManagedUpdater {
-  constructor(native, app, onError = () => {}) {
+  constructor(native, app, onError = () => {}, manualUpdateReleases) {
     this.native = native;
     this.app = app;
+    this.manualUpdateReleases = manualUpdateReleases;
     this.candidate = null;
     this.failure = null;
     native.autoDownload = false;
@@ -37,8 +38,11 @@ class ManagedUpdater {
     if (!result) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     const available = result.isUpdateAvailable;
     const version = result.updateInfo.version;
-    this.candidate = available ? version : null;
-    return { available, version, installable: available };
+    this.candidate = available && !this.manualUpdateReleases ? version : null;
+    if (available && this.manualUpdateReleases) {
+      return { available, version, releasePage: `${this.manualUpdateReleases}/tag/v${encodeURIComponent(version)}` };
+    }
+    return { available, version };
   }
 
   async install(version, progress, ensureIdle) {
@@ -50,16 +54,16 @@ class ManagedUpdater {
     try {
       progress('Downloading update…');
       await this.native.downloadUpdate();
-      // A download may take minutes. Recheck before the vendor updater can quit
-      // the app; never install automatically on an ordinary app exit.
       ensureIdle();
       const pending = path.join(this.app.getPath('userData'), 'pending-update.json');
-      await fs.writeFile(pending, JSON.stringify({ version, previousVersion: this.app.getVersion() }));
+      await fs.writeFile(pending, JSON.stringify({ version }));
       progress('Installing update. The app will restart…');
-      this.native.quitAndInstall(true, true);
-      if (this.failure) {
+      try {
+        this.native.quitAndInstall(true, true);
+        if (this.failure) throw this.failure;
+      } catch (error) {
         await fs.rm(pending, { force: true });
-        throw this.failure;
+        throw error;
       }
     } finally {
       this.native.removeListener('download-progress', onProgress);
@@ -69,24 +73,30 @@ class ManagedUpdater {
 
 function createUpdater(app, onError) {
   if (!app.isPackaged) return null;
-  // electron-builder supplies app-update.yml and Linux's package-type marker.
-  // The library selects NsisUpdater, MacUpdater, DebUpdater, or RpmUpdater.
-  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError);
+  const { manualUpdateReleases } = require(path.join(app.getAppPath(), 'package.json'));
+  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError, manualUpdateReleases);
+}
+
+async function optionalText(file) {
+  try { return await fs.readFile(file, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
 async function readUpdateError(app) {
   const directory = app.getPath('userData');
   const errorFile = path.join(directory, 'update-error.txt');
-  let error = await fs.readFile(errorFile, 'utf8').catch(() => null);
   const pendingFile = path.join(directory, 'pending-update.json');
-  let pending;
-  try { pending = JSON.parse(await fs.readFile(pendingFile, 'utf8')); }
-  catch (failure) {
-    if (failure.code !== 'ENOENT') error ||= 'The previous update could not be verified. Please install the latest release again.';
-  }
-  if (pending?.version) {
-    if (pending.version !== app.getVersion()) {
-      error ||= `Update to ${pending.version} did not complete. This app is still ${app.getVersion()}. Details: ${path.join(directory, 'update.log')}`;
+  let error = await optionalText(errorFile);
+  const pending = await optionalText(pendingFile);
+  if (pending !== null) {
+    let version;
+    try { version = JSON.parse(pending)?.version; } catch (failure) {
+      if (!(failure instanceof SyntaxError)) throw failure;
+    }
+    if (typeof version !== 'string' || !version) {
+      error ||= 'The previous update could not be verified. Please install the latest release again.';
+    } else if (version !== app.getVersion()) {
+      error ||= `Update to ${version} did not complete. This app is still ${app.getVersion()}. Details: ${path.join(directory, 'update.log')}`;
     }
     await fs.rm(pendingFile, { force: true });
   }

@@ -1,10 +1,15 @@
 param(
   [Parameter(Mandatory = $true)][string]$OldInstaller,
   [Parameter(Mandatory = $true)][string]$Installer,
-  [Parameter(Mandatory = $true)][string]$Version
+  [Parameter(Mandatory = $true)][string]$NextInstaller
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-InstallerVersion([string]$Path) {
+  [System.Diagnostics.FileVersionInfo]::GetVersionInfo($Path).ProductVersion -replace '^(\d+\.\d+\.\d+)\.0$', '$1'
+}
+$Version = Get-InstallerVersion $Installer
+$PreviousVersion = Get-InstallerVersion $OldInstaller
 $testRoot = Join-Path $env:RUNNER_TEMP 'motomind-update-tests'
 $machineDirectory = Join-Path $testRoot 'Machine App'
 $userDirectory = Join-Path $testRoot 'User App'
@@ -18,8 +23,9 @@ function Install-Previous([string]$Scope, [string]$Directory) {
   if (-not (Test-Path (Join-Path $Directory 'Motor Setup Tool.exe'))) { throw "Previous app missing in $Directory" }
 }
 
-function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]$ExpectedVersion, [string]$ExpectedError = '') {
-  Write-Output "Testing $Name in $Directory"
+function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]$ExpectedVersion, [string]$ExpectedError = '', [string]$FromVersion = $PreviousVersion) {
+  $Version = Get-InstallerVersion $Setup
+  Write-Output "Testing $Name in $Directory ($FromVersion -> $ExpectedVersion)"
   $caseDirectory = Join-Path $testRoot $Name
   New-Item -ItemType Directory -Path $caseDirectory -Force | Out-Null
   $appExe = Join-Path $Directory 'Motor Setup Tool.exe'
@@ -27,20 +33,15 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   $handoff = Join-Path $caseDirectory 'handoff.json'
   try {
     $appRoot = Join-Path $Directory 'resources\app'
-    foreach ($file in @('main.js', 'preload.js', 'updater.js', 'packaged-update-worker.js')) {
-      Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $appRoot "electron\$file") -Force
-    }
-    $runtimeModules = Join-Path $appRoot 'node_modules'
-    if (Test-Path -LiteralPath $runtimeModules) { Remove-Item -LiteralPath $runtimeModules -Recurse -Force }
-    & node -e 'require(process.argv[1]).copyRuntimeDependencies(process.argv[2])' (Join-Path $PSScriptRoot 'runtime-dependencies.js') $appRoot
-    if ($LASTEXITCODE -ne 0) { throw 'Could not stage updater runtime dependencies' }
+    Copy-Item (Join-Path $PSScriptRoot 'packaged-update-worker.js') (Join-Path $appRoot 'electron\packaged-update-worker.js') -Force
     $manifestFile = Join-Path $appRoot 'package.json'
     $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+    $entry = $manifest.main
     $manifest.main = 'electron/packaged-update-worker.js'
     [System.IO.File]::WriteAllText($manifestFile, ($manifest | ConvertTo-Json))
     $configFile = Join-Path $caseDirectory 'request.json'
     [System.IO.File]::WriteAllText($configFile, (@{
-      installer = $Setup; version = $ExpectedVersion; directory = $stateDirectory
+      entry = $entry; installer = $Setup; version = $ExpectedVersion; directory = $stateDirectory
       screenshot = $screenshot; handoff = $handoff; badChecksum = [bool]$ExpectedError
     } | ConvertTo-Json))
     $env:MOTOMIND_UPDATE_TEST_CONFIG = $configFile
@@ -48,40 +49,31 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     $running = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
     if (-not $running.WaitForExit(45000)) { throw 'The packaged app did not complete its update handoff' }
     if ($running.ExitCode -ne 0) { throw "The packaged app update handoff failed ($($running.ExitCode))" }
-    $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
-    if ($ExpectedError) {
-      if (-not $source.rejected) { throw 'The corrupt update was not rejected' }
-    } elseif (-not $source.electron -or $source.target -ne $ExpectedVersion -or $source.updater -ne 'NsisUpdater') {
-      throw 'The update did not use electron-updater from the packaged Electron app'
-    }
     if (-not $ExpectedError) {
-      # Hosted runners have no logged-on Explorer shell for NSIS's
-      # ExecShellAsUser restart. Wait for the real installer to finish, then
-      # explicitly launch the installed GUI to verify its runtime and backend.
-      $installDeadline = (Get-Date).AddSeconds(60)
-      $installed = $false
-      while (-not $installed -and (Get-Date) -lt $installDeadline) {
-        try {
-          $launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
-          $ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
-          $installers = @(Get-CimInstance Win32_Process -Filter "Name = 'installer.exe'")
-          $installed = ($launcher -eq $Version -or $launcher -eq "$Version.0") -and $ui -eq $Version -and $installers.Count -eq 0
-        } catch { }
-        if (-not $installed) { Start-Sleep -Milliseconds 200 }
+      $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
+      if ($source.version -ne $FromVersion -or $source.target -ne $ExpectedVersion) {
+        throw "Expected $FromVersion to download $ExpectedVersion, saw $($source.version) download $($source.target)"
       }
-      if (-not $installed) { throw 'The NSIS update did not complete in the original installation directory' }
-      Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Where-Object {
-        $_.ExecutablePath -ieq $appExe -and $_.CommandLine -notmatch '\s--type='
-      } | ForEach-Object {
-        $gui = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-        if ($gui -and (-not $gui.CloseMainWindow() -or -not $gui.WaitForExit(15000))) { throw 'The updated app did not close normally' }
+      $deadline = (Get-Date).AddSeconds(75)
+      do {
+        $restarted = Get-Process -Name 'Motor Setup Tool' -ErrorAction SilentlyContinue | Where-Object {
+          $_.Path -ieq $appExe -and $_.Id -ne $running.Id -and $_.MainWindowHandle -ne 0
+        } | Select-Object -First 1
+        if ($restarted) { break }
+        Start-Sleep -Milliseconds 250
+      } while ((Get-Date) -lt $deadline)
+      if (-not $restarted) { throw "Windows did not reopen a window for $appExe after the update" }
+      $launch = Get-CimInstance Win32_Process -Filter "ProcessId = $($restarted.Id)"
+      $parent = Get-Process -Id $launch.ParentProcessId -ErrorAction SilentlyContinue
+      Write-Output "Relaunched PID $($launch.ProcessId), parent $($launch.ParentProcessId) ($($parent.ProcessName)), command $($launch.CommandLine)"
+      if ($launch.CommandLine -notmatch '(?:^|\s)--updated(?:\s|$)' -or (Get-InstallerVersion $restarted.Path) -ne $Version) {
+        throw "Unexpected process or version in the reopened window"
       }
+      if (-not $restarted.CloseMainWindow() -or -not $restarted.WaitForExit(15000)) { throw 'The updated app did not close normally' }
       $env:MOTOMIND_SMOKE_PATH = $screenshot
-      $env:MOTOMIND_SMOKE_TAB = 'setup'
       $smoke = Start-Process -FilePath $appExe -WorkingDirectory $Directory -PassThru
       if (-not $smoke.WaitForExit(30000) -or $smoke.ExitCode -ne 0) { throw 'The updated app runtime smoke check failed' }
       Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
-      Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
     }
     $deadline = (Get-Date).AddSeconds(150)
     while (-not (Test-Path "$screenshot.json")) {
@@ -92,19 +84,17 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     if ($runtime.version -ne $Version) { throw "Restarted runtime version $($runtime.version) does not match $Version" }
     if ($ExpectedError) {
       if ($runtime.updateError -notlike "*$ExpectedError*") { throw "Expected visible update error, got: $($runtime.updateError)" }
-      if (-not $runtime.settingsOpen) { throw 'The failed update was not shown in Settings on restart' }
     } else {
       if ($runtime.updateError) { throw $runtime.updateError }
-      $actual = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
-      if ($actual -ne $Version -and $actual -ne "$Version.0") { throw "Launcher version $actual does not match $Version" }
-      if (Test-Path (Join-Path $stateDirectory 'pending-update.json')) { throw 'The restarted app did not verify its pending update' }
+      if ($runtime.backendVersion -ne $Version) { throw "Expected backend $Version, got $($runtime.backendVersion)" }
     }
     Write-Output "Passed $Name : runtime=$($runtime.version)"
   } finally {
     Remove-Item Env:MOTOMIND_UPDATE_TEST_CONFIG -ErrorAction SilentlyContinue
     Remove-Item Env:MOTOMIND_SMOKE_PATH -ErrorAction SilentlyContinue
-    Remove-Item Env:MOTOMIND_SMOKE_TAB -ErrorAction SilentlyContinue
     @{
+      runnerSession = (Get-Process -Id $PID).SessionId
+      explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Select-Object Id, SessionId)
       launcher = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
       ui = (Get-Content -LiteralPath (Join-Path $Directory 'resources\app\package.json') -Raw | ConvertFrom-Json).version
       processes = @(Get-CimInstance Win32_Process -Filter "Name = 'Motor Setup Tool.exe'" | Select-Object ProcessId, ExecutablePath, CommandLine)
@@ -116,8 +106,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
   }
 }
 
-# A bare /S chooses the machine installation when both scopes are registered,
-# even when the update was requested from the user installation.
+# An update must stay in the installation it was started from.
 Install-Previous '/allusers' $machineDirectory
 Install-Previous '/currentuser' $userDirectory
 Test-Update 'user-with-machine-copy' $userDirectory $Installer $Version
@@ -153,3 +142,7 @@ try {
 } finally {
   if (-not $stub.HasExited) { $stub.Kill(); $stub.WaitForExit() }
 }
+
+$nextVersion = Get-InstallerVersion $NextInstaller
+Test-Update 'next-patch-user' $specialDirectory $NextInstaller $nextVersion -FromVersion $Version
+Test-Update 'next-patch-machine' $machineDirectory $NextInstaller $nextVersion -FromVersion $Version

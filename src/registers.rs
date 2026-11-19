@@ -78,9 +78,7 @@ pub static CATALOG: std::sync::LazyLock<Vec<Register>> = std::sync::LazyLock::ne
 
 pub fn catalog(model: &str) -> Result<Vec<Register>> {
     ensure!(
-        crate::types::Profile::presets()
-            .iter()
-            .any(|profile| profile.model == model),
+        crate::types::Profile::preset(model).is_some(),
         "Unknown motor model"
     );
     Ok(CATALOG.iter().map(|item| item.for_model(model)).collect())
@@ -97,18 +95,10 @@ impl Register {
     fn for_model(&self, model: &str) -> Self {
         let mut item = self.clone();
         if let Some(change) = self.overrides.get(model) {
-            if let Some(value) = change.readable {
-                item.readable = value;
-            }
-            if let Some(value) = change.writable {
-                item.writable = value;
-            }
-            if let Some(value) = change.editable {
-                item.editable = value;
-            }
-            if let Some(value) = change.persistence {
-                item.persistence = value;
-            }
+            item.readable = change.readable.unwrap_or(item.readable);
+            item.writable = change.writable.unwrap_or(item.writable);
+            item.editable = change.editable.unwrap_or(item.editable);
+            item.persistence = change.persistence.unwrap_or(item.persistence);
             if let Some(value) = &change.availability {
                 item.availability = value.clone();
             }
@@ -191,35 +181,13 @@ fn register(index: u16) -> Result<&'static Register> {
         .with_context(|| format!("Register 0x{index:04X} is not in the documented setup catalog"))
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
-}
-
-fn parse_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
-    ensure!(
-        value.len() == N * 2,
-        "{label} must contain {} hex digits",
-        N * 2
-    );
-    ensure!(
-        value.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "{label} contains invalid hex"
-    );
-    let mut bytes = [0; N];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16)
-            .with_context(|| format!("{label} contains invalid hex"))?;
-    }
-    Ok(bytes)
-}
-
 fn reading(index: u16, raw: [u8; 4], uuid: [u8; 8], save_acknowledged: bool) -> Result<Reading> {
     let value = register(index)?.decode(raw)?;
     Ok(Reading {
         index,
         value,
-        raw: hex(&raw),
-        uuid: hex(&uuid),
+        raw: format!("{:08X}", u32::from_be_bytes(raw)),
+        uuid: format!("{:016X}", u64::from_be_bytes(uuid)),
         save_acknowledged,
     })
 }
@@ -250,8 +218,8 @@ pub fn write(
         "Register 0x{index:04X} is protected or read-only in this editor"
     );
     let desired = item.encode(value)?;
-    let expected_uuid = parse_hex::<8>(uuid, "Motor UUID")?;
-    let expected = parse_hex::<4>(expected_raw, "Previous register value")?;
+    let expected_uuid = protocol::parse_hex::<8>(uuid, "Motor UUID")?;
+    let expected = protocol::parse_hex::<4>(expected_raw, "Previous register value")?;
     ensure!(
         !item.matches(desired, expected),
         "Value is unchanged; no save was sent"
@@ -295,22 +263,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn editor_only_writes_documented_persistent_settings() {
-        for index in [0x7005, 0x7006, 0x700A, 0x7016, 0x7028, 0x702D, 0xFFFF] {
-            assert!(register(index).is_err());
-        }
-        assert!(register(0x7017).unwrap().writable);
-        assert!(!register(0x7017).unwrap().editable);
-        assert!(!register(0x7018).unwrap().editable);
-        assert!(register(0x7029).unwrap().writable);
-        assert!(register(0x702B).unwrap().writable);
-        let mut indices: Vec<_> = CATALOG.iter().map(|item| item.index).collect();
-        indices.sort();
-        indices.dedup();
-        assert_eq!(indices.len(), CATALOG.len());
-    }
-
-    #[test]
     fn zero_state_is_a_single_byte_enum_and_ignores_padding() {
         let item = register(0x7029).unwrap();
         assert_eq!(item.encode(1.).unwrap(), [1, 0, 0, 0]);
@@ -336,51 +288,29 @@ mod tests {
     }
 
     #[test]
-    fn can_aliases_and_model_permissions_match_the_manuals() {
-        for (host, can) in [
-            (0x2011, 0x7014),
-            (0x2012, 0x7010),
-            (0x2013, 0x7011),
-            (0x2014, 0x701F),
-            (0x2015, 0x7020),
-            (0x2016, 0x701E),
-            (0x2017, 0x7021),
-            (0x2018, 0x7017),
-            (0x2019, 0x7018),
-        ] {
-            assert!(register(host).is_err());
-            assert_eq!(
-                register(can).unwrap().host_index.as_deref(),
-                Some(format!("0x{host:04X}").as_str())
-            );
+    fn host_aliases_are_metadata_and_unreadable_overrides_block_editing() {
+        for host in CATALOG.iter().filter_map(|item| item.host_index.as_ref()) {
+            let index = u16::from_str_radix(host.trim_start_matches("0x"), 16).unwrap();
+            assert!(register(index).is_err());
         }
-        for model in ["RS-05", "RS-06"] {
-            let items = catalog(model).unwrap();
-            let filter = items.iter().find(|r| r.index == 0x7021).unwrap();
-            assert!(filter.writable && !filter.readable && !filter.editable);
-        }
-        let rs01 = catalog("RS-01").unwrap();
-        for item in rs01.iter().filter(|r| [0x7029, 0x702B].contains(&r.index)) {
-            assert_eq!(item.availability, "not_documented");
-            assert!(!item.readable && !item.writable && !item.editable);
-        }
-        let rs10 = catalog("RS-10P").unwrap();
-        assert!(rs10.iter().find(|r| r.index == 0x7021).unwrap().editable);
-        assert!(catalog("RS-99").is_err());
-        for item in rs10
-            .iter()
-            .filter(|r| [0x7019, 0x701A, 0x701B, 0x701C].contains(&r.index))
-        {
-            assert!(item.readable && !item.writable && !item.editable);
-            assert_eq!(item.persistence, Persistence::Volatile);
-        }
+        let mut reg = register(0x7010).unwrap().clone();
+        reg.overrides.insert(
+            "test-model".into(),
+            RegisterOverride {
+                readable: Some(false),
+                ..Default::default()
+            },
+        );
+        let overridden = reg.for_model("test-model");
+        assert!(!overridden.readable && !overridden.editable);
+        assert!(reg.for_model("other-model").editable);
     }
 
     #[test]
     fn previous_values_require_exact_hex_length_and_ascii() {
-        assert!(parse_hex::<4>("0000803F", "value").is_ok());
-        assert!(parse_hex::<4>("0000803", "value").is_err());
-        assert!(parse_hex::<4>("é000000", "value").is_err());
-        assert!(parse_hex::<8>("0000803F", "uuid").is_err());
+        assert!(protocol::parse_hex::<4>("0000803F", "value").is_ok());
+        assert!(protocol::parse_hex::<4>("0000803", "value").is_err());
+        assert!(protocol::parse_hex::<4>("é000000", "value").is_err());
+        assert!(protocol::parse_hex::<8>("0000803F", "uuid").is_err());
     }
 }

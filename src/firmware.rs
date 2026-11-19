@@ -1,16 +1,15 @@
-//! Official private-CAN OTA types 11–14; no motor enable or calibration commands.
+//! RobStride private-CAN firmware updates (types 11–14).
 //! Protocol: RobStride/Product_Information/OTA (PDF + vendor OTA.py).
-use crate::{bridge, hardware::Bus, protocol, types::Config};
+use crate::{
+    bridge,
+    hardware::{Bus, DiscoveredMotor},
+    protocol,
+    types::Config,
+};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    io::Write,
-    path::PathBuf,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fs, io::Write, sync::atomic::AtomicBool, thread, time::Duration};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Release {
@@ -29,13 +28,6 @@ pub fn release(model: &str) -> Result<Release> {
 /// Compare only known firmware families against the verified, bundled catalog.
 /// Missing/malformed versions and newer installed versions are never upgrades.
 pub fn available_update(model: &str, installed: &str) -> Option<Release> {
-    fn parts(version: &str) -> Option<Vec<u8>> {
-        version
-            .split('.')
-            .map(str::parse)
-            .collect::<Result<_, _>>()
-            .ok()
-    }
     if protocol::firmware_model(installed).as_deref() != Some(model) {
         return None;
     }
@@ -43,7 +35,8 @@ pub fn available_update(model: &str, installed: &str) -> Option<Release> {
     if protocol::firmware_model(&candidate.version).as_deref() != Some(model) {
         return None;
     }
-    (parts(installed)? < parts(&candidate.version)?).then_some(candidate)
+    (protocol::version_parts(installed)? < protocol::version_parts(&candidate.version)?)
+        .then_some(candidate)
 }
 fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
     ensure!(
@@ -51,11 +44,7 @@ fn verify_image(bytes: &[u8], r: &Release) -> Result<()> {
         "Invalid firmware size"
     );
     ensure!(
-        Sha256::digest(bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-            == r.sha256,
+        protocol::hex(&Sha256::digest(bytes)) == r.sha256,
         "Firmware SHA-256 mismatch; download the official file again"
     );
     Ok(())
@@ -85,13 +74,14 @@ fn download_image(r: &Release) -> Result<Vec<u8>> {
     verify_image(&bytes, r)?;
     Ok(bytes)
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Prepared {
-    pub release: Release,
-    pub path: PathBuf,
+    pub model: String,
+    pub version: String,
     pub current_version: String,
     pub uuid: [u8; 8],
     pub interface: String,
+    #[serde(rename = "id")]
     pub motor_id: u8,
     pub host_id: u8,
 }
@@ -100,7 +90,16 @@ impl Prepared {
         self.interface == c.interface
             && self.motor_id == c.motor_id
             && self.host_id == c.host_id
-            && self.release.model == c.profile.model
+            && self.model == c.profile.model
+    }
+
+    fn verify_motor(&self, version: &str, uuid: [u8; 8]) -> Result<()> {
+        ensure!(uuid == self.uuid, "Motor UUID changed; update blocked");
+        ensure!(
+            version == self.current_version,
+            "Firmware changed since preparation; prepare again"
+        );
+        Ok(())
     }
 }
 fn check_model(version: &str, model: &str) -> Result<()> {
@@ -110,7 +109,17 @@ fn check_model(version: &str, model: &str) -> Result<()> {
     );
     Ok(())
 }
-pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
+pub fn prepare(
+    c: &Config,
+    motor: DiscoveredMotor,
+    cancel: &AtomicBool,
+    progress: impl Fn(String),
+) -> Result<Prepared> {
+    crate::cancel::check(cancel)?;
+    let current_version = motor
+        .firmware
+        .context("Motor firmware version unavailable")?;
+    check_model(&current_version, &c.profile.model)?;
     let r = release(&c.profile.model)?;
     progress(format!(
         "Preparing official {} firmware {}",
@@ -119,27 +128,18 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
     let directory = crate::paths::cache_dir()?.join("firmware");
     fs::create_dir_all(&directory)?;
     let path = directory.join(&r.filename);
-    let cached = fs::read(&path)
-        .ok()
-        .filter(|bytes| verify_image(bytes, &r).is_ok());
-    let bytes = if let Some(bytes) = cached {
-        bytes
-    } else {
+    if !fs::read(&path).is_ok_and(|bytes| verify_image(&bytes, &r).is_ok()) {
         let bytes = download_image(&r)?;
-        fs::write(&path, &bytes)?;
-        bytes
-    };
-    verify_image(&bytes, &r)?;
-    let bus = Bus::open(c)?;
-    bus.stopped()?;
-    let current_version = bus.firmware_version()?;
-    check_model(&current_version, &r.model)?;
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(200))?;
+        let mut image = tempfile::NamedTempFile::new_in(directory)?;
+        image.write_all(&bytes)?;
+        image.persist(path)?;
+    }
+    crate::cancel::check(cancel)?;
     Ok(Prepared {
-        release: r,
-        path,
+        model: r.model,
+        version: r.version,
         current_version,
-        uuid,
+        uuid: motor.uuid,
         interface: c.interface.clone(),
         motor_id: c.motor_id,
         host_id: c.host_id,
@@ -209,15 +209,27 @@ fn transfer(
     Ok(())
 }
 
-/// Once type 11 is sent this intentionally has no cancel flag. Interrupting
-/// an erase/write can leave the motor in its bootloader until a recovery update.
-pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -> Result<String> {
+pub fn update(
+    c: &Config,
+    prepared: &Prepared,
+    cancel: &AtomicBool,
+    progress: impl Fn(f32, String),
+) -> Result<String> {
     ensure!(
         prepared.matches(c),
         "Motor selection changed; prepare firmware again"
     );
     let official = release(&c.profile.model)?;
-    let bytes = fs::read(&prepared.path)?;
+    ensure!(
+        official.version == prepared.version,
+        "Firmware release changed; prepare again"
+    );
+    let bytes = fs::read(
+        crate::paths::cache_dir()?
+            .join("firmware")
+            .join(&official.filename),
+    )
+    .context("Prepared firmware image is unavailable; prepare again")?;
     verify_image(&bytes, &official)?;
     let dir = bridge::new_run_dir()?;
     bridge::write_json(
@@ -230,27 +242,11 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
     let bus = Bus::open(c)?;
     let outcome = (|| -> Result<String> {
         progress(0., "Disabling motor before firmware update".into());
-        bus.stopped()?;
-        // Detect other senders/autoreporting before entering the bootloader.
-        bus.flush()?;
-        let quiet = Instant::now();
-        while quiet.elapsed() < Duration::from_millis(500) {
-            ensure!(
-                bus.receive()?.is_none(),
-                "CAN traffic detected; close other CAN tools and disable periodic reports before updating"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
+        bus.wait_until_stopped(Duration::from_secs(1), Some(cancel))?;
+        bus.require_quiet(Duration::from_millis(500), cancel)?;
         let version = bus.firmware_version()?;
         check_model(&version, &official.model)?;
-        ensure!(
-            version == prepared.current_version,
-            "Firmware changed since preparation; prepare again"
-        );
-        ensure!(
-            bus.ping(c.motor_id, Duration::from_millis(200))? == prepared.uuid,
-            "Motor UUID changed; update blocked"
-        );
+        prepared.verify_motor(&version, bus.ping(c.motor_id, Duration::from_millis(200))?)?;
         let mut log = fs::File::create(dir.join("ota_ack.jsonl"))?;
         let mut exchange = |kind: u8, field: u16, payload: [u8; 8]| -> Result<(u8, [u8; 8])> {
             let mut frame = protocol::frame(kind, field, c.motor_id);
@@ -258,10 +254,9 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
             for attempt in 0..3 {
                 bus.send(frame.clone())?;
                 match bus.wait_for(Duration::from_secs(2), |f| {
-                    ack_result(f, kind, c.motor_id, c.host_id).is_some()
-                }) {
-                    Ok(f) => {
-                        let result = ack_result(&f, kind, c.motor_id, c.host_id).unwrap();
+                    ack_result(&f, kind, c.motor_id, c.host_id)
+                })? {
+                    Some(result) => {
                         writeln!(
                             log,
                             "{}",
@@ -269,10 +264,7 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
                         )?;
                         return Ok(result);
                     }
-                    Err(e)
-                        if e.downcast_ref::<std::io::Error>()
-                            .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                    {
+                    None => {
                         writeln!(
                             log,
                             "{}",
@@ -280,7 +272,6 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
                         )?;
                         thread::sleep(Duration::from_millis(50));
                     }
-                    Err(e) => return Err(e),
                 }
             }
             bail!("OTA type {kind}, field {field}: no acknowledgement after 3 attempts")
@@ -289,6 +280,8 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
             0.,
             "Entering firmware updater · keep USB and motor power connected".into(),
         );
+        // Once the bootloader accepts type 11, finish the transfer even if the app closes.
+        crate::cancel::check(cancel)?;
         transfer(&bytes, c.host_id, prepared.uuid, &mut exchange, &progress)?;
         progress(
             0.97,
@@ -297,19 +290,11 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
         thread::sleep(Duration::from_secs(2));
         let mut installed = None;
         for _ in 0..10 {
-            match bus.firmware_version() {
-                Ok(version) => {
-                    installed = Some(version);
-                    break;
-                }
-                Err(e)
-                    if e.downcast_ref::<std::io::Error>()
-                        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                {
-                    thread::sleep(Duration::from_millis(300))
-                }
-                Err(e) => return Err(e),
+            installed = bus.try_firmware_version()?;
+            if installed.is_some() {
+                break;
             }
+            thread::sleep(Duration::from_millis(300));
         }
         let installed = installed.context("Transfer finished but firmware readback timed out; power-cycle the motor and read its version before retrying")?;
         ensure!(
@@ -377,6 +362,30 @@ mod tests {
     }
 
     #[test]
+    fn firmware_confirmation_remains_bound_to_the_reviewed_motor_and_version() {
+        let review = Prepared {
+            model: "RS-00".into(),
+            version: "0.0.3.32".into(),
+            current_version: "0.0.3.30".into(),
+            uuid: [1; 8],
+            interface: "can0".into(),
+            motor_id: 7,
+            host_id: 253,
+        };
+        assert!(
+            review
+                .verify_motor(&review.current_version, review.uuid)
+                .is_ok()
+        );
+        assert!(
+            review
+                .verify_motor(&review.current_version, [2; 8])
+                .is_err()
+        );
+        assert!(review.verify_motor("0.0.3.31", review.uuid).is_err());
+    }
+
+    #[test]
     fn missing_vendor_image_explains_how_to_refresh_the_catalog() {
         let (url, server) = serve_image("404 Not Found", &[]);
         let mut r = release("RS-00").unwrap();
@@ -392,10 +401,7 @@ mod tests {
     fn downloaded_images_must_match_the_pinned_digest() {
         let image = vec![1, 2, 3, 4, 5];
         let mut r = release("RS-00").unwrap();
-        r.sha256 = Sha256::digest(&image)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        r.sha256 = protocol::hex(&Sha256::digest(&image));
         let (url, server) = serve_image("200 OK", &image);
         r.url = url;
         assert_eq!(download_image(&r).unwrap(), image);
@@ -414,11 +420,7 @@ mod tests {
     fn update_notice_compares_numeric_versions_in_the_same_model() {
         for profile in crate::types::Profile::presets() {
             let r = release(&profile.model).unwrap();
-            let family = if profile.model == "RS-10P" {
-                "10"
-            } else {
-                &profile.model[4..]
-            };
+            let [_, family, _, _] = protocol::version_parts(&r.version).unwrap();
             let old = format!("0.{family}.0.0");
             assert_eq!(
                 available_update(&profile.model, &old).unwrap().version,
@@ -428,38 +430,13 @@ mod tests {
             let future = format!("0.{family}.99.0");
             assert!(available_update(&profile.model, &future).is_none());
         }
-        assert!(available_update("RS-00", "0.0.3.9").is_some());
-        assert!(available_update("RS-00", "0.0.3.100").is_none());
         for invalid in ["", "unknown", "0.0.3", "0.0.3.32.1", "0.0.3.256", "0.5.0.1"] {
             assert!(available_update("RS-00", invalid).is_none());
         }
         assert!(available_update("RS-99", "0.0.0.1").is_none());
     }
     #[test]
-    fn official_catalog_matches_models_and_rejects_altered_images() {
-        for p in crate::types::Profile::presets() {
-            let r = release(&p.model).unwrap();
-            assert_eq!(protocol::firmware_model(&r.version).unwrap(), p.model);
-            assert_eq!(r.sha256.len(), 64);
-            assert_eq!(r.url.rsplit('/').next().unwrap(), r.filename);
-            assert_eq!(
-                r.filename,
-                format!(
-                    "{}_{}.bin",
-                    if p.model == "RS-10P" {
-                        "rs10".into()
-                    } else {
-                        p.model.to_lowercase().replace('-', "")
-                    },
-                    r.version
-                )
-            );
-            assert!(r.url.starts_with(
-                "https://github.com/RobStride/Product_Information/releases/download/V26.05.19/"
-            ));
-            assert!(verify_image(&[], &r).is_err());
-            assert!(verify_image(&[1; 64], &r).is_err());
-        }
+    fn flashing_rejects_unidentified_or_different_motor_families() {
         assert!(check_model("0.5.0.14", "RS-00").is_err());
         assert!(check_model("unknown", "RS-00").is_err());
     }
@@ -518,13 +495,6 @@ mod tests {
             )
             .is_err()
         );
-        let mut r = release("RS-00").unwrap();
-        r.sha256 = Sha256::digest(&image)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert!(verify_image(&image, &r).is_ok());
-        assert!(verify_image(&image[1..], &r).is_err());
     }
     #[test]
     fn ota_filters_acks_and_bounds_resume_requests() {

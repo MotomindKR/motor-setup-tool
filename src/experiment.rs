@@ -127,8 +127,7 @@ fn target_in_segment(segment: &Segment, local: f64, c: &Config) -> f64 {
     c.target_speed_fraction() * c.speed_limit * wave
 }
 /// Requested trajectory, not predicted motor motion. Used by the UI preview.
-pub fn preview(c: &Config, t: f64, validation: bool) -> (f64, f64) {
-    let segments = plan(c, validation);
+pub fn preview(c: &Config, t: f64, segments: &[Segment]) -> (f64, f64) {
     let segment = segments
         .iter()
         .find(|s| t < s.end)
@@ -137,7 +136,7 @@ pub fn preview(c: &Config, t: f64, validation: bool) -> (f64, f64) {
     (
         target_in_segment(segment, local, c),
         if segment.name.contains("bursts") {
-            pulse_torque(local, c.torque_limit, validation)
+            pulse_torque(local, c.torque_limit, segment.name == "held-out bursts")
         } else {
             0.
         },
@@ -248,12 +247,10 @@ mod tests {
                 Experiment::Multisine,
                 Experiment::Steps,
             ] {
-                let mut c = Config {
-                    profile: model.clone(),
+                let c = Config {
                     experiment,
-                    ..Default::default()
+                    ..Config::preset(&model.model).unwrap()
                 };
-                c.apply_spec_limits();
                 c.validate().unwrap();
                 let mut train = Exciter::new(&c, false);
                 let mut test = Exciter::new(&c, true);
@@ -273,11 +270,7 @@ mod tests {
     #[test]
     fn model_presets_brake_near_limits_and_keep_historical_plans_readable() {
         for model in crate::types::Profile::presets() {
-            let mut c = Config {
-                profile: model,
-                ..Default::default()
-            };
-            c.apply_spec_limits();
+            let c = Config::preset(&model.model).unwrap();
             c.validate().unwrap();
             for sign in [-1., 1.] {
                 let mut e = Exciter::new(&c, false);
@@ -299,11 +292,7 @@ mod tests {
     fn rs00_preset_increases_measured_dynamic_range_in_simulation() {
         use crate::{engine, types::Parameters};
         use std::sync::atomic::AtomicBool;
-        let mut new = Config {
-            profile: crate::types::Profile::presets()[0].clone(),
-            ..Default::default()
-        };
-        new.apply_spec_limits();
+        let new = Config::preset("RS-00").unwrap();
         let old = Config {
             excitation_revision: 0,
             torque_limit: 0.7,

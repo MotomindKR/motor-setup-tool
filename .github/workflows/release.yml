@@ -32,9 +32,19 @@ jobs:
     env:
       MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Verify upstream firmware images
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          jq -er '.[] | [.url, .sha256] | @tsv' src/firmware_catalog.json |
+            while read -r url digest; do
+              echo "Checking ${url##*/}"
+              curl -fsSL --retry 3 --max-time 60 "$url" -o "$RUNNER_TEMP/firmware.bin"
+              echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
+            done
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -45,7 +55,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node -e 'const fs=require("fs"); const cargo=fs.readFileSync("Cargo.toml","utf8").match(/^version = "([^"]+)"/m)[1]; const electron=require("./electron/package.json").version; if (cargo!==electron || process.env.RELEASE_TAG!==`v${cargo}`) process.exit(1)'
+          cargo metadata --locked --no-deps --format-version 1 |
+            jq -e --slurpfile desktop electron/package.json '
+              .packages[] | select(.name == "motor-setup-tool") |
+              .version == $desktop[0].version and ("v" + .version == env.RELEASE_TAG)'
       - name: Install Linux build and desktop libraries
         if: runner.os == 'Linux'
         run: |
@@ -78,6 +91,8 @@ jobs:
         run: npm ci
       - name: Check Electron code
         working-directory: electron
+        env:
+          TEST_NATIVE_BACKEND: '1'
         run: npm run check
       - name: Build desktop installers
         working-directory: electron
@@ -89,60 +104,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
         run: npm run package:installers
-      - name: Check Linux USB permissions in DEB and RPM packages
-        if: runner.os == 'Linux'
-        shell: bash
-        run: node electron/test-linux-package.js dist-electron/*-linux-*.deb dist-electron/*-linux-*.rpm
-      - name: Capture Linux window chrome
-        if: runner.os == 'Linux'
-        shell: bash
-        run: xvfb-run -a node electron/capture-window-chrome.js "$PWD"/dist-electron/installers/linux*-unpacked/motor-setup-tool "$RUNNER_TEMP/window-chrome"
-      - name: Capture Windows window chrome
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: node electron/capture-window-chrome.js "$PWD/dist-electron/installers/win-unpacked/Motor Setup Tool.exe" "$env:RUNNER_TEMP/window-chrome"
-      - name: Upload native window screenshots
-        if: runner.os != 'macOS' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: window-chrome-${{ matrix.platform }}
-          path: |
-            ${{ runner.temp }}/window-chrome/*.png
-            ${{ runner.temp }}/window-chrome/*.json
-      - name: Test installed Linux updater
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-${{ matrix.platform }}.deb' --dir "$RUNNER_TEMP"
-          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$RUNNER_TEMP/motor-setup-tool-0.1.18-${{ matrix.platform }}.deb" "$PWD/dist-electron/motor-setup-tool-$(node -p 'require("./electron/package.json").version')-${{ matrix.platform }}.deb"
-      - name: Test Windows silent upgrade
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          gh release download v0.1.18 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.18-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.18-win32-x64.exe'
-          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
-          $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
-          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
-          if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
-      - name: Upload Windows update diagnostics
-        if: runner.os == 'Windows' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-update-diagnostics
-          path: |
-            ${{ runner.temp }}/motomind-update-tests/*/*.json
-            ${{ runner.temp }}/motomind-update-tests/*/*.log
-            ${{ runner.temp }}/motomind-update-tests/*/*.txt
-            ${{ runner.temp }}/motomind-update-tests/*/*.png
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
+      - uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.platform }}
           if-no-files-found: error
@@ -153,45 +115,48 @@ jobs:
             dist-electron/*.zip
             dist-electron/*.exe
             dist-electron/*.sha256
-            dist-electron/*.yml
+            dist-electron/latest*.yml
             dist-electron/*.blockmap
 
-  publish:
-    name: Publish desktop installers
-    if: startsWith(github.ref, 'refs/tags/')
+      - name: Build disposable next patch for updater tests
+        if: runner.os != 'macOS'
+        id: next
+        shell: bash
+        run: |
+          cd electron
+          npm version patch --no-git-tag-version --ignore-scripts
+          version=$(node -p "require('./package.json').version")
+          cd ..
+          sed -i "/^version = /c\version = \"$version\"" Cargo.toml
+          cargo build --offline --release
+          npm --prefix electron run package:installers
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: runner.os != 'macOS'
+        with:
+          name: next-patch-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
+
+  verify-installers:
     needs: build
-    runs-on: ubuntu-22.04
+    uses: ./.github/workflows/windows-update.yml
+    permissions:
+      actions: read
+      contents: read
+
+  preview:
+    name: Preview release
+    if: github.ref_type == 'branch'
+    needs: verify-installers
+    uses: ./.github/workflows/release-assets.yml
+
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: verify-installers
+    uses: ./.github/workflows/release-assets.yml
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci --ignore-scripts
-        working-directory: electron
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: installers-*
-          merge-multiple: true
-          path: dist-electron
-      - name: Verify updater metadata
-        run: node electron/update-metadata.js dist-electron
-      - name: Verify and publish
-        working-directory: dist-electron
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cat ./*.sha256 > SHA256SUMS
-          sha256sum -c SHA256SUMS
-          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) | wc -l)" -eq 7
-          for metadata in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do test -f "$metadata"; done
-          notes="$RUNNER_TEMP/release-notes.md"
-          node "$GITHUB_WORKSPACE/packaging/render-release-notes.mjs" "$GH_REPO" "$RELEASE_TAG" "$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md" SHA256SUMS > "$notes"
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes-file "$notes"
-          fi
-          gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.zip ./*.exe ./*.yml ./*.blockmap SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --draft=false

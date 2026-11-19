@@ -1,0 +1,106 @@
+{
+  "RS-00": {
+    "firmware_family": 0,
+    "preset_revision": 20260713,
+    "velocity_range": 33,
+    "torque_range": 14,
+    "spec": {
+      "rated_torque": 5,
+      "peak_torque": 14,
+      "no_load_rpm": 315,
+      "gear_ratio": 10,
+      "rated_voltage": 48
+    }
+  },
+  "RS-01": {
+    "firmware_family": 1,
+    "preset_revision": 20260713,
+    "velocity_range": 44,
+    "torque_range": 17,
+    "spec": {
+      "rated_torque": 7,
+      "peak_torque": 17,
+      "no_load_rpm": 315,
+      "gear_ratio": 7.75,
+      "rated_voltage": 36
+    }
+  },
+  "RS-02": {
+    "firmware_family": 2,
+    "preset_revision": 20260713,
+    "velocity_range": 44,
+    "torque_range": 17,
+    "spec": {
+      "rated_torque": 7,
+      "peak_torque": 17,
+      "no_load_rpm": 410,
+      "gear_ratio": 7.75,
+      "rated_voltage": 48
+    }
+  },
+  "RS-03": {
+    "firmware_family": 3,
+    "preset_revision": 20260713,
+    "velocity_range": 20,
+    "torque_range": 60,
+    "spec": {
+      "rated_torque": 21,
+      "peak_torque": 60,
+      "no_load_rpm": 195,
+      "gear_ratio": 9,
+      "rated_voltage": 48
+    }
+  },
+  "RS-04": {
+    "firmware_family": 4,
+    "preset_revision": 20260713,
+    "velocity_range": 15,
+    "torque_range": 120,
+    "spec": {
+      "rated_torque": 35,
+      "peak_torque": 120,
+      "no_load_rpm": 200,
+      "gear_ratio": 9,
+      "rated_voltage": 48
+    }
+  },
+  "RS-05": {
+    "firmware_family": 5,
+    "preset_revision": 20260713,
+    "velocity_range": 50,
+    "torque_range": 5.5,
+    "spec": {
+      "rated_torque": 1.8,
+      "peak_torque": 5.5,
+      "no_load_rpm": 480,
+      "gear_ratio": 7.75,
+      "rated_voltage": 48
+    }
+  },
+  "RS-06": {
+    "firmware_family": 6,
+    "preset_revision": 20260713,
+    "velocity_range": 50,
+    "torque_range": 36,
+    "spec": {
+      "rated_torque": 11,
+      "peak_torque": 36,
+      "no_load_rpm": 480,
+      "gear_ratio": 9,
+      "rated_voltage": 48
+    }
+  },
+  "RS-10P": {
+    "firmware_family": 10,
+    "preset_revision": 20260907,
+    "velocity_range": 13,
+    "torque_range": 42,
+    "spec": {
+      "rated_torque": 14,
+      "peak_torque": 42,
+      "no_load_rpm": 125,
+      "gear_ratio": 25,
+      "rated_voltage": 48
+    }
+  }
+}

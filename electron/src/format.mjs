@@ -26,3 +26,7 @@ export function conciseNumber(value, significantDigits = 6) {
       })
     : "—";
 }
+
+export function displayAngle(radians, unit) {
+  return unit === "deg" ? radians * (180 / Math.PI) : radians;
+}

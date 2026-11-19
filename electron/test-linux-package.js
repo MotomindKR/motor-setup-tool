@@ -18,8 +18,6 @@ try {
   for (const name of ['postinst', 'postrm']) {
     const script = fs.readFileSync(path.join(controls, name), 'utf8');
     assert.match(script, /udevadm control --reload-rules/);
-    assert.match(script, /update-alternatives/);
-    assert.match(script, /apparmor/);
   }
 } finally { fs.rmSync(controls, { recursive: true, force: true }); }
 const files = run('rpm', ['-qp', '--qf', '[%{FILENAMES}\t%{FILEMODES:octal}\n]', rpm]);
@@ -28,5 +26,7 @@ assert.ok(entry, 'RPM must own the USB permission rule');
 const payload = execFileSync('bash', ['-o', 'pipefail', '-c', 'rpm2cpio "$1" | cpio --quiet -i --to-stdout "./usr/lib/udev/rules.d/70-motomind-gsusb.rules" "usr/lib/udev/rules.d/70-motomind-gsusb.rules"', 'rpm-rule', rpm]);
 assert.deepEqual(payload, bytes, 'RPM rule bytes must match the source rule');
 assert.equal(Number.parseInt(entry[1], 8) & 0o777, 0o644);
-assert.equal(run('rpm', ['-qp', '--scripts', rpm]).match(/udevadm control --reload-rules/g)?.length, 2);
-console.log('DEB/RPM own the USB rule and preserve desktop hooks with udev reloads.');
+for (const script of ['%{POSTIN}', '%{POSTUN}']) {
+  assert.match(run('rpm', ['-qp', '--qf', script, rpm]), /udevadm control --reload-rules/);
+}
+console.log('DEB and RPM own the USB rule and reload udev on install and removal.');

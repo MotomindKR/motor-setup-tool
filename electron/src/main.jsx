@@ -8,11 +8,6 @@ import { createController } from "./controller.mjs";
 if (window.motorApp) {
   document.documentElement.dataset.platform = window.motorApp.platform;
   const controller = createController(window.motorApp);
-  if (window.motorApp.smokeMode)
-    window.motorSmoke = {
-      actions: controller.actions,
-      getSnapshot: controller.getSnapshot,
-    };
   createRoot(document.getElementById("root")).render(
     <App controller={controller} />,
   );

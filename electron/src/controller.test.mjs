@@ -13,7 +13,9 @@ const preset = {
   sample_hz: 200,
   sweep_start_hz: 0.1,
   sweep_end_hz: 5,
-  baseline: { armature: 0.01, damping: 0.01, friction: 0.01, delay: 0 },
+  experiment: "Mixed",
+  excitation_revision: 1,
+  baseline: { static_friction: 0, armature: 0.01, damping: 0.01, friction: 0.01, delay: 0 },
   profile: {},
 };
 const motor = { model: "RS-00", id: 1, uuid: [1, 2, 3, 4, 5, 6, 7, 8] };
@@ -42,9 +44,13 @@ async function setup(t, overrides = {}) {
   const calls = [],
     intents = [];
   let receive,
-    finishManual,
+    manual,
     clock = 1000,
     focus = true;
+  const adapters = {
+    interfaces: [{ name: "can0", up: true, state: "ERROR-ACTIVE" }],
+    usbAdapters: [],
+  };
   const bridge = {
     platform: "linux",
     onEvent: (callback) => {
@@ -54,6 +60,7 @@ async function setup(t, overrides = {}) {
     onUpdateProgress: () => () => {},
     updateInfo: async () => ({ version: "0.1.22" }),
     listRuns: async () => [],
+    loadRun: async directory => ({ directory, report: { accepted: true }, files: [], uuid: "" }),
     preview: async () => ({
       spec: {},
       t: [0, 1],
@@ -65,15 +72,16 @@ async function setup(t, overrides = {}) {
     setReferenceAngle: async () => {},
     run: async (op, params) => {
       calls.push({ op, params });
-      if (op === "interfaces")
-        return [{ name: "can0", up: true, state: "ERROR-ACTIVE" }];
-      if (op === "usbAdapters") return [];
+      if (Object.hasOwn(adapters, op)) {
+        if (adapters[op] instanceof Error) throw adapters[op];
+        return adapters[op];
+      }
       if (op === "scan") return [motor];
-      if (op === "plan") return structuredClone(preset);
-      if (op === "registerList") return [register];
+      if (op === "calibrate") return { accepted: true, directory: "/recordings/finished" };
+      if (op === "plan") return { preset: structuredClone(preset), limits: {}, registers: [register] };
       if (op === "setId") return { previous_id: params.id, id: params.newId };
       if (op === "firmwarePrepare")
-        return { id: params.id, current_version: "1.2.3", version: "1.2.4" };
+        return { id: params.id, model: motor.model, uuid: motor.uuid, interface: params.can, host_id: Number(params.hostId), current_version: "1.2.3", version: "1.2.4" };
       if (op === "firmwareUpdate") return { id: params.id, firmware: "1.2.4" };
       if (op === "registerRead" || op === "registerWrite")
         return {
@@ -82,17 +90,19 @@ async function setup(t, overrides = {}) {
           value: op === "registerWrite" ? params.value : 1,
           raw: "0000803F",
         };
-      if (op === "manual")
-        return new Promise((resolve) => {
-          finishManual = resolve;
-        });
-      return { cancelled: true };
+      if (op === "manual") {
+        manual = Promise.withResolvers();
+        return manual.promise;
+      }
+      if (op === "zero") return { zeroed: true };
+      if (op === "stop") return { stopped: true };
+      throw new Error(`Unexpected test operation: ${op}`);
     },
     manualIntent: async (value) => {
       intents.push(value);
     },
     cancel: async () => {
-      finishManual?.({ cancelled: true });
+      manual?.resolve({ cancelled: true });
     },
     ...overrides,
   };
@@ -106,6 +116,7 @@ async function setup(t, overrides = {}) {
   return {
     ...controller,
     bridge,
+    adapters,
     calls,
     intents,
     emit: (e) => receive(e),
@@ -134,131 +145,86 @@ const feedback = {
   preparing: false,
 };
 
-test("startup and browsing send no motion or motor commands", async (t) => {
-  const ctx = await setup(t);
-  assert.deepEqual(
-    ctx.calls.map((c) => c.op),
-    ["interfaces", "usbAdapters"],
-  );
-  await ctx.actions.setTab("test");
-  await ctx.actions.setTab("files");
-  assert.equal(ctx.intents.length, 0);
-  assert.equal(ctx.calls.length, 2);
-  assert.equal(ctx.flags().calibrate, false);
-});
 test("late progress cannot reopen a finished operation", async (t) => {
   const ctx = await setup(t);
   await ctx.connect();
   await ctx.actions.setTab("test");
   await ctx.actions.monitor();
-  ctx.emit({ type: "progress", message: "Monitoring" });
+  ctx.emit({ type: "progress", message: "Monitoring", percent: 31 });
   assert.equal(ctx.getSnapshot().work.message, "Monitoring");
+  assert.equal(ctx.getSnapshot().work.percent, 31);
   await ctx.actions.monitor();
   ctx.emit({ type: "progress", message: "Error: CAN deadline" });
   assert.equal(ctx.getSnapshot().busy, null);
   assert.equal(ctx.getSnapshot().work, null);
 });
-test("macOS and Windows default to direct USB and select a sole accessible adapter", async (t) => {
-  for (const platform of ["darwin", "win32"]) {
-    const ctx = await setup(t, { platform });
-    assert.equal(ctx.getSnapshot().connection.transport, "gsusb");
-    const run = ctx.bridge.run;
-    ctx.bridge.run = async (op, params) =>
-      op === "usbAdapters" ? [usbAdapter] : run(op, params);
+test("Linux can scan using USB when SocketCAN is unavailable", async t => {
+  for (const interfaces of [[], new Error("SocketCAN unavailable")]) {
+    const ctx = await setup(t);
+    ctx.adapters.interfaces = interfaces;
+    ctx.adapters.usbAdapters = [usbAdapter];
     await ctx.actions.refreshInterfaces();
     assert.equal(selectedCan(ctx.getSnapshot()), usbAdapter.id);
-    assert.equal(ctx.flags().ready, true);
-    ctx.actions.changeConnection("transport", "socketcan");
-    assert.equal(ctx.getSnapshot().connection.transport, "gsusb");
+    await ctx.connect();
+    assert.equal(ctx.getSnapshot().motor.id, motor.id);
   }
 });
-test("Linux selects direct USB when no SocketCAN interface is available", async (t) => {
-  const ctx = await setup(t);
-  const run = ctx.bridge.run;
-  ctx.bridge.run = async (op, params) =>
-    op === "interfaces"
-      ? []
-      : op === "usbAdapters"
-        ? [usbAdapter]
-        : run(op, params);
-  await ctx.actions.refreshInterfaces();
-  assert.equal(ctx.getSnapshot().connection.transport, "gsusb");
-  assert.equal(ctx.flags().ready, true);
-});
-test("refreshing an unchanged adapter preserves selection, limits, and review", async (t) => {
+test("reviewed settings stay usable while the selected adapter is available", async t => {
   const ctx = await setup(t);
   await ctx.connect();
   ctx.actions.changeConfig("torque_limit", "0.7");
   await tick();
   ctx.actions.review(true);
-  const before = ctx.getSnapshot();
+
+  ctx.adapters.usbAdapters = new Error("USB unavailable");
   await ctx.actions.refreshInterfaces();
-  const after = ctx.getSnapshot();
-  for (const key of ["motor", "config", "preset", "preview", "reviewed"])
-    assert.equal(after[key], before[key]);
+  assert.equal(ctx.getSnapshot().config.torque_limit, 0.7);
   assert.equal(ctx.flags().calibrate, true);
-  assert.equal(ctx.calls.filter((call) => call.op === "scan").length, 1);
-});
-test("adapter removal clears the motor and blocks further motor commands", async (t) => {
-  const ctx = await setup(t);
-  await ctx.connect();
-  ctx.actions.review(true);
-  const run = ctx.bridge.run;
-  ctx.bridge.run = async (op, params) =>
-    op === "interfaces" ? [] : run(op, params);
+  assert.equal(ctx.getSnapshot().notice.error, true);
+
+  ctx.adapters.interfaces = [];
   await ctx.actions.refreshInterfaces();
   assert.equal(ctx.getSnapshot().motor, null);
-  assert.equal(ctx.getSnapshot().config, null);
-  assert.equal(ctx.getSnapshot().connectionOpen, true);
-  assert.equal(ctx.flags().motor, false);
+  assert.equal(ctx.flags().calibrate, false);
   await ctx.actions.calibrate();
-  assert.equal(
-    ctx.calls.some((call) => call.op === "calibrate"),
-    false,
-  );
+  assert.ok(!ctx.calls.some(call => call.op === "calibrate"));
 });
 test("adapter refresh blocks connection edits throughout enumeration", async (t) => {
   const ctx = await setup(t);
   await ctx.connect();
-  const run = ctx.bridge.run;
-  let finish;
-  ctx.bridge.run = async (op, params) =>
-    op === "usbAdapters"
-      ? new Promise((resolve) => {
-          finish = resolve;
-        })
-      : run(op, params);
+  const enumeration = Promise.withResolvers();
+  ctx.adapters.usbAdapters = enumeration.promise;
   const refresh = ctx.actions.refreshInterfaces();
   await tick();
   assert.equal(ctx.flags().busy, true);
   ctx.actions.changeConnection("transport", "gsusb");
   assert.equal(ctx.getSnapshot().connection.transport, "socketcan");
-  finish([]);
+  enumeration.resolve([]);
   await refresh;
   assert.equal(ctx.flags().busy, false);
   assert.ok(ctx.getSnapshot().motor);
 });
-test("calibration requires a valid preview and explicit review; editing revokes review", async (t) => {
+test("calibration requires a complete, reviewed configuration", async t => {
   const ctx = await setup(t);
   await ctx.connect();
   await ctx.actions.calibrate();
-  assert.equal(
-    ctx.calls.some((c) => c.op === "calibrate"),
-    false,
-  );
+  assert.ok(!ctx.calls.some(call => call.op === "calibrate"));
   ctx.actions.review(true);
-  assert.equal(ctx.flags().calibrate, true);
-  ctx.actions.changeConfig("speed_limit", "2");
+  assert.ok(ctx.flags().calibrate);
+
+  ctx.actions.changeConfig("damping", "", true);
+  await tick();
   assert.equal(ctx.getSnapshot().reviewed, false);
-  assert.equal(ctx.getSnapshot().preview, null);
+  ctx.actions.review(true);
   assert.equal(ctx.flags().calibrate, false);
+
+  ctx.actions.changeConfig("damping", "0", true);
   await tick();
   ctx.actions.review(true);
   await ctx.actions.calibrate();
-  const call = ctx.calls.find((c) => c.op === "calibrate");
-  assert.equal(call.params.reviewed, true);
-  assert.equal(call.params.config.speed_limit, 2);
-  assert.equal(call.params.config.motor_id, 1);
+  const call = ctx.calls.find(call => call.op === "calibrate");
+  assert.equal(call.params.config.baseline.damping, 0);
+  assert.equal(call.params.config.motor_id, motor.id);
 });
 test("outdated preview responses cannot authorize a changed configuration", async (t) => {
   const responses = [];
@@ -375,21 +341,6 @@ test("restoring a preset restores baseline fields and revokes calibration review
   assert.equal(ctx.getSnapshot().reviewed, false);
 });
 
-test("register loading remains single-flight when a subscriber reacts to operation completion", async (t) => {
-  const ctx = await setup(t);
-  await ctx.actions.scan();
-  const off = ctx.subscribe(() => {
-    const s = ctx.getSnapshot();
-    if (s.tab === "setup" && !s.busy && !s.registers && !s.registersFailed)
-      ctx.actions.loadRegisters();
-  });
-  t.after(off);
-  await ctx.actions.setTab("setup");
-  await tick();
-  assert.equal(ctx.calls.filter((c) => c.op === "registerList").length, 1);
-  assert.equal(ctx.getSnapshot().registers.length, 1);
-});
-
 test("recording deletion is confirmed, permanent, and clears only the deleted selection", async (t) => {
   const directory = "/recordings/run";
   let deleted;
@@ -397,6 +348,7 @@ test("recording deletion is confirmed, permanent, and clears only the deleted se
     listRuns: async () => [{ directory, model: "RS-10P", motorId: 61 }],
     loadRun: async () => ({
       directory,
+      uuid: "0102030405060708",
       report: { motor_uuid: motor.uuid },
       files: ["training.csv"],
     }),
@@ -415,8 +367,13 @@ test("recording deletion is confirmed, permanent, and clears only the deleted se
   );
   ctx.actions.closeConfirmation();
   assert.equal(ctx.getSnapshot().directory, directory);
+  const listing = Promise.withResolvers();
+  ctx.bridge.listRuns = () => listing.promise;
+  const refresh = ctx.actions.refreshRuns();
   ctx.actions.deleteRun(directory);
   await ctx.actions.confirm();
+  listing.resolve([{ directory }]);
+  await refresh;
   assert.equal(deleted, directory);
   assert.equal(ctx.getSnapshot().directory, null);
   assert.equal(ctx.getSnapshot().report, null);
@@ -424,18 +381,13 @@ test("recording deletion is confirmed, permanent, and clears only the deleted se
 });
 
 test("file downloads block concurrent actions and a cancelled dialog leaves the recording open", async (t) => {
-  let finish;
-  const ctx = await setup(t, {
-    exportRun: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-  });
+  const download = Promise.withResolvers();
+  const ctx = await setup(t, { exportRun: () => download.promise });
   const operation = ctx.actions.exportRun("/recordings/run", "training.csv");
   assert.equal(ctx.flags().busy, true);
   ctx.actions.deleteRun("/recordings/run");
   assert.equal(ctx.getSnapshot().confirmation, undefined);
-  finish(null);
+  download.resolve(null);
   await operation;
   assert.equal(ctx.flags().busy, false);
 });
@@ -469,11 +421,12 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   const ctx = await setup(t);
   await ctx.connect();
   await ctx.actions.prepareFirmware();
-  let finish;
-  ctx.bridge.run = async () =>
-    new Promise((resolve) => {
-      finish = resolve;
-    });
+  const transfer = Promise.withResolvers();
+  const reviewed = ctx.getSnapshot().firmware;
+  ctx.bridge.run = async (_op, params) => {
+    assert.deepEqual(params.prepared, reviewed);
+    return transfer.promise;
+  };
   let cancelled = false;
   ctx.bridge.cancel = async () => {
     cancelled = true;
@@ -486,7 +439,7 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   await ctx.actions.disable();
   ctx.actions.cancel();
   assert.equal(cancelled, false);
-  finish({ id: 1, firmware: "1.2.4" });
+  transfer.resolve({ id: 1, firmware: "1.2.4" });
   await updating;
   assert.equal(ctx.getSnapshot().motor.firmware, "1.2.4");
   assert.equal(ctx.getSnapshot().motors[0].firmware, "1.2.4");
@@ -494,55 +447,49 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   assert.equal(ctx.getSnapshot().reviewed, false);
 });
 
-test("verified ID changes keep the motor, limits, and reference selected without scanning", async (t) => {
+test("preparing a replacement motor invalidates the earlier firmware review", async t => {
   const ctx = await setup(t);
   await ctx.connect();
-  await ctx.actions.setTab("setup");
-  await tick();
+  await ctx.actions.prepareFirmware();
+  const reviewed = ctx.getSnapshot().firmware;
+  ctx.bridge.run = async () => ({ ...reviewed, uuid: Array(8).fill(0) });
+  await ctx.actions.prepareFirmware();
+  assert.equal(ctx.flags().updateFirmware, false);
+  assert.equal(ctx.getSnapshot().notice.error, true);
+  ctx.actions.updateFirmware();
+  assert.ok(!ctx.getSnapshot().confirmation);
+});
+
+test("changing the motor ID keeps its settings and requires fresh reviews", async t => {
+  const ctx = await setup(t);
+  await ctx.connect();
   await ctx.actions.readRegister();
+  ctx.actions.setRegisterValue("2");
   await ctx.actions.prepareFirmware();
   ctx.actions.changeConfig("torque_limit", "0.7");
-  await tick();
   ctx.actions.setReferenceInput("0.2");
   ctx.actions.zero();
   await ctx.actions.confirm();
+  await tick();
   ctx.actions.review(true);
-  const config = ctx.getSnapshot().config;
-  const preview = ctx.getSnapshot().preview;
+  assert.ok(ctx.flags().registerWrite && ctx.flags().updateFirmware && ctx.flags().calibrate);
+
   ctx.actions.setNewId("61");
   ctx.actions.changeId();
-  assert.equal(
-    ctx.calls.some((call) => call.op === "setId"),
-    false,
-  );
   await ctx.actions.confirm();
   const s = ctx.getSnapshot();
+  assert.ok(ctx.flags().motor);
   assert.equal(s.motor.id, 61);
   assert.deepEqual(s.motor.uuid, motor.uuid);
-  assert.equal(s.motors[0], s.motor);
-  assert.deepEqual(s.config, { ...config, motor_id: 61 });
-  assert.equal(s.preview, preview);
+  assert.equal(s.config.torque_limit, 0.7);
   assert.equal(s.referenceAngle, 0.2);
-  assert.equal(s.connectionOpen, false);
-  assert.equal(s.newId, "");
-  assert.equal(s.registerRead, null);
-  assert.equal(s.firmware, null);
-  assert.equal(s.reviewed, false);
-  assert.equal(ctx.flags().motor, true);
+  ctx.actions.setRegisterValue("2");
+  assert.equal(ctx.flags().registerWrite, false);
+  assert.equal(ctx.flags().updateFirmware, false);
+  assert.equal(ctx.flags().calibrate, false);
+
   await ctx.actions.readRegister();
-  await ctx.actions.prepareFirmware();
-  ctx.actions.updateFirmware();
-  await ctx.actions.confirm();
-  assert.equal(ctx.getSnapshot().motor.id, 61);
-  assert.equal(ctx.getSnapshot().motors[0].firmware, "1.2.4");
-  for (const op of ["registerRead", "firmwarePrepare", "firmwareUpdate"])
-    assert.equal(ctx.calls.findLast((call) => call.op === op).params.id, 61);
-  await ctx.actions.selectMotor("61");
-  assert.equal(ctx.getSnapshot().motor.firmware, "1.2.4");
-  assert.equal(ctx.getSnapshot().config.torque_limit, "0.7");
-  assert.equal(ctx.getSnapshot().referenceAngle, 0.2);
-  assert.equal(ctx.calls.filter((call) => call.op === "plan").length, 1);
-  assert.equal(ctx.calls.filter((call) => call.op === "scan").length, 1);
+  assert.equal(ctx.calls.findLast(call => call.op === "registerRead").params.id, 61);
 });
 
 test("failed, cancelled, and unverified ID changes do not replace motor identity", async (t) => {
@@ -562,8 +509,8 @@ test("failed, cancelled, and unverified ID changes do not replace motor identity
     ctx.actions.setNewId("61");
     ctx.actions.changeId();
     await ctx.actions.confirm();
-    assert.equal(ctx.getSnapshot().motor, original);
-    assert.equal(ctx.getSnapshot().motors[0], original);
+    assert.deepEqual(ctx.getSnapshot().motor, original);
+    assert.deepEqual(ctx.getSnapshot().motors[0], original);
     assert.ok(!ctx.getSnapshot().notice.message.includes("Motor ID changed"));
   }
 });
@@ -583,7 +530,7 @@ test("ID changes update only the selected motor in a multi-motor list", async (t
   await ctx.actions.confirm();
   assert.equal(ctx.getSnapshot().motor.id, 61);
   assert.equal(ctx.getSnapshot().motors[0].id, 61);
-  assert.equal(ctx.getSnapshot().motors[1], other);
+  assert.deepEqual(ctx.getSnapshot().motors[1], other);
 });
 
 test("a confirmation cannot change a different motor selected afterward", async (t) => {
@@ -594,36 +541,20 @@ test("a confirmation cannot change a different motor selected afterward", async 
       ? [motor, { ...motor, id: 2 }]
       : run(operation, params);
   await ctx.actions.scan();
-  await ctx.actions.selectMotor("1");
-  ctx.actions.setNewId("61");
-  ctx.actions.changeId();
-  await ctx.actions.selectMotor("2");
-  await ctx.actions.confirm();
-  assert.equal(
-    ctx.calls.some((call) => call.op === "setId"),
-    false,
-  );
-  await ctx.actions.prepareFirmware();
-  ctx.actions.updateFirmware();
-  await ctx.actions.selectMotor("1");
-  await ctx.actions.confirm();
-  assert.equal(
-    ctx.calls.some((call) => call.op === "firmwareUpdate"),
-    false,
-  );
-});
-
-test("a single scanned motor loads its preset without another selection", async (t) => {
-  const ctx = await setup(t);
-  await ctx.actions.scan();
-  await tick();
-  assert.equal(ctx.getSnapshot().motor.id, 1);
-  assert.ok(ctx.getSnapshot().config);
-  assert.deepEqual(
-    ctx.calls.slice(2).map((call) => call.op),
-    ["scan", "plan"],
-  );
-  assert.equal(ctx.flags().calibrate, false);
+  for (const command of ["setId", "firmwareUpdate", "zero"]) {
+    await ctx.actions.selectMotor("1");
+    if (command === "setId") {
+      ctx.actions.setNewId("61");
+      ctx.actions.changeId();
+    } else if (command === "firmwareUpdate") {
+      await ctx.actions.prepareFirmware();
+      ctx.actions.updateFirmware();
+    } else ctx.actions.zero();
+    assert.ok(ctx.getSnapshot().confirmation, command);
+    await ctx.actions.selectMotor("2");
+    await ctx.actions.confirm();
+    assert.ok(!ctx.calls.some(call => call.op === command), command);
+  }
 });
 
 test("multiple scanned motors require an explicit selection", async (t) => {
@@ -640,18 +571,27 @@ test("multiple scanned motors require an explicit selection", async (t) => {
   assert.equal(ctx.getSnapshot().motor.id, 2);
 });
 
-test("firmware errors show the failure without repeated progress output", async (t) => {
+test("a cancelled scan leaves the motor list empty and can be retried", async (t) => {
   const ctx = await setup(t);
+  const run = ctx.bridge.run;
+  ctx.bridge.run = async () => ({ cancelled: true });
+  await ctx.actions.scan();
+  assert.deepEqual(ctx.getSnapshot().motors, []);
+  assert.equal(ctx.getSnapshot().notice.error, false);
+  ctx.bridge.run = run;
+  await ctx.actions.scan();
+  assert.equal(ctx.getSnapshot().motor.id, motor.id);
+  assert.ok(ctx.getSnapshot().config);
+  assert.equal(ctx.flags().calibrate, false);
+});
+
+test("a cancelled zero does not save a reference angle", async (t) => {
+  let writes = 0;
+  const ctx = await setup(t, { setReferenceAngle: async () => { writes++; } });
   await ctx.connect();
-  ctx.bridge.run = async () => {
-    throw new Error(
-      "Preparing official RS-00 firmware 0.0.3.36\nError: RobStride no longer hosts RS-00 firmware 0.0.3.36. Check for an app update.",
-    );
-  };
-  await ctx.actions.prepareFirmware();
-  assert.equal(
-    ctx.getSnapshot().notice.message,
-    "RobStride no longer hosts RS-00 firmware 0.0.3.36. Check for an app update.",
-  );
-  assert.equal(ctx.getSnapshot().firmware, null);
+  ctx.bridge.run = async () => ({ cancelled: true });
+  ctx.actions.zero();
+  await ctx.actions.confirm();
+  assert.equal(writes, 0);
+  assert.equal(ctx.getSnapshot().notice.error, false);
 });

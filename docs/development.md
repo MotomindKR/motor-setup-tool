@@ -5,11 +5,7 @@
 
 ## Build and run
 
-Electron hosts the Motomind React frontend. The Rust backend provides the CLI,
-CAN control, calibration, and MuJoCo fitting; it has no standalone GUI.
-Use Rust 1.95 or newer, Node.js 22 or newer, and a C compiler/linker. CI pins
-Rust 1.98.1 for Linux checks. Install the pinned MuJoCo SDK as described in the
-[release guide](../packaging/README.md#build-locally).
+Install Node.js 22 or newer, a C compiler/linker, and the [MuJoCo SDK](../packaging/README.md#build-locally).
 
 ```sh
 ./scripts/setup.sh
@@ -51,24 +47,7 @@ export RUSTUP_HOME="$PWD/.tools/rustup"
 export PATH="$CARGO_HOME/bin:$PATH"
 ```
 
-`check.sh` runs download-integrity checks, Rust formatting, Clippy with warnings
-denied, and unit tests. Frontend checks cover the controller, IPC arguments,
-recording files, updates, and production build. Browser interaction tests inject
-a test-only bridge and send no physical CAN frames.
-
-| Workflow | Trigger | Output |
-|---|---|---|
-| [Unit tests](../.github/workflows/tests.yml) | Main, pull request, manual | Rust checks in the Ubuntu container; frontend build and interaction tests |
-| [Desktop release](../.github/workflows/release.yml) | Matching version tag | Linux DEB/RPM, macOS DMG, Windows EXE |
-
-For the Linux test environment locally:
-
-```sh
-docker build -f packaging/Dockerfile -t motomind-tests .
-docker run --rm --user "$(id -u):$(id -g)" \
-  -e CARGO_HOME=/work/.tools/ci-cargo -v "$PWD:/work" \
-  motomind-tests bash scripts/check-ci.sh
-```
+CI runs the same [backend and frontend checks](../.github/workflows/tests.yml) on pull requests to `main`.
 
 ## Code map
 
@@ -111,8 +90,9 @@ replay behavior.
 
 Run `npm run test:ui` in `electron/` for screenshots and interaction checks in
 light/dark themes and at narrow widths. Native window chrome and OS file dialogs
-also need an Electron smoke test. The Windows updater regression uses the
-`MOTOMIND_SMOKE_PATH` capture hook; it remains part of the packaged app.
+also need an Electron smoke test. Set `MOTOMIND_SMOKE_PATH` to capture the
+packaged startup window and a JSON runtime summary. The installed updater tests
+use this hook to verify the restarted app.
 
 To inspect real data manually, open a saved recording through **Files**. Use a
 copy when testing **Refit recording**, which replaces analysis artifacts.

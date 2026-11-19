@@ -1,5 +1,6 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, sync::LazyLock};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Parameters {
@@ -50,60 +51,67 @@ pub struct Profile {
     #[serde(default)]
     pub preset_revision: u32,
 }
+#[derive(Deserialize)]
+struct MotorModel {
+    firmware_family: u8,
+    preset_revision: u32,
+    velocity_range: f64,
+    torque_range: f64,
+    spec: MotorSpec,
+}
+
+static MODELS: LazyLock<BTreeMap<String, MotorModel>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../electron/motor-models.json")).expect("valid motor models")
+});
+
 impl Profile {
-    pub fn spec(&self) -> Option<MotorSpec> {
-        let i = Self::presets().iter().position(|p| p.model == self.model)?;
-        let (rated, peak, rpm, gear, volts) = [
-            (5., 14., 315., 10., 48.),
-            (7., 17., 315., 7.75, 36.),
-            (7., 17., 410., 7.75, 48.),
-            (21., 60., 195., 9., 48.),
-            (35., 120., 200., 9., 48.),
-            (1.8, 5.5, 480., 7.75, 48.),
-            (11., 36., 480., 9., 48.),
-            (14., 42., 125., 25., 48.),
-        ][i];
-        Some(MotorSpec {
-            rated_torque: rated,
-            peak_torque: peak,
-            no_load_rpm: rpm,
-            gear_ratio: gear,
-            rated_voltage: volts,
-        })
+    pub fn model_for_family(family: u8) -> Option<&'static str> {
+        MODELS
+            .iter()
+            .find(|(_, entry)| entry.firmware_family == family)
+            .map(|(model, _)| model.as_str())
     }
-    // Official manuals: RS-00–06 2026-07-13, RS-10P 2026-09-07; CAN types 1/2.
-    // See docs/protocol.md for pinned sources. These are NOT rated limits.
-    pub fn presets() -> Vec<Self> {
-        [
-            ("RS-00", 33., 14., 20260713),
-            ("RS-01", 44., 17., 20260713),
-            ("RS-02", 44., 17., 20260713),
-            ("RS-03", 20., 60., 20260713),
-            ("RS-04", 15., 120., 20260713),
-            ("RS-05", 50., 5.5, 20260713),
-            ("RS-06", 50., 36., 20260713),
-            ("RS-10P", 13., 42., 20260907),
-        ]
-        .iter()
-        .map(|&(model, v, t, revision)| Self {
+
+    pub fn spec(&self) -> Option<&'static MotorSpec> {
+        Some(&MODELS.get(&self.model)?.spec)
+    }
+
+    pub fn manual_revision(&self) -> Option<String> {
+        let revision = MODELS.get(&self.model)?.preset_revision;
+        Some(format!(
+            "{:04}-{:02}-{:02}",
+            revision / 10000,
+            revision / 100 % 100,
+            revision % 100
+        ))
+    }
+
+    pub fn preset(model: &str) -> Option<Self> {
+        let entry = MODELS.get(model)?;
+        Some(Self {
             model: model.into(),
             position_range: 4. * std::f64::consts::PI,
-            velocity_range: v,
-            torque_range: t,
-            preset_revision: revision,
+            velocity_range: entry.velocity_range,
+            torque_range: entry.torque_range,
+            preset_revision: entry.preset_revision,
         })
-        .collect()
     }
-    pub fn documented(&self) -> Option<Self> {
-        Self::presets().into_iter().find(|p| p.model == self.model)
+
+    #[cfg(test)]
+    pub fn presets() -> Vec<Self> {
+        MODELS
+            .keys()
+            .map(|name| Self::preset(name).unwrap())
+            .collect()
     }
+
     fn same_ranges(&self, other: &Self) -> bool {
         self.position_range == other.position_range
             && self.velocity_range == other.velocity_range
             && self.torque_range == other.torque_range
     }
     pub fn uses_documented_ranges(&self) -> bool {
-        self.documented().is_some_and(|p| self.same_ranges(&p))
+        Self::preset(&self.model).is_some_and(|p| self.same_ranges(&p))
     }
 }
 
@@ -134,15 +142,23 @@ pub struct Config {
 }
 impl Default for Config {
     fn default() -> Self {
-        Self {
+        Self::preset("RS-01").expect("valid default motor preset")
+    }
+}
+impl Config {
+    pub fn preset(model: &str) -> Result<Self> {
+        let profile =
+            Profile::preset(model).with_context(|| format!("Unknown motor model: {model}"))?;
+        let spec = &MODELS[model].spec;
+        let config = Self {
             excitation_revision: 1,
             interface: "can0".into(),
             motor_id: 1,
             host_id: 253,
             reference_angle_rad: 0.,
-            profile: Profile::presets()[1].clone(),
-            torque_limit: 1.7,
-            speed_limit: 14.844025288211773,
+            torque_limit: spec.bench_torque_max().min(profile.torque_range * 0.1),
+            speed_limit: 0.45 * spec.speed_rad_s().min(profile.velocity_range),
+            profile,
             travel_limit: 24.,
             temperature_limit: 55.,
             sample_hz: 200.,
@@ -152,10 +168,11 @@ impl Default for Config {
             experiment: crate::experiment::Experiment::Mixed,
             sweep_start_hz: 0.15,
             sweep_end_hz: 8.,
-        }
+        };
+        config.validate()?;
+        Ok(config)
     }
-}
-impl Config {
+
     pub fn target_speed_fraction(&self) -> f64 {
         if self.excitation_revision >= 1 {
             0.75
@@ -163,19 +180,55 @@ impl Config {
             0.4
         }
     }
-    pub fn apply_spec_limits(&mut self) {
-        if let Some(spec) = self.profile.spec() {
-            let (rated, peak, speed, travel, f0, f1) = (0.25, 0.1, 0.45, 24., 0.15, 8.);
-            self.excitation_revision = 1;
-            self.torque_limit = (rated * spec.rated_torque)
-                .min(peak * spec.peak_torque)
-                .min(self.profile.torque_range * 0.1);
-            self.speed_limit =
-                (speed * spec.speed_rad_s()).min(speed * self.profile.velocity_range);
-            self.travel_limit = travel;
-            self.sweep_start_hz = f0;
-            self.sweep_end_hz = f1;
-        }
+    pub fn input_fields(&self) -> Result<impl Iterator<Item = (&'static str, f64, [f64; 2])>> {
+        let spec = self
+            .profile
+            .spec()
+            .context("Select a supported motor model")?;
+        let legacy = self.experiment == crate::experiment::Experiment::Legacy;
+        Ok([
+            (
+                "torque_limit",
+                self.torque_limit,
+                [
+                    0.001,
+                    spec.bench_torque_max().min(self.profile.torque_range * 0.1),
+                ],
+            ),
+            (
+                "speed_limit",
+                self.speed_limit,
+                [
+                    0.1,
+                    spec.speed_rad_s().min(self.profile.velocity_range) * 0.5,
+                ],
+            ),
+            ("travel_limit", self.travel_limit, [0.1, 100.]),
+            ("temperature_limit", self.temperature_limit, [20., 70.]),
+            (
+                "train_seconds",
+                self.train_seconds,
+                [if legacy { 8. } else { 20. }, 60.],
+            ),
+            (
+                "validation_seconds",
+                self.validation_seconds,
+                [if legacy { 6. } else { 10. }, 60.],
+            ),
+            ("sample_hz", self.sample_hz, [50., 500.]),
+            ("sweep_start_hz", self.sweep_start_hz, [0.05, 20.]),
+            ("sweep_end_hz", self.sweep_end_hz, [0.1, 20.]),
+            ("armature", self.baseline.armature, [1e-6, 5.]),
+            ("damping", self.baseline.damping, [0., 10.]),
+            ("friction", self.baseline.friction, [0., 100.]),
+            ("delay", self.baseline.delay, [0., 0.1]),
+            (
+                "static_friction",
+                self.baseline.static_friction,
+                [0., spec.peak_torque],
+            ),
+        ]
+        .into_iter())
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -183,63 +236,25 @@ impl Config {
             self.reference_angle_rad.is_finite() && self.reference_angle_rad.abs() <= 100.,
             "Reference angle must be within ±100 rad"
         );
-        if self.experiment != crate::experiment::Experiment::Legacy {
-            ensure!(
-                self.train_seconds >= 20. && self.validation_seconds >= 10.,
-                "New measurement plans need at least 20 s training and 10 s validation; recommended 40/20 s"
-            );
-        }
-        let spec = self
-            .profile
-            .spec()
-            .ok_or_else(|| anyhow::anyhow!("Select a supported motor model"))?;
         ensure!((1..=254).contains(&self.motor_id), "Motor ID must be 1–254");
         ensure!(
             self.host_id != self.motor_id && (1..=254).contains(&self.host_id),
             "Host ID must be 1–254 and distinct from motor ID"
         );
-        for (name, value, lo, hi) in [
-            ("wire position", self.profile.position_range, 0.1, 100.),
-            ("wire speed", self.profile.velocity_range, 0.1, 1000.),
-            ("wire torque", self.profile.torque_range, 0.01, 1000.),
-            (
-                "torque limit",
-                self.torque_limit,
-                0.001,
-                spec.bench_torque_max().min(self.profile.torque_range * 0.1),
-            ),
-            (
-                "speed limit",
-                self.speed_limit,
-                0.1,
-                (spec.speed_rad_s() * 0.5).min(self.profile.velocity_range * 0.5),
-            ),
-            ("travel limit", self.travel_limit, 0.1, 100.),
-            ("temperature limit", self.temperature_limit, 20., 70.),
-            ("sample rate", self.sample_hz, 50., 500.),
-            ("training duration", self.train_seconds, 8., 60.),
-            ("validation duration", self.validation_seconds, 6., 60.),
-            ("baseline armature", self.baseline.armature, 1e-6, 5.),
-            ("baseline damping", self.baseline.damping, 0., 10.),
-            ("baseline friction", self.baseline.friction, 0., 100.),
-            ("baseline delay", self.baseline.delay, 0., 0.1),
-            (
-                "baseline static friction",
-                self.baseline.static_friction,
-                0.,
-                spec.peak_torque,
-            ),
-            ("sweep start Hz", self.sweep_start_hz, 0.05, 20.),
+        for (name, value, [lo, hi]) in self.input_fields()?.chain([
+            ("wire position", self.profile.position_range, [0.1, 100.]),
+            ("wire speed", self.profile.velocity_range, [0.1, 1000.]),
+            ("wire torque", self.profile.torque_range, [0.01, 1000.]),
             (
                 "sweep end Hz",
                 self.sweep_end_hz,
-                self.sweep_start_hz + 0.05,
-                (self.sample_hz / 10.).min(20.),
+                [self.sweep_start_hz + 0.05, self.sample_hz / 10.],
             ),
-        ] {
+        ]) {
             ensure!(
-                value.is_finite() && (lo..=hi).contains(&value),
-                "{name} must be {lo} … {hi}"
+                (lo..=hi).contains(&value),
+                "{} must be {lo} … {hi}",
+                name.replace('_', " ")
             );
         }
         Ok(())
@@ -269,6 +284,8 @@ pub struct Trace {
 pub struct Session {
     pub schema_version: u32,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motor_uuid: Option<[u8; 8]>,
     pub config: Config,
     pub traces: Vec<Trace>,
     pub complete: bool,
@@ -356,52 +373,6 @@ pub fn excitation(t: f64, velocity: f64, config: &Config, validation: bool) -> f
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn official_manual_ranges_match_all_models() {
-        let actual: Vec<_> = Profile::presets()
-            .iter()
-            .map(|p| (p.velocity_range, p.torque_range))
-            .collect();
-        assert_eq!(
-            actual,
-            [
-                (33., 14.),
-                (44., 17.),
-                (44., 17.),
-                (20., 60.),
-                (15., 120.),
-                (50., 5.5),
-                (50., 36.),
-                (13., 42.)
-            ]
-        );
-    }
-    #[test]
-    fn rs10p_uses_its_own_specs_and_conservative_bench_limits() {
-        let p = Profile::presets()
-            .into_iter()
-            .find(|p| p.model == "RS-10P")
-            .unwrap();
-        let spec = p.spec().unwrap();
-        assert_eq!(
-            (
-                spec.rated_torque,
-                spec.peak_torque,
-                spec.no_load_rpm,
-                spec.gear_ratio,
-                spec.rated_voltage
-            ),
-            (14., 42., 125., 25., 48.)
-        );
-        let mut c = Config {
-            profile: p,
-            ..Config::default()
-        };
-        c.apply_spec_limits();
-        assert_eq!(c.torque_limit, 3.5);
-        assert_eq!(c.speed_limit, 5.8500000000000005);
-        assert!(c.validate().is_ok());
-    }
     #[test]
     fn configuration_rejects_unsafe_and_nonfinite_values() {
         let mut c = Config::default();

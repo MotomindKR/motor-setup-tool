@@ -104,7 +104,7 @@ fn invoke(ip: &str, arguments: &[&str], auth: Auth, cancel: &AtomicBool) -> Resu
 }
 
 fn wait(mut command: Command, cancel: &AtomicBool) -> Result<()> {
-    ensure!(!cancel.load(Ordering::Relaxed), "CAN setup cancelled");
+    crate::cancel::check(cancel)?;
     let mut child = command
         .spawn()
         .context("Start system authentication for CAN setup")?;
@@ -115,7 +115,7 @@ fn wait(mut command: Command, cancel: &AtomicBool) -> Result<()> {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("CAN setup cancelled");
+            return Err(crate::cancel::Cancelled.into());
         }
         thread::sleep(Duration::from_millis(25));
     }
@@ -142,7 +142,7 @@ fn wait(mut command: Command, cancel: &AtomicBool) -> Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[test]

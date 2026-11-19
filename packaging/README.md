@@ -22,6 +22,11 @@ does not publish a Windows ARM64 library.
    [release workflow](../.github/workflows/release.yml) builds all four variants,
    verifies checksums, and adds installer links to the release notes.
 
+A manual release workflow run on a branch exercises both upgrade directions on
+Windows and Linux DEB. It installs the previous stable release, updates to the
+candidate, then uses the candidate to install a disposable next patch.
+The run summary previews the download links and release notes.
+
 ## Build locally
 
 Build on the target OS. On Linux and Windows, set `MUJOCO_DOWNLOAD_DIR` to
@@ -73,7 +78,8 @@ required; MSIX would need a trusted Windows signing certificate or Store setup.
 ### macOS signing setup
 
 macOS auto-updates require Developer ID signing and notarization. Releases use
-ad-hoc signing until a certificate is configured; install those DMGs manually.
+ad-hoc signing until a certificate is configured. On these builds, **Open download page**
+opens the available release so users can install its DMG.
 If macOS blocks launch, open **System Settings → Privacy & Security → Open Anyway**
 after attempting to launch the app.
 
