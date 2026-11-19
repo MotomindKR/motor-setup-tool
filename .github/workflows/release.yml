@@ -99,58 +99,6 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
         run: npm run package:installers
-      - name: Check Linux USB permissions in DEB and RPM packages
-        if: runner.os == 'Linux'
-        shell: bash
-        run: node electron/test-linux-package.js dist-electron/*-linux-*.deb dist-electron/*-linux-*.rpm
-      - name: Capture Linux window chrome
-        if: runner.os == 'Linux'
-        shell: bash
-        run: xvfb-run -a node electron/capture-window-chrome.js "$PWD"/dist-electron/installers/linux*-unpacked/motor-setup-tool "$RUNNER_TEMP/window-chrome"
-      - name: Capture Windows window chrome
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: node electron/capture-window-chrome.js "$PWD/dist-electron/installers/win-unpacked/Motor Setup Tool.exe" "$env:RUNNER_TEMP/window-chrome"
-      - name: Upload native window screenshots
-        if: runner.os != 'macOS' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: window-chrome-${{ matrix.platform }}
-          path: |
-            ${{ runner.temp }}/window-chrome/*.png
-            ${{ runner.temp }}/window-chrome/*.json
-      - name: Test installed Linux updater
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          installer=("$PWD"/dist-electron/*-${{ matrix.platform }}.deb)
-          previous=$(python3 packaging/previous-installer.py "${installer[@]}")
-          sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$previous" "${installer[@]}"
-      - name: Test Windows silent upgrade
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File).FullName
-          $oldInstaller = python packaging/previous-installer.py $installer
-          if ($LASTEXITCODE -ne 0) { throw 'Previous installer download failed' }
-          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer
-          if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
-      - name: Upload Windows update diagnostics
-        if: runner.os == 'Windows' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-update-diagnostics
-          path: |
-            ${{ runner.temp }}/motomind-update-tests/*/*.json
-            ${{ runner.temp }}/motomind-update-tests/*/*.log
-            ${{ runner.temp }}/motomind-update-tests/*/*.txt
-            ${{ runner.temp }}/motomind-update-tests/*/*.png
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -166,10 +114,17 @@ jobs:
             dist-electron/latest*.yml
             dist-electron/*.blockmap
 
+  verify-installers:
+    needs: build
+    uses: ./.github/workflows/windows-update.yml
+    permissions:
+      actions: read
+      contents: read
+
   publish:
     name: Publish desktop installers
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: verify-installers
     runs-on: ubuntu-22.04
     permissions:
       contents: write
