@@ -4,6 +4,8 @@ const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, na
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { Backend, backendPath } = require('./backend');
 const updater = require('./updater');
 const recordings = require('./recordings');
@@ -153,9 +155,11 @@ async function captureStartup(destination) {
     }
     return { title: document.title, bridge: typeof window.motorApp };
   })()`);
+  if (backendError) throw backendError;
+  const { stdout } = await promisify(execFile)(backend.binary, ['self-check'], { env: backend.environment, timeout: 15000 });
   await fs.writeFile(destination, (await contents.capturePage()).toPNG());
   await fs.writeFile(`${destination}.json`, JSON.stringify({
-    ...details, version: app.getVersion(), backendReady: !backendError, updateError,
+    ...details, version: app.getVersion(), backendVersion: JSON.parse(stdout).version, updateError,
   }));
 }
 

@@ -86,7 +86,7 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
       if ($runtime.updateError -notlike "*$ExpectedError*") { throw "Expected visible update error, got: $($runtime.updateError)" }
     } else {
       if ($runtime.updateError) { throw $runtime.updateError }
-      if (-not $runtime.backendReady) { throw 'The updated app backend failed to start' }
+      if ($runtime.backendVersion -ne $Version) { throw "Expected backend $Version, got $($runtime.backendVersion)" }
     }
     Write-Output "Passed $Name : runtime=$($runtime.version)"
   } finally {

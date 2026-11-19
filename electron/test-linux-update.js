@@ -61,7 +61,7 @@ const { setTimeout: delay } = require('node:timers/promises');
       const source = JSON.parse(await fs.readFile(handoff, 'utf8'));
       assert.equal(source.version, previous);
       assert.equal(source.target, version);
-      assert.equal(runtime.backendReady, true);
+      assert.equal(runtime.backendVersion, version);
       assert.equal(runtime.updateError, null);
       const rule = '/usr/lib/udev/rules.d/70-motomind-gsusb.rules';
       assert.deepEqual(await fs.readFile(rule), await fs.readFile(path.join(__dirname, '..', 'packaging', path.basename(rule))));
