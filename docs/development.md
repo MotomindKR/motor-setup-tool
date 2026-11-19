@@ -49,15 +49,6 @@ export PATH="$CARGO_HOME/bin:$PATH"
 
 CI runs the same [backend and frontend checks](../.github/workflows/tests.yml) on pull requests to `main`.
 
-For the Linux test environment locally:
-
-```sh
-docker build -f packaging/Dockerfile -t motomind-tests .
-docker run --rm --user "$(id -u):$(id -g)" \
-  -e CARGO_HOME=/work/.tools/ci-cargo -v "$PWD:/work" \
-  motomind-tests bash scripts/check-ci.sh
-```
-
 ## Code map
 
 | Module | Responsibility |
