@@ -192,9 +192,9 @@ reference are kept; review the limits again before starting calibration.
 ## Open, download, and delete recordings
 
 In **Files**, select a saved run or use **Open** to choose a recording folder.
-The report shows model, CAN ID and actuator UUID. This eight-byte hardware
-identity is recorded in `hardware.json` and `report.json`; the printed factory
-serial/barcode is not collected. Older runs without identity show “Not recorded”.
+The report shows model, CAN ID and the eight-byte actuator UUID. New recordings
+store the UUID with the raw samples in `session.json`. For older recordings,
+refitting reads the UUID from `hardware.json` when available.
 
 **Download** offers the entire run as a ZIP, individual training/validation CSVs,
 and calibration JSON when present. ZIPs include the original identity metadata;

@@ -104,5 +104,7 @@ test('refreshing the recordings list observes a report replaced by a refit', asy
   await fs.writeFile(file + '.tmp', JSON.stringify(report));
   await fs.rename(file + '.tmp', file);
   assert.equal((await inspectRun(directory)).uuid, '0123456789ABCDEF');
+  await fs.writeFile(path.join(directory, 'hardware.json'), JSON.stringify({ uuid: '0000000000000000' }));
+  assert.equal((await loadRun(directory)).uuid, '0123456789ABCDEF');
   assert.deepEqual((await loadRun(directory)).report, report);
 });

@@ -575,6 +575,10 @@ impl Bus {
         Ok(())
     }
     pub(crate) fn feedback(&self, timeout: Duration) -> Result<Feedback> {
+        self.try_feedback(timeout)?
+            .context("No motor feedback before CAN deadline")
+    }
+    fn try_feedback(&self, timeout: Duration) -> Result<Option<Feedback>> {
         self.wait_for(timeout, |f| {
             protocol::feedback(
                 &f,
@@ -582,8 +586,7 @@ impl Bus {
                 self.config.host_id,
                 &self.config.profile,
             )
-        })?
-        .context("No motor feedback before CAN deadline")
+        })
     }
     pub(crate) fn enable_zero_torque(&self, cancel: &AtomicBool) -> Result<Feedback> {
         crate::cancel::check(cancel)?;
@@ -762,7 +765,9 @@ impl Bus {
             if remaining.is_zero() {
                 break;
             }
-            let fb = self.feedback(remaining.min(Duration::from_millis(100)))?;
+            let Some(fb) = self.try_feedback(remaining.min(Duration::from_millis(100)))? else {
+                continue;
+            };
             last_mode = Some(fb.mode);
             check.observe(&fb, start.elapsed());
             if check.is_stationary() {
@@ -771,7 +776,7 @@ impl Bus {
             thread::sleep(Duration::from_millis(20).min(timeout.saturating_sub(start.elapsed())));
         }
         ensure!(
-            last_mode == Some(0),
+            last_mode.context("No motor feedback before CAN deadline")? == 0,
             "Motor did not acknowledge stopped mode"
         );
         anyhow::bail!("Could not confirm a stationary shaft; keep it still and retry")
@@ -1250,6 +1255,7 @@ pub fn acquire(
     let mut session = Session {
         schema_version: 1,
         source: "hardware".into(),
+        motor_uuid: Some(uuid),
         config: c.clone(),
         traces: Vec::new(),
         complete: false,
@@ -1426,6 +1432,7 @@ mod diagnostics_tests {
         let mut session = Session {
             schema_version: 1,
             source: "hardware".into(),
+            motor_uuid: None,
             config: Config::default(),
             traces: vec![],
             complete: false,
@@ -1493,6 +1500,54 @@ mod diagnostics_tests {
             data,
             timestamp: None,
         }
+    }
+    #[test]
+    fn standstill_recovers_from_one_unanswered_stop_request() {
+        let config = Config::default();
+        let id = protocol::frame(2, config.motor_id.into(), config.host_id).id;
+        let frame = UsbCanFrame::classic(
+            UsbCanId::extended(id).unwrap(),
+            &[0x80, 0, 0x80, 0, 0x80, 0, 0, 250],
+        )
+        .unwrap();
+        let (commands, mut requests) = tokio::sync::mpsc::channel(8);
+        let (tx, events) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut first = true;
+            while let Some(command) = requests.blocking_recv() {
+                match command {
+                    UsbCommand::Send(_, ack) => {
+                        if !first {
+                            tx.send(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
+                                frame: frame.clone(),
+                                channel: 0,
+                                timestamp: None,
+                            }))
+                            .unwrap();
+                        }
+                        first = false;
+                        ack.send(Ok(())).unwrap();
+                    }
+                    UsbCommand::Close(ack) => {
+                        ack.send(Ok(())).unwrap();
+                        break;
+                    }
+                }
+            }
+        });
+        let bus = Bus {
+            _lock: tempfile::tempfile().unwrap(),
+            socket: BusSocket::GsUsb(GsUsbTransport {
+                commands,
+                events: Mutex::new(events),
+                receive_error: Arc::default(),
+            }),
+            config,
+        };
+        let result = bus.stopped();
+        drop(bus);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap().mode, 0);
     }
     #[test]
     fn captured_gsusb_recovery_is_not_a_fault_or_motor_feedback() {

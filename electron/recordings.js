@@ -72,7 +72,7 @@ async function readRun(directory, full = false) {
   if (typeof model !== 'string' || !Object.hasOwn(motorModels, model) || !Number.isInteger(motorId) || motorId < 1 || motorId > 254) throw new Error('Folder does not contain a calibration run');
   const name = path.basename(directory);
   const timestamp = Number(/^\d{13}(?=-|$)/.exec(name)?.[0]) || stat.mtimeMs;
-  const run = { directory, name, model, motorId, uuid: actuatorUuid(hardware?.uuid) || actuatorUuid(report?.motor_uuid), timestamp, completed: Boolean(report), files };
+  const run = { directory, name, model, motorId, uuid: actuatorUuid(report?.motor_uuid) || actuatorUuid(hardware?.uuid), timestamp, completed: Boolean(report), files };
   return { run, report };
 }
 

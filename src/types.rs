@@ -284,6 +284,8 @@ pub struct Trace {
 pub struct Session {
     pub schema_version: u32,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motor_uuid: Option<[u8; 8]>,
     pub config: Config,
     pub traces: Vec<Trace>,
     pub complete: bool,

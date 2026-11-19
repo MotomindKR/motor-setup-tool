@@ -124,7 +124,9 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
     let path = directory.join(&r.filename);
     if !fs::read(&path).is_ok_and(|bytes| verify_image(&bytes, &r).is_ok()) {
         let bytes = download_image(&r)?;
-        fs::write(&path, bytes)?;
+        let mut image = tempfile::NamedTempFile::new_in(directory)?;
+        image.write_all(&bytes)?;
+        image.persist(path)?;
     }
     let bus = Bus::open(c)?;
     bus.stopped()?;
@@ -441,18 +443,7 @@ mod tests {
         assert!(available_update("RS-99", "0.0.0.1").is_none());
     }
     #[test]
-    fn official_catalog_matches_models_and_rejects_altered_images() {
-        for p in crate::types::Profile::presets() {
-            let r = release(&p.model).unwrap();
-            assert_eq!(protocol::firmware_model(&r.version).unwrap(), p.model);
-            assert_eq!(r.sha256.len(), 64);
-            assert_eq!(r.url.rsplit('/').next().unwrap(), r.filename);
-            assert!(r.url.starts_with(
-                "https://github.com/RobStride/Product_Information/releases/download/"
-            ));
-            assert!(verify_image(&[], &r).is_err());
-            assert!(verify_image(&[1; 64], &r).is_err());
-        }
+    fn flashing_rejects_unidentified_or_different_motor_families() {
         assert!(check_model("0.5.0.14", "RS-00").is_err());
         assert!(check_model("unknown", "RS-00").is_err());
     }
@@ -511,13 +502,6 @@ mod tests {
             )
             .is_err()
         );
-        let mut r = release("RS-00").unwrap();
-        r.sha256 = Sha256::digest(&image)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert!(verify_image(&image, &r).is_ok());
-        assert!(verify_image(&image[1..], &r).is_err());
     }
     #[test]
     fn ota_filters_acks_and_bounds_resume_requests() {

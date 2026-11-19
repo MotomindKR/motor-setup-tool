@@ -11,12 +11,31 @@ pub fn analyze(dir: &Path, cancel: &AtomicBool, progress: impl Fn(WorkProgress))
     recording
         .try_lock()
         .context("Cannot lock session.json for refitting")?;
-    let session: Session =
+    let mut session: Session =
         serde_json::from_reader(io::BufReader::new(&recording)).context("Invalid session.json")?;
     anyhow::ensure!(
         session.source == "hardware",
         "Choose a real motor recording; synthetic sessions are no longer supported"
     );
+    let metadata = dir.join("hardware.json");
+    let hardware: serde_json::Value = if metadata.try_exists()? {
+        bridge::read_json(&metadata)?
+    } else {
+        serde_json::Value::Null
+    };
+    let hardware_uuid: Option<[u8; 8]> = match &hardware["uuid"] {
+        serde_json::Value::String(hex) => {
+            Some(crate::protocol::parse_hex(hex, "UUID in hardware.json")?)
+        }
+        value => serde_json::from_value(value.clone()).context("Invalid UUID in hardware.json")?,
+    };
+    if let (Some(recorded), Some(sidecar)) = (session.motor_uuid, hardware_uuid) {
+        anyhow::ensure!(
+            recorded == sidecar,
+            "Actuator UUID differs between session.json and hardware.json"
+        );
+    }
+    session.motor_uuid = session.motor_uuid.or(hardware_uuid);
     fit::validate(&session)?;
     let fitted = fit::identify(
         &session.traces[0],
@@ -24,7 +43,7 @@ pub fn analyze(dir: &Path, cancel: &AtomicBool, progress: impl Fn(WorkProgress))
         cancel,
         &progress,
     )?;
-    finish(&session, fitted, dir, cancel, &progress)
+    finish(&session, &hardware, fitted, dir, cancel, &progress)
 }
 pub fn write_plan(c: &Config, dir: &Path) -> Result<()> {
     bridge::write_json(
@@ -41,6 +60,7 @@ pub fn write_plan(c: &Config, dir: &Path) -> Result<()> {
 }
 fn finish(
     session: &Session,
+    hardware: &serde_json::Value,
     fit: fit::Fit,
     dir: &Path,
     cancel: &AtomicBool,
@@ -67,11 +87,6 @@ fn finish(
     } else {
         "Custom/older wire ranges: these differ from the official model manual.".into()
     });
-    let hardware: serde_json::Value = if dir.join("hardware.json").exists() {
-        bridge::read_json(&dir.join("hardware.json"))?
-    } else {
-        serde_json::Value::Null
-    };
     warnings.push(format!(
         "Recorded motor firmware version: {}",
         hardware["firmware_version"].as_str().unwrap_or("unknown")
@@ -156,9 +171,7 @@ fn finish(
     let report = Report {
         source: session.source.clone(),
         motor_id: session.config.motor_id,
-        motor_uuid: hardware
-            .get("uuid")
-            .and_then(|uuid| serde_json::from_value(uuid.clone()).ok()),
+        motor_uuid: session.motor_uuid,
         reference_angle_rad: session.config.reference_angle_rad,
         model: session.config.profile.model.clone(),
         fitted: fitted.clone(),
@@ -315,12 +328,38 @@ mod tests {
             Session {
                 schema_version: 1,
                 source: "demo".into(),
+                motor_uuid: None,
                 config: c,
                 complete: true,
                 traces,
             },
             truth,
         )
+    }
+    #[test]
+    fn standalone_recording_retains_identity_and_rejects_mixed_run_files() {
+        let (mut session, _) = fixture();
+        session.source = "hardware".into();
+        session.motor_uuid = Some([1; 8]);
+        let run = tempfile::tempdir().unwrap();
+        let dir = run.path();
+        bridge::write_json(&dir.join("session.json"), &session).unwrap();
+        let refit = || analyze(dir, &AtomicBool::new(false), |_| {});
+        assert_eq!(refit().unwrap().motor_uuid, session.motor_uuid);
+
+        let sidecar_uuid = [2u8; 8];
+        bridge::write_json(
+            &dir.join("hardware.json"),
+            &serde_json::json!({"uuid": sidecar_uuid}),
+        )
+        .unwrap();
+        assert!(refit().unwrap_err().to_string().contains("UUID differs"));
+        let prior: Report = bridge::read_json(&dir.join("report.json")).unwrap();
+        assert_eq!(prior.motor_uuid, session.motor_uuid);
+
+        session.motor_uuid = None;
+        bridge::write_json(&dir.join("session.json"), &session).unwrap();
+        assert_eq!(refit().unwrap().motor_uuid, Some(sidecar_uuid));
     }
     #[test]
     fn identify_recovers_hidden_parameters_and_validates_unseen_motion() {
@@ -463,7 +502,15 @@ mod tests {
             condition: 5.,
             diagnostics: FitDiagnostics::default(),
         };
-        let report = finish(&s, fit, dir, &AtomicBool::new(false), &|_| {}).unwrap();
+        let report = finish(
+            &s,
+            &serde_json::Value::Null,
+            fit,
+            dir,
+            &AtomicBool::new(false),
+            &|_| {},
+        )
+        .unwrap();
         assert!(!report.accepted);
         assert!(!dir.join("calibration.json").exists());
         assert!(dir.join("candidate.xml").exists());
@@ -480,9 +527,16 @@ mod tests {
             diagnostics: FitDiagnostics::default(),
         };
         let cancel = AtomicBool::new(false);
-        let result = finish(&session, fit, run.path(), &cancel, &|_| {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
+        let result = finish(
+            &session,
+            &serde_json::Value::Null,
+            fit,
+            run.path(),
+            &cancel,
+            &|_| {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            },
+        );
         assert!(result.unwrap_err().is::<crate::cancel::Cancelled>());
         assert_eq!(
             fs::read(run.path().join("replay_wrapper.py")).unwrap(),
