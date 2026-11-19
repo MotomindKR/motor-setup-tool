@@ -226,6 +226,37 @@ test("adapter removal clears the motor and blocks further motor commands", async
     false,
   );
 });
+test("a failed USB enumeration cannot keep a removed SocketCAN motor ready", async t => {
+  const ctx = await setup(t);
+  await ctx.connect();
+  ctx.actions.review(true);
+  const run = ctx.bridge.run;
+  ctx.bridge.run = (op, params) => {
+    if (op === "interfaces") return [];
+    if (op === "usbAdapters") throw new Error("USB enumeration failed");
+    return run(op, params);
+  };
+  await ctx.actions.refreshInterfaces();
+  assert.equal(ctx.flags().calibrate, false);
+  assert.equal(ctx.getSnapshot().motor, null);
+  assert.match(ctx.getSnapshot().notice.message, /USB enumeration failed/);
+});
+test("a SocketCAN enumeration failure leaves an available USB motor usable", async t => {
+  const ctx = await setup(t);
+  const run = ctx.bridge.run;
+  ctx.bridge.run = (op, params) => {
+    if (op === "interfaces") throw new Error("SocketCAN enumeration failed");
+    if (op === "usbAdapters") return [usbAdapter];
+    return run(op, params);
+  };
+  await ctx.actions.refreshInterfaces();
+  assert.equal(selectedCan(ctx.getSnapshot()), usbAdapter.id);
+  await ctx.connect();
+  ctx.actions.review(true);
+  await ctx.actions.refreshInterfaces();
+  assert.equal(ctx.flags().calibrate, true);
+  assert.match(ctx.getSnapshot().notice.message, /SocketCAN enumeration failed/);
+});
 test("adapter refresh blocks connection edits throughout enumeration", async (t) => {
   const ctx = await setup(t);
   await ctx.connect();

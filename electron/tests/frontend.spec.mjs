@@ -552,6 +552,51 @@ test("number fields show short decimals and retain the precise preset", async ({
   ).toBeDisabled();
 });
 
+test.describe("editing localized travel limits", () => {
+  test.use({ locale: "de-DE" });
+
+  test("only accepted numeric edits can authorize calibration", async ({ page }) => {
+    await connect(page);
+    const travel = page.getByLabel("Travel limit");
+    const review = page.getByRole("checkbox", { name: "Motor secured · limits reviewed" });
+    const start = page.getByRole("button", { name: "Start calibration", exact: true });
+    const paste = text => travel.evaluate((input, text) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+    }, text);
+    await review.check();
+    await expect(start).toBeEnabled();
+
+    await travel.fill("invalid");
+    await travel.selectText();
+    await paste("invalid");
+    await expect(travel).toHaveValue("3");
+    await expect(review).toBeChecked();
+    await travel.fill(",");
+    await expect(travel).toHaveValue(",");
+    await expect(review).not.toBeChecked();
+    await travel.press("Tab");
+    await expect(page.getByText("Fill in all calibration settings.")).toBeVisible();
+    await review.check();
+    await expect(start).toBeDisabled();
+
+    await travel.fill("");
+    await travel.pressSequentially(",5");
+    await travel.press("Tab");
+    await expect(travel).toHaveValue("0,5");
+    await travel.selectText();
+    await paste("2,5");
+    await expect(travel).toHaveValue("2,5");
+    await review.check();
+    await start.click();
+    const limit = await page.evaluate(() =>
+      window.testMotor.calls.find((call) => call.operation === "calibrate").params.config.travel_limit
+    );
+    expect(limit).toBe(2.5);
+  });
+});
+
 test("calibration keeps advanced options and motion preview out of the main flow", async ({
   page,
 }, info) => {

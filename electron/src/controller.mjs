@@ -347,8 +347,15 @@ export function createController(bridge, env = {}) {
     const hadMotor = Boolean(s.motor);
     set({ refreshingAdapters: true });
     try {
-      const interfaces = await run("interfaces");
-      const usbAdapters = (await run("usbAdapters")).filter(
+      const errors = [];
+      const unavailable = (error) => {
+        errors.push(error);
+        return [];
+      };
+      const interfaces = bridge.platform === "linux"
+        ? await run("interfaces").catch(unavailable)
+        : [];
+      const usbAdapters = (await run("usbAdapters").catch(unavailable)).filter(
         (a) =>
           typeof a.id === "string" &&
           /^gsusb:(?:[0-9a-f]{2}){1,256}:[1-9][0-9]{0,2}$/.test(a.id) &&
@@ -383,14 +390,21 @@ export function createController(bridge, env = {}) {
         interfaces,
         connection,
       };
-      if (
+      const unavailableTarget =
         selectedCan({ ...s, ...next }) !== previousTarget ||
-        !busReady({ ...s, ...next }, bridge.platform)
-      ) {
+        !busReady({ ...s, ...next }, bridge.platform);
+      if (unavailableTarget)
         resetMotor({ ...next, connectionOpen: true });
-        if (hadMotor)
-          notice("Adapter unavailable. Reconnect it, then scan.", true);
-      } else set(next);
+      else set(next);
+      const removed = unavailableTarget && hadMotor;
+      const messages = errors.map((error) => readableError(error.message));
+      if (removed)
+        messages.unshift("Adapter unavailable. Reconnect it, then scan.");
+      if (messages.length)
+        notice(
+          messages.join(" "),
+          removed || errors.some((error) => !(error instanceof OperationCancelled)),
+        );
     } catch (error) {
       reportError(error);
     } finally {

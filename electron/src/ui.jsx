@@ -1,4 +1,4 @@
-import React, { useId } from "react";
+import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { inputNumberFormat } from "./format.mjs";
 import { Button } from "@motomindkr/ui/components/button";
 import {
@@ -85,11 +85,20 @@ export function NumericInput({
   significantDigits,
   ...props
 }) {
+  const input = useRef(null);
+  const [unparsedText, setUnparsedText] = useState(null);
+  useLayoutEffect(() => {
+    if (unparsedText === null) return;
+    // NumberField can display a partial entry such as "." without emitting a value.
+    if (input.current.value === unparsedText) onValueChange("");
+    setUnparsedText(null);
+  }, [unparsedText, onValueChange]);
   return (
     <NumberField
       data-slot="number-field"
       value={value === "" || value == null ? null : Number(value)}
       onValueChange={(next, details) => {
+        setUnparsedText(null);
         // Display rounding must not rewrite a valid numeric value on blur.
         const raw = value === "" || value == null ? null : Number(value);
         if (
@@ -110,7 +119,13 @@ export function NumericInput({
       format={inputNumberFormat({ step, min, significantDigits })}
     >
       <NumberFieldGroup>
-        <NumberFieldInput id={id} placeholder={placeholder} {...props} />
+        <NumberFieldInput
+          id={id}
+          placeholder={placeholder}
+          {...props}
+          ref={input}
+          onChangeCapture={event => setUnparsedText(event.currentTarget.value)}
+        />
       </NumberFieldGroup>
     </NumberField>
   );
