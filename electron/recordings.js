@@ -33,22 +33,40 @@ function actuatorUuid(value) {
   return typeof value === 'string' && /^[a-fA-F0-9]{16}$/.test(value) ? value.toUpperCase() : null;
 }
 
-async function readRun(directory) {
+const reportSummaries = new Map();
+
+async function readMetadata(directory, file, limit) {
+  if (file.stat.size > limit) throw new Error(`${file.name} is too large`);
+  return json(fileChunks(directory, file));
+}
+
+async function readReport(directory, full) {
+  const file = await regularFile(directory, 'report.json');
+  const { dev, ino, ctimeMs, size, mtimeMs } = file.stat;
+  const revision = [dev, ino, ctimeMs, size, mtimeMs].join(':');
+  const cached = reportSummaries.get(directory);
+  if (!full && cached?.revision === revision) return cached.summary;
+  const report = await readMetadata(directory, file, 32_000_000);
+  if (report?.source !== 'hardware' || !Array.isArray(report.replays)) throw new Error('Select a real motor recording');
+  const { model, motor_id, motor_uuid } = report;
+  const summary = { model, motor_id, motor_uuid };
+  reportSummaries.set(directory, { revision, summary });
+  return full ? report : summary;
+}
+
+async function readRun(directory, full = false) {
   if (typeof directory !== 'string' || !path.isAbsolute(directory) || path.dirname(directory) === directory) throw new Error('Select a calibration run');
   const stat = await fs.lstat(directory);
   if (!stat.isDirectory()) throw new Error('Select a calibration folder, not a link');
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const files = entries.filter(entry => entry.isFile() && ARTIFACTS.includes(entry.name)).map(entry => entry.name);
-  async function metadata(name, limit) {
+  async function metadata(name) {
     if (!files.includes(name)) return null;
-    const file = await regularFile(directory, name);
-    if (file.stat.size > limit) throw new Error(`${name} is too large`);
-    return json(fileChunks(directory, file));
+    return readMetadata(directory, await regularFile(directory, name), 32_768);
   }
-  const report = await metadata('report.json', 32_000_000);
-  const config = await metadata('config.json', 32_768);
-  const hardware = await metadata('hardware.json', 32_768);
-  if (report && (report.source !== 'hardware' || !Array.isArray(report.replays))) throw new Error('Select a real motor recording');
+  const report = files.includes('report.json') ? await readReport(directory, full) : null;
+  const config = await metadata('config.json');
+  const hardware = await metadata('hardware.json');
   const model = config?.profile?.model || report?.model;
   const motorId = config?.motor_id ?? report?.motor_id;
   if (typeof model !== 'string' || !Object.hasOwn(motorModels, model) || !Number.isInteger(motorId) || motorId < 1 || motorId > 254) throw new Error('Folder does not contain a calibration run');
@@ -63,7 +81,7 @@ async function inspectRun(directory) {
 }
 
 async function loadRun(directory, { allowIncomplete = false } = {}) {
-  const { run, report } = await readRun(directory);
+  const { run, report } = await readRun(directory, true);
   if (!report && !allowIncomplete) throw new Error('This run has no completed report. You can still download or delete its files.');
   return { directory, report, files: run.files, uuid: run.uuid };
 }
@@ -148,6 +166,7 @@ async function deleteRun(directory) {
   for (const name of ordered) await fs.unlink(path.join(directory, name));
   try { await fs.rmdir(directory); }
   catch (error) { if (error.code !== 'ENOTEMPTY' && error.code !== 'EEXIST') throw error; }
+  reportSummaries.delete(directory);
   return { directory };
 }
 

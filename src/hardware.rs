@@ -30,13 +30,19 @@ enum BusEvent {
     Frame(WireFrame),
 }
 
-fn drain_queue(mut next: impl FnMut() -> Result<BusEvent>) -> Result<()> {
-    for _ in 0..4096 {
-        if matches!(next()?, BusEvent::Empty) {
-            return Ok(());
+/// Returns true only when the transport reports an empty queue.
+fn drain_frames(
+    events: impl Iterator<Item = Result<BusEvent>>,
+    mut visit: impl FnMut(WireFrame) -> Result<()>,
+) -> Result<bool> {
+    for event in events {
+        match event? {
+            BusEvent::Empty => return Ok(true),
+            BusEvent::Filtered => {}
+            BusEvent::Frame(frame) => visit(frame)?,
         }
     }
-    anyhow::bail!("CAN receive queue did not drain before the next request")
+    Ok(false)
 }
 
 pub struct Bus {
@@ -461,7 +467,11 @@ impl Bus {
         }
     }
     pub(crate) fn flush(&self) -> Result<()> {
-        drain_queue(|| self.next_event())
+        ensure!(
+            drain_frames((0..4096).map(|_| self.next_event()), |_| Ok(()))?,
+            "CAN receive queue did not drain before the next request"
+        );
+        Ok(())
     }
     pub(crate) fn wait_for<T>(
         &self,
@@ -470,13 +480,27 @@ impl Bus {
     ) -> Result<Option<T>> {
         let end = Instant::now() + timeout;
         while Instant::now() < end {
-            if let Some(value) = self.receive()?.and_then(&decode) {
-                return Ok(Some(value));
+            match self.next_event()? {
+                BusEvent::Frame(frame) => {
+                    if let Some(value) = decode(frame) {
+                        return Ok(Some(value));
+                    }
+                }
+                BusEvent::Filtered => {}
+                BusEvent::Empty => thread::sleep(Duration::from_micros(200)),
             }
-            thread::sleep(Duration::from_micros(200));
         }
         Ok(None)
     }
+    fn verify_uuid(&self, expected: [u8; 8]) -> Result<()> {
+        let actual = self.ping(self.config.motor_id, Duration::from_millis(100))?;
+        ensure!(
+            actual == expected,
+            "Motor UUID at this ID changed; scan again"
+        );
+        Ok(())
+    }
+
     pub(crate) fn ping(&self, id: u8, timeout: Duration) -> Result<[u8; 8]> {
         self.probe(id, timeout)?
             .context("No identity response before CAN deadline")
@@ -1057,9 +1081,10 @@ pub fn scan(
     }
     Ok(found)
 }
-pub fn set_zero(c: &Config) -> Result<()> {
+pub fn set_zero(c: &Config, uuid: [u8; 8]) -> Result<()> {
     let bus = Bus::open(c)?;
     bus.stopped()?;
+    bus.verify_uuid(uuid)?;
     let mut f = protocol::frame(6, c.host_id as u16, c.motor_id);
     f.data[0] = 1;
     bus.send(f)?;
@@ -1093,14 +1118,14 @@ fn check_firmware_model(c: &Config, version: Option<&str>) -> Result<()> {
     );
     Ok(())
 }
-pub fn change_id(c: &Config, new_id: u8) -> Result<()> {
+pub fn change_id(c: &Config, uuid: [u8; 8], new_id: u8) -> Result<()> {
     ensure!(
         (1..=254).contains(&new_id) && new_id != c.motor_id && new_id != c.host_id,
         "Choose an unused ID from 1–254, different from host and current ID"
     );
     let bus = Bus::open(c)?;
     bus.stopped()?;
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
+    bus.verify_uuid(uuid)?;
     // Several probes reduce the chance of overlooking an occupied address.
     for _ in 0..3 {
         ensure!(
@@ -1143,8 +1168,24 @@ impl Drop for StopGuard<'_> {
     }
 }
 
+fn finish_segment(
+    session: &mut Session,
+    trace: Trace,
+    capture: Result<()>,
+    stop: Result<()>,
+) -> Result<()> {
+    session.traces.push(trace);
+    match (capture, stop) {
+        (Err(capture), Err(stop)) => {
+            Err(stop.context(format!("Motor stop command also failed after {capture:#}")))
+        }
+        (capture, stop) => capture.and(stop),
+    }
+}
+
 pub fn acquire(
     c: &Config,
+    uuid: [u8; 8],
     dir: &Path,
     cancel: &AtomicBool,
     progress: impl Fn(WorkProgress),
@@ -1153,7 +1194,7 @@ pub fn acquire(
     progress(WorkProgress::recording(0., "Checking motor and watchdog"));
     crate::pipeline::write_plan(c, dir)?;
     let bus = Bus::open(c)?;
-    let _guard = StopGuard(&bus);
+    let guard = StopGuard(&bus);
     let initial = bus
         .stopped()
         .context("Motor did not answer the initial stop request")?;
@@ -1162,7 +1203,7 @@ pub fn acquire(
         initial.temperature < c.temperature_limit,
         "Motor is too hot"
     );
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
+    bus.verify_uuid(uuid)?;
     let firmware = bus.try_firmware_version()?;
     bridge::write_json(
         &dir.join("hardware.json"),
@@ -1213,6 +1254,7 @@ pub fn acquire(
         traces: Vec::new(),
         complete: false,
     };
+    let mut rejected_feedback = None;
     let outcome = (|| -> Result<()> {
         for validation in [false, true] {
             let name = if validation { "validation" } else { "training" };
@@ -1260,7 +1302,6 @@ pub fn acquire(
             let mut next = start;
             let mut last_feedback = start;
             let mut last_progress = start;
-            let mut rejected_feedback = None;
             let mut exciter = crate::experiment::Exciter::new(c, validation);
             let result = (|| -> Result<()> {
                 while start.elapsed().as_secs_f64() < duration {
@@ -1287,15 +1328,10 @@ pub fn acquire(
                         next += Duration::from_secs_f64(1. / c.sample_hz);
                     }
                     // Bounded receive drain keeps cancellation and deadline checks responsive.
-                    let mut drained = false;
-                    for _ in 0..128 {
-                        if Instant::now() >= next {
-                            break;
-                        }
-                        let Some(f) = bus.receive()? else {
-                            drained = true;
-                            break;
-                        };
+                    let events = (0..128)
+                        .take_while(|_| Instant::now() < next)
+                        .map(|_| bus.next_event());
+                    let drained = drain_frames(events, |f| {
                         if let Some(fb) = protocol::feedback(&f, c.motor_id, c.host_id, &c.profile)
                         {
                             let received_at = Instant::now();
@@ -1335,7 +1371,8 @@ pub fn acquire(
                                 temperature: fb.temperature,
                             });
                         }
-                    }
+                        Ok(())
+                    })?;
                     if drained {
                         encoder.finish_batch();
                     }
@@ -1360,13 +1397,10 @@ pub fn acquire(
                 }
                 Ok(())
             })();
-            bus.stop()?;
-            if let Some(feedback) = rejected_feedback {
-                let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
+            finish_segment(&mut session, trace, result, bus.stop())?;
+            if !validation {
+                bridge::write_json(&dir.join("session.json"), &session)?;
             }
-            session.traces.push(trace);
-            bridge::write_json(&dir.join("session.json"), &session)?;
-            result?;
             progress(WorkProgress::recording(
                 ((recorded + duration) / total) as f32,
                 format!("{name} recorded"),
@@ -1374,6 +1408,11 @@ pub fn acquire(
         }
         Ok(())
     })();
+    drop(guard);
+    drop(bus);
+    if let Some(feedback) = rejected_feedback {
+        let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
+    }
     session.complete = outcome.is_ok();
     bridge::write_json(&dir.join("session.json"), &session)?;
     outcome
@@ -1383,21 +1422,67 @@ pub fn acquire(
 mod diagnostics_tests {
     use super::*;
     #[test]
-    fn flushing_passes_filtered_events_and_preserves_transport_errors() {
-        let mut events = [
-            BusEvent::Filtered,
-            BusEvent::Frame(protocol::frame(2, 0, 1)),
-            BusEvent::Empty,
-        ]
-        .into_iter();
-        drain_queue(|| Ok(events.next().unwrap())).unwrap();
-        assert!(events.next().is_none());
+    fn failed_stop_preserves_the_partial_segment_and_is_reported_even_after_cancellation() {
+        let mut session = Session {
+            schema_version: 1,
+            source: "hardware".into(),
+            config: Config::default(),
+            traces: vec![],
+            complete: false,
+        };
+        let trace = Trace {
+            name: "training".into(),
+            commands: vec![Command { t: 0., torque: 0. }],
+            samples: vec![Sample {
+                t: 0.,
+                position: 0.,
+                velocity: 0.,
+                reported_torque: 0.,
+                temperature: 25.,
+            }],
+        };
+        let error = finish_segment(
+            &mut session,
+            trace,
+            Err(crate::cancel::Cancelled.into()),
+            Err(anyhow::anyhow!("USB disconnected")),
+        )
+        .unwrap_err();
+        assert!(!error.is::<crate::cancel::Cancelled>());
+        assert!(format!("{error:#}").contains("USB disconnected"));
+        assert_eq!(session.traces[0].samples.len(), 1);
+        assert_eq!(session.traces[0].commands.len(), 1);
+    }
 
-        let mut events = [Ok(BusEvent::Filtered), Err(anyhow::anyhow!("bus off"))].into_iter();
+    #[test]
+    fn filtered_events_and_poll_limits_do_not_end_a_feedback_batch() {
+        let frame = |position: u8| {
+            let mut frame = protocol::frame(2, 0, 1);
+            frame.data[0] = position;
+            BusEvent::Frame(frame)
+        };
+        let mut events = [frame(23), BusEvent::Filtered, frame(37), BusEvent::Empty]
+            .into_iter()
+            .map(Ok);
+        let mut encoder = EncoderTracker::new(0., 4. * std::f64::consts::PI, 10.);
+        let mut position = 0.;
+        for expected_empty in [false, true] {
+            let empty = drain_frames(events.by_ref().take(2), |f| {
+                position =
+                    encoder.update_buffered(f.data[0] as f64 / 100., Duration::from_millis(40))?;
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(empty, expected_empty);
+            if empty {
+                encoder.finish_batch();
+            }
+        }
+        assert!((position - 0.37).abs() < 1e-12);
+
+        let events = [Ok(BusEvent::Filtered), Err(anyhow::anyhow!("bus off"))].into_iter();
         assert_eq!(
-            drain_queue(|| events.next().unwrap())
-                .unwrap_err()
-                .to_string(),
+            drain_frames(events, |_| Ok(())).unwrap_err().to_string(),
             "bus off"
         );
     }

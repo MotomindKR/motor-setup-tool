@@ -995,10 +995,6 @@ html[data-platform="darwin"] .app-header {
 .calibration-start > div {
   min-width: 0;
 }
-.calibration-result-action {
-  display: flex;
-  justify-content: flex-end;
-}
 .motion-preview {
   padding: 4px 16px;
   border: 1px solid var(--border);

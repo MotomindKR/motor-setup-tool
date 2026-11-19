@@ -324,6 +324,19 @@ test("live monitoring starts disabled, jog releases, and navigation stops monito
   await expect
     .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
     .toBe(0);
+  const reverse = page.getByRole("button", { name: "Jog −", exact: true });
+  const disable = page.getByRole("button", { name: "Disable motor", exact: true });
+  await reverse.focus();
+  await page.keyboard.down("Space");
+  await expect
+    .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
+    .toBe(-1);
+  await page.keyboard.press("Shift+Tab");
+  await expect(disable).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
+    .toBe(0);
+  await page.keyboard.up("Space");
   await page
     .getByRole("button", { name: "Disable motor", exact: true })
     .click();
@@ -387,6 +400,27 @@ test("recordings show identity, download individual files, and require confirmat
           .length,
     ),
   ).toBe(1);
+});
+
+test("recording charts retain short torque spikes in long traces", async ({ page }) => {
+  const recording = structuredClone(fixture.report);
+  const validation = recording.replays.find(trace => trace.name === "validation");
+  validation.command_t = Array.from({ length: 5000 }, (_, i) => i / 1000);
+  validation.command_torque = Array(5000).fill(0);
+  validation.command_torque[100] = 40;
+  validation.command_torque[101] = -40;
+  await page.evaluate(report => {
+    const load = window.motorApp.pickRun;
+    window.motorApp.pickRun = async () => ({ ...await load(), report });
+  }, recording);
+  await navigate(page, "Files");
+  await page.getByRole("button", { name: "Open recording", exact: true }).click();
+  await page.getByRole("button", { name: "Torque", exact: true }).click();
+  const chart = page.getByRole("img", { name: /Torque in Nm/ });
+  await expect.poll(async () => {
+    const ticks = (await chart.locator("text").allTextContents()).map(Number);
+    return Math.min(...ticks) <= -30 && Math.max(...ticks) >= 30;
+  }).toBe(true);
 });
 
 test("appearance persists and saved recordings work without hardware", async ({
@@ -508,9 +542,8 @@ test("number fields show short decimals and retain the precise preset", async ({
   );
   expect(config.speed_limit).toBe(fixture.preset.speed_limit);
   expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
-  await page
-    .getByRole("button", { name: "New calibration", exact: true })
-    .click();
+  await expect(page.getByRole("main", { name: "Recordings", exact: true })).toBeVisible();
+  await navigate(page, "Calibrate");
   await expect(
     page.getByRole("checkbox", { name: "Motor secured · limits reviewed" }),
   ).not.toBeChecked();

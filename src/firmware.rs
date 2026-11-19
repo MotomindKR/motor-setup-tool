@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
-    path::PathBuf,
     thread,
     time::{Duration, Instant},
 };
@@ -79,13 +78,14 @@ fn download_image(r: &Release) -> Result<Vec<u8>> {
     verify_image(&bytes, r)?;
     Ok(bytes)
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Prepared {
-    pub release: Release,
-    pub path: PathBuf,
+    pub model: String,
+    pub version: String,
     pub current_version: String,
     pub uuid: [u8; 8],
     pub interface: String,
+    #[serde(rename = "id")]
     pub motor_id: u8,
     pub host_id: u8,
 }
@@ -94,7 +94,16 @@ impl Prepared {
         self.interface == c.interface
             && self.motor_id == c.motor_id
             && self.host_id == c.host_id
-            && self.release.model == c.profile.model
+            && self.model == c.profile.model
+    }
+
+    fn verify_motor(&self, version: &str, uuid: [u8; 8]) -> Result<()> {
+        ensure!(uuid == self.uuid, "Motor UUID changed; update blocked");
+        ensure!(
+            version == self.current_version,
+            "Firmware changed since preparation; prepare again"
+        );
+        Ok(())
     }
 }
 fn check_model(version: &str, model: &str) -> Result<()> {
@@ -123,8 +132,8 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
     check_model(&current_version, &r.model)?;
     let uuid = bus.ping(c.motor_id, Duration::from_millis(200))?;
     Ok(Prepared {
-        release: r,
-        path,
+        model: r.model,
+        version: r.version,
         current_version,
         uuid,
         interface: c.interface.clone(),
@@ -204,7 +213,16 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
         "Motor selection changed; prepare firmware again"
     );
     let official = release(&c.profile.model)?;
-    let bytes = fs::read(&prepared.path)?;
+    ensure!(
+        official.version == prepared.version,
+        "Firmware release changed; prepare again"
+    );
+    let bytes = fs::read(
+        crate::paths::cache_dir()?
+            .join("firmware")
+            .join(&official.filename),
+    )
+    .context("Prepared firmware image is unavailable; prepare again")?;
     verify_image(&bytes, &official)?;
     let dir = bridge::new_run_dir()?;
     bridge::write_json(
@@ -230,14 +248,7 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
         }
         let version = bus.firmware_version()?;
         check_model(&version, &official.model)?;
-        ensure!(
-            version == prepared.current_version,
-            "Firmware changed since preparation; prepare again"
-        );
-        ensure!(
-            bus.ping(c.motor_id, Duration::from_millis(200))? == prepared.uuid,
-            "Motor UUID changed; update blocked"
-        );
+        prepared.verify_motor(&version, bus.ping(c.motor_id, Duration::from_millis(200))?)?;
         let mut log = fs::File::create(dir.join("ota_ack.jsonl"))?;
         let mut exchange = |kind: u8, field: u16, payload: [u8; 8]| -> Result<(u8, [u8; 8])> {
             let mut frame = protocol::frame(kind, field, c.motor_id);
@@ -348,6 +359,32 @@ mod tests {
             stream.write_all(&body).unwrap();
         });
         (url, server)
+    }
+
+    #[test]
+    fn firmware_confirmation_remains_bound_to_the_reviewed_motor_and_version() {
+        let review = Prepared {
+            model: "RS-00".into(),
+            version: "0.0.3.32".into(),
+            current_version: "0.0.3.30".into(),
+            uuid: [1; 8],
+            interface: "can0".into(),
+            motor_id: 7,
+            host_id: 253,
+        };
+        let confirmed: Prepared =
+            serde_json::from_str(&serde_json::to_string(&review).unwrap()).unwrap();
+        assert!(
+            confirmed
+                .verify_motor(&review.current_version, review.uuid)
+                .is_ok()
+        );
+        assert!(
+            confirmed
+                .verify_motor(&review.current_version, [2; 8])
+                .is_err()
+        );
+        assert!(confirmed.verify_motor("0.0.3.31", review.uuid).is_err());
     }
 
     #[test]

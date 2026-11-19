@@ -1,4 +1,23 @@
 use crate::types::Profile;
+use anyhow::{Context, Result, ensure};
+
+pub(crate) fn parse_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
+    ensure!(
+        value.len() == N * 2,
+        "{label} must contain {} hex digits",
+        N * 2
+    );
+    ensure!(
+        value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{label} contains invalid hex"
+    );
+    let mut bytes = [0; N];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16)
+            .with_context(|| format!("{label} contains invalid hex"))?;
+    }
+    Ok(bytes)
+}
 
 #[derive(Clone, Debug)]
 pub struct WireFrame {

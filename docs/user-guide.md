@@ -76,9 +76,9 @@ CAN ID. An unknown or unreadable firmware version blocks calibration.
 3. Wait for recording, fitting, and validation to finish. The default recording
    contains 40 seconds of training and 20 seconds of separate validation.
 
-**Motion preview** is optional. It shows the requested speed and torque bursts,
-not a prediction of the response. After reviewing results, select **New calibration**
-to run another test; review is required again.
+**Motion preview** shows the requested speed and torque bursts. Completed runs
+open in **Files**. To run another calibration, return to **Calibrate** and review
+the limits again.
 
 The motion suite uses speed steps, sweeps, torque bursts, and coast-down.
 **Stop** cancels the job. Limits, communication errors, and motor faults also

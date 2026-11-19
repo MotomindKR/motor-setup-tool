@@ -93,7 +93,7 @@ export function controls(s, platform, now = performance.now()) {
     motor,
     manual,
     fresh,
-    calibrate: !s.report && !busy && motor && Boolean(s.preview) && s.reviewed,
+    calibrate: !busy && motor && Boolean(s.preview) && s.reviewed,
     monitor: motor && (Boolean(s.preview) || manual) && (!busy || manual),
     enable:
       manual &&
@@ -230,6 +230,7 @@ export function createController(bridge, env = {}) {
     can: selectedCan(s),
     hostId: s.connection.hostId,
     id: s.motor?.id,
+    expectedUuid: uuidText(s.motor),
   });
   const flags = () => controls(s, bridge.platform, now());
   const buildConfig = () => {
@@ -555,31 +556,31 @@ export function createController(bridge, env = {}) {
       set({ manualStatus: value, lastStatusAt: now(), manualHistory: history });
     } else if (event.type === "error") notice(event.message, true);
   }
-  function openReport(result) {
-    set({
-      directory: result.directory,
-      report: result.report,
-      reportFiles: result.files,
-      reportUuid: result.uuid,
-      trace: "validation",
-      chart: "motion",
-    });
-  }
-  async function openRun(directory) {
-    if (flags().busy) return;
+  async function openRun(directory, showFiles = true) {
+    if (flags().busy) return false;
+    const tab = s.tab;
     set({ fileOperation: true });
     try {
       const result = directory
         ? await bridge.loadRun(directory)
         : await bridge.pickRun();
-      if (result) {
-        openReport(result);
-        set({ tab: "files", notice: null });
-        if (!directory) refreshRuns();
-        if (!result.report) notice("Incomplete run. Use its menu to download or delete the files.");
-      }
+      if (!result) return false;
+      set({
+        tab: showFiles && s.tab === tab ? "files" : s.tab,
+        directory: result.directory,
+        report: result.report,
+        reportFiles: result.files,
+        reportUuid: result.uuid,
+        trace: "validation",
+        chart: "motion",
+        notice: null,
+      });
+      if (!result.report) notice("Incomplete run. Use its menu to download or delete the files.");
+      if (!directory) refreshRuns();
+      return true;
     } catch (error) {
       reportError(error);
+      return false;
     } finally {
       set({ fileOperation: false });
     }
@@ -703,19 +704,20 @@ export function createController(bridge, env = {}) {
       try {
         const output = s.outputDirectory;
         const config = buildConfig();
-        set({ outputDirectory: null });
+        const reviewed = s.reviewed;
+        set({ outputDirectory: null, reviewed: false });
         const result = await run("calibrate", {
           ...target(),
-          reviewed: s.reviewed,
+          reviewed,
           config,
           output,
         });
-        openReport(await bridge.loadRun(result.directory));
-        notice(result.accepted ? "" : "Validation failed. Check the results.");
+        const opened = await openRun(result.directory, s.tab === "calibrate");
+        if (opened && !result.accepted) notice("Validation failed. Check the results.");
       } catch (error) {
         reportError(error);
       } finally {
-        refreshRuns();
+        if (s.tab === "files") refreshRuns();
       }
     },
     async monitor() {
@@ -879,8 +881,13 @@ export function createController(bridge, env = {}) {
     },
     async prepareFirmware() {
       if (flags().busy || !flags().motor) return;
+      const motor = s.motor;
+      set({ firmware: null, firmwareMessage: "" });
       try {
         const firmware = await run("firmwarePrepare", target());
+        if (s.motor !== motor) return;
+        if (firmware.id !== motor.id || firmware.model !== motor.model || uuidText(firmware) !== uuidText(motor))
+          throw new Error("The motor at this ID has changed. Scan again before updating firmware.");
         set({
           firmware,
           firmwareMessage: `Verified · installed ${firmware.current_version} → ${firmware.version}`,
@@ -899,19 +906,20 @@ export function createController(bridge, env = {}) {
         return;
       const motor = s.motor;
       const params = target();
+      const prepared = s.firmware;
       confirmAction(
         "Update motor firmware?",
         `Update ${motor.model} · ID ${motor.id} from ${s.firmware.current_version} to ${s.firmware.version}. Keep power and USB connected until the transfer finishes.`,
         async () => {
-          if (s.motor !== motor || flags().busy) return;
+          if (s.motor !== motor || s.firmware !== prepared || flags().busy) return;
           const result = await run("firmwareUpdate", {
             ...params,
+            prepared,
             confirmed: true,
           });
           if (
             result?.id !== motor.id ||
-            typeof result.firmware !== "string" ||
-            !result.firmware
+            result.firmware !== prepared.version
           )
             throw new Error("The installed firmware could not be verified.");
           if (
@@ -1029,14 +1037,9 @@ export function createController(bridge, env = {}) {
         async () => {
           if (s.directory !== directory || flags().busy) return;
           await run("analyze", { directory });
-          openReport(await bridge.loadRun(directory));
-          notice("Recording refitted.");
+          if (await openRun(directory, false)) notice("Recording refitted.");
         },
       );
-    },
-    newCalibration: () => {
-      if (!flags().busy)
-        set({ report: null, directory: null, reviewed: false, notice: null });
     },
     closeConfirmation: () => {
       confirmation = null;
@@ -1103,7 +1106,6 @@ export function createController(bridge, env = {}) {
       }
     }, 60);
     refreshInterfaces();
-    refreshRuns();
     return () => {
       revoke();
       disposed = true;

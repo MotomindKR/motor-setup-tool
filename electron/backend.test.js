@@ -14,11 +14,11 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.throws(() => argsFor('zero', { can: 'can0', id: 1 }), /Confirm/);
   assert.throws(() => argsFor('firmwareUpdate', { can: 'can0', id: 1 }), /Confirm/);
   assert.throws(() => argsFor('stop', { can: 'can0;touch /tmp/pwned', id: 1 }), /CAN interface/);
-  assert.throws(() => argsFor('setId', { can: 'can0', id: 1, newId: 255, confirmed: true }), /New motor ID/);
+  assert.throws(() => argsFor('setId', { can: 'can0', id: 1, expectedUuid: '0102030405060708', newId: 255, confirmed: true }), /New motor ID/);
   assert.throws(() => argsFor('plan', { model: 'RS-99' }), /Unknown motor/);
   assert.deepEqual(argsFor('scan', { can: 'can0', hostId: 253 }), ['scan', '--can', 'can0', '--host-id', '253']);
-  assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, reviewed: true, config: {} }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--config-stdin', '--yes']);
-  assert.deepEqual(argsFor('manual', { can: 'can0', id: 1, config: {} }), ['manual-session', '--can', 'can0', '--host-id', '253', '--id', '1']);
+  assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, expectedUuid: '0102030405060708', reviewed: true, config: {} }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--expected-uuid', '0102030405060708', '--config-stdin', '--yes']);
+  assert.deepEqual(argsFor('manual', { can: 'can0', id: 1, expectedUuid: '0102030405060708', config: {} }), ['manual-session', '--can', 'can0', '--host-id', '253', '--id', '1', '--expected-uuid', '0102030405060708']);
   assert.deepEqual(argsFor('firmwarePrepare', { can: 'can0', id: 1 }), ['firmware', 'prepare', '--can', 'can0', '--host-id', '253', '--id', '1']);
   assert.deepEqual(argsFor('canRestart', { can: 'can0' }), ['can', 'restart', 'can0', '--auth', 'polkit']);
   assert.deepEqual(argsFor('usbAdapters'), ['can', 'usb-list']);
@@ -32,7 +32,7 @@ test('hardware operations require explicit review and validated targets', () => 
   assert.throws(() => argsFor('scan', { can: 'gsusb:0:79' }), /CAN interface/);
   assert.throws(() => argsFor('scan', { can: 'gsusb:303033:999' }), /CAN interface/);
   assert.throws(() => argsFor('scan', { can: 'slcan:canable:921600:/dev/ttyUSB0' }), /CAN interface/);
-  assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, reviewed: true, config: {}, output: path.join(os.tmpdir(), 'new-calibration') }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--output', path.join(os.tmpdir(), 'new-calibration'), '--config-stdin', '--yes']);
+  assert.deepEqual(argsFor('calibrate', { can: 'can0', id: 1, expectedUuid: '0102030405060708', reviewed: true, config: {}, output: path.join(os.tmpdir(), 'new-calibration') }), ['calibrate', '--can', 'can0', '--host-id', '253', '--id', '1', '--expected-uuid', '0102030405060708', '--output', path.join(os.tmpdir(), 'new-calibration'), '--config-stdin', '--yes']);
 });
 
 test('persistent CAN aliases pass through the bridge while motion targets stay blocked', () => {

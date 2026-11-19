@@ -90,7 +90,7 @@ function RunMenu({ directory, files = [], a, disabled, compact = false }) {
   );
 }
 
-export function Report({ s, a, c }) {
+function Report({ s, a, c }) {
   const r = s.report;
   const replay = r.replays.find((item) => item.name === s.trace);
   const ref = Number(r.reference_angle_rad) || 0;

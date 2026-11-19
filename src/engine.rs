@@ -89,25 +89,32 @@ fn advance(
 }
 
 pub fn replay(trace: &Trace, p: &Parameters, cancel: &AtomicBool) -> Result<Vec<[f64; 2]>> {
-    ensure!(!trace.samples.is_empty(), "Empty trace");
+    replay_samples(&trace.commands, &trace.samples, p, cancel)
+}
+
+pub fn replay_samples(
+    commands: &[Command],
+    samples: &[Sample],
+    p: &Parameters,
+    cancel: &AtomicBool,
+) -> Result<Vec<[f64; 2]>> {
+    ensure!(!samples.is_empty(), "Empty trace");
     let mut d = data(p)?;
-    let initial = &trace.samples[0];
+    let initial = &samples[0];
     d.qpos_mut()[0] = initial.position;
     d.qvel_mut()[0] = initial.velocity;
     d.set_time(initial.t);
     d.forward();
-    let mut index = trace
-        .commands
-        .partition_point(|c| c.t + p.delay <= initial.t);
+    let mut index = commands.partition_point(|c| c.t + p.delay <= initial.t);
     let mut torque = if index == 0 {
         0.
     } else {
-        trace.commands[index - 1].torque
+        commands[index - 1].torque
     };
     let mut result = vec![[initial.position, initial.velocity]];
-    for s in &trace.samples[1..] {
+    for s in &samples[1..] {
         crate::cancel::check(cancel)?;
-        advance(&mut d, s.t, &trace.commands, p, &mut index, &mut torque);
+        advance(&mut d, s.t, commands, p, &mut index, &mut torque);
         ensure!(
             d.qpos()[0].is_finite() && d.qvel()[0].is_finite(),
             "Nonfinite simulation state"

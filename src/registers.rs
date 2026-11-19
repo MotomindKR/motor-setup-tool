@@ -193,24 +193,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02X}")).collect()
 }
 
-fn parse_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
-    ensure!(
-        value.len() == N * 2,
-        "{label} must contain {} hex digits",
-        N * 2
-    );
-    ensure!(
-        value.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "{label} contains invalid hex"
-    );
-    let mut bytes = [0; N];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16)
-            .with_context(|| format!("{label} contains invalid hex"))?;
-    }
-    Ok(bytes)
-}
-
 fn reading(index: u16, raw: [u8; 4], uuid: [u8; 8], save_acknowledged: bool) -> Result<Reading> {
     let value = register(index)?.decode(raw)?;
     Ok(Reading {
@@ -248,8 +230,8 @@ pub fn write(
         "Register 0x{index:04X} is protected or read-only in this editor"
     );
     let desired = item.encode(value)?;
-    let expected_uuid = parse_hex::<8>(uuid, "Motor UUID")?;
-    let expected = parse_hex::<4>(expected_raw, "Previous register value")?;
+    let expected_uuid = protocol::parse_hex::<8>(uuid, "Motor UUID")?;
+    let expected = protocol::parse_hex::<4>(expected_raw, "Previous register value")?;
     ensure!(
         !item.matches(desired, expected),
         "Value is unchanged; no save was sent"
@@ -346,9 +328,9 @@ mod tests {
 
     #[test]
     fn previous_values_require_exact_hex_length_and_ascii() {
-        assert!(parse_hex::<4>("0000803F", "value").is_ok());
-        assert!(parse_hex::<4>("0000803", "value").is_err());
-        assert!(parse_hex::<4>("é000000", "value").is_err());
-        assert!(parse_hex::<8>("0000803F", "uuid").is_err());
+        assert!(protocol::parse_hex::<4>("0000803F", "value").is_ok());
+        assert!(protocol::parse_hex::<4>("0000803", "value").is_err());
+        assert!(protocol::parse_hex::<4>("é000000", "value").is_err());
+        assert!(protocol::parse_hex::<8>("0000803F", "uuid").is_err());
     }
 }

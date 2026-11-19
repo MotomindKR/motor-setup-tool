@@ -35,10 +35,13 @@ function JogButton({ direction, disabled, a, children }) {
       onKeyDown={(e) => {
         if ([" ", "Enter"].includes(e.key) && !disabled) {
           e.preventDefault();
-          a.jog(direction);
+          if (!e.repeat) a.jog(direction);
         }
       }}
-      onKeyUp={release}
+      onKeyUp={(e) => {
+        if (e.key === " " || e.key === "Enter") release();
+      }}
+      onBlur={release}
       onContextMenu={(e) => e.preventDefault()}
     >
       {children}

@@ -181,6 +181,7 @@ export function installBridge(data) {
       if (operation === "firmwarePrepare")
         return {
           id: motor.id,
+          model: motor.model, uuid: motor.uuid, interface: params.can, host_id: Number(params.hostId),
           current_version: motor.firmware,
           version: "1.2.4",
         };

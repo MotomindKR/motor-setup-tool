@@ -76,7 +76,7 @@ async function setup(t, overrides = {}) {
       if (op === "plan") return { preset: structuredClone(preset), limits: {}, registers: [register] };
       if (op === "setId") return { previous_id: params.id, id: params.newId };
       if (op === "firmwarePrepare")
-        return { id: params.id, current_version: "1.2.3", version: "1.2.4" };
+        return { id: params.id, model: motor.model, uuid: motor.uuid, interface: params.can, host_id: Number(params.hostId), current_version: "1.2.3", version: "1.2.4" };
       if (op === "firmwareUpdate") return { id: params.id, firmware: "1.2.4" };
       if (op === "registerRead" || op === "registerWrite")
         return {
@@ -139,14 +139,17 @@ const feedback = {
   preparing: false,
 };
 
-test("startup and browsing send no motion or motor commands", async (t) => {
-  const ctx = await setup(t);
+test("startup and browsing send no motor commands and load recordings on demand", async (t) => {
+  let listed = 0;
+  const ctx = await setup(t, { listRuns: async () => { listed++; return []; } });
   assert.deepEqual(
     ctx.calls.map((c) => c.op),
     ["interfaces", "usbAdapters"],
   );
   await ctx.actions.setTab("test");
+  assert.equal(listed, 0);
   await ctx.actions.setTab("files");
+  assert.equal(listed, 1);
   assert.equal(ctx.intents.length, 0);
   assert.equal(ctx.calls.length, 2);
   assert.equal(ctx.flags().calibrate, false);
@@ -269,6 +272,22 @@ test("calibration requires a valid preview and explicit review; editing revokes 
   assert.ok(ctx.getSnapshot().report.accepted);
   assert.equal(ctx.getSnapshot().notice, null);
 });
+test("opening a saved recording keeps the selected motor ready for calibration", async t => {
+  const ctx = await setup(t);
+  await ctx.connect();
+  ctx.actions.review(true);
+  await ctx.actions.openRun("/recordings/old-motor");
+  await ctx.actions.setTab("calibrate");
+  assert.ok(ctx.flags().calibrate);
+  assert.equal(ctx.getSnapshot().motor.id, motor.id);
+  await ctx.actions.calibrate();
+  assert.equal(ctx.getSnapshot().tab, "files");
+  assert.equal(ctx.getSnapshot().directory, "/recordings/finished");
+  await ctx.actions.setTab("calibrate");
+  assert.equal(ctx.flags().calibrate, false);
+  assert.ok(!ctx.getSnapshot().reviewed);
+});
+
 test("outdated preview responses cannot authorize a changed configuration", async (t) => {
   const responses = [];
   const ctx = await setup(t, {
@@ -475,10 +494,11 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   await ctx.connect();
   await ctx.actions.prepareFirmware();
   let finish;
-  ctx.bridge.run = async () =>
-    new Promise((resolve) => {
-      finish = resolve;
-    });
+  const reviewed = ctx.getSnapshot().firmware;
+  ctx.bridge.run = async (_op, params) => {
+    assert.deepEqual(params.prepared, reviewed);
+    return new Promise(resolve => { finish = resolve; });
+  };
   let cancelled = false;
   ctx.bridge.cancel = async () => {
     cancelled = true;
@@ -497,6 +517,19 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   assert.equal(ctx.getSnapshot().motors[0].firmware, "1.2.4");
   assert.equal(ctx.getSnapshot().firmware, null);
   assert.equal(ctx.getSnapshot().reviewed, false);
+});
+
+test("preparing a replacement motor invalidates the earlier firmware review", async t => {
+  const ctx = await setup(t);
+  await ctx.connect();
+  await ctx.actions.prepareFirmware();
+  const reviewed = ctx.getSnapshot().firmware;
+  ctx.bridge.run = async () => ({ ...reviewed, uuid: Array(8).fill(0) });
+  await ctx.actions.prepareFirmware();
+  ctx.actions.updateFirmware();
+  assert.equal(ctx.getSnapshot().firmware, null);
+  assert.match(ctx.getSnapshot().notice.message, /motor at this ID has changed/);
+  assert.ok(!ctx.getSnapshot().confirmation);
 });
 
 test("verified ID changes keep the motor, limits, and reference selected without scanning", async (t) => {

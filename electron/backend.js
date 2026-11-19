@@ -39,6 +39,11 @@ function target(params) {
   return [...busArgs(params), '--id', integer(params.id, 'Motor ID')];
 }
 
+function selectedTarget(params) {
+  if (!/^[a-f0-9]{16}$/i.test(params.expectedUuid)) throw new Error('Scan and select a motor with a valid UUID');
+  return [...target(params), '--expected-uuid', params.expectedUuid];
+}
+
 function setupRegister(value, writable = false, model) {
   if (typeof model !== 'string' || !Object.hasOwn(motorModels, model)) throw new Error('Select a supported motor model');
   const index = Number(value);
@@ -69,7 +74,7 @@ function argsFor(operation, params = {}) {
       if (params.reviewed !== true) throw new Error('Review the motor limits and secure the motor first');
       if (!params.config || typeof params.config !== 'object') throw new Error('Calibration configuration missing');
       if (params.output != null && (typeof params.output !== 'string' || !path.isAbsolute(params.output))) throw new Error('Select a valid calibration folder');
-      return ['calibrate', ...target(params), ...(params.output ? ['--output', params.output] : []), '--config-stdin', '--yes'];
+      return ['calibrate', ...selectedTarget(params), ...(params.output ? ['--output', params.output] : []), '--config-stdin', '--yes'];
     }
     case 'analyze': {
       if (typeof params.directory !== 'string' || !path.isAbsolute(params.directory)) throw new Error('Select a saved run');
@@ -77,21 +82,23 @@ function argsFor(operation, params = {}) {
     }
     case 'manual': {
       if (!params.config || typeof params.config !== 'object') throw new Error('Manual configuration missing');
-      return ['manual-session', ...target(params)];
+      return ['manual-session', ...selectedTarget(params)];
     }
     case 'stop': return ['stop', ...target(params)];
     case 'zero': {
       if (params.confirmed !== true) throw new Error('Confirm the stationary motor first');
-      return ['zero', ...target(params), '--yes'];
+      return ['zero', ...selectedTarget(params), '--yes'];
     }
     case 'setId': {
       if (params.confirmed !== true) throw new Error('Confirm the ID change first');
-      return ['set-id', ...target(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
+      return ['set-id', ...selectedTarget(params), '--new-id', integer(params.newId, 'New motor ID'), '--yes'];
     }
     case 'firmwarePrepare': return ['firmware', 'prepare', ...target(params)];
     case 'firmwareUpdate': {
       if (params.confirmed !== true) throw new Error('Confirm firmware update and stable power first');
-      return ['firmware', 'update', ...target(params), '--yes'];
+      const prepared = JSON.stringify(params.prepared);
+      if (!prepared || prepared.length > 4096) throw new Error('Prepare firmware for the selected motor first');
+      return ['firmware', 'update', ...target(params), '--prepared', prepared, '--yes'];
     }
     case 'registerRead': return ['register', 'read', ...target(params), '--index', setupRegister(params.index, false, params.model).index];
     case 'registerWrite': {

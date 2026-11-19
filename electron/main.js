@@ -118,14 +118,16 @@ async function listRuns() {
     return [];
   });
   const directories = [...new Set([...knownRuns, ...entries.filter(entry => entry.isDirectory()).map(entry => path.join(base, entry.name)), ...custom])];
-  const runs = await Promise.all(directories.map(async directory => {
+  const runs = [];
+  for (const directory of directories) {
     try {
-      const run = await recordings.inspectRun(directory);
+      runs.push(await recordings.inspectRun(directory));
       knownRuns.add(directory);
-      return run;
-    } catch { return null; }
-  }));
-  return runs.filter(Boolean).sort((a, b) => b.timestamp - a.timestamp);
+    } catch {
+      knownRuns.delete(directory);
+    }
+  }
+  return runs.sort((a, b) => b.timestamp - a.timestamp);
 }
 
 async function captureStartup(destination) {

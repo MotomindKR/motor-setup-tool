@@ -74,7 +74,7 @@ enum Command {
     },
     /// Stream a monitored manual session controlled by JSON intent lines on stdin.
     #[command(hide = true)]
-    ManualSession(Target),
+    ManualSession(SelectedTarget),
     /// Run a bounded jog, then disable. Ctrl+C also disables the motor.
     Jog {
         #[command(flatten)]
@@ -92,14 +92,14 @@ enum Command {
     /// Set the stationary motor's current position to zero.
     Zero {
         #[command(flatten)]
-        target: Target,
+        target: SelectedTarget,
         #[arg(long, required = true)]
         yes: bool,
     },
     /// Change CAN ID, checking for collisions and verifying motor identity.
     SetId {
         #[command(flatten)]
-        target: Target,
+        target: SelectedTarget,
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=254))]
         new_id: u8,
         #[arg(long, required = true)]
@@ -201,9 +201,31 @@ impl Target {
     }
 }
 #[derive(Args)]
-struct Calibrate {
+struct SelectedTarget {
     #[command(flatten)]
     target: Target,
+    /// Require the scanned actuator's 16-digit hexadecimal UUID.
+    #[arg(long, value_parser = |s: &str| crate::protocol::parse_hex::<8>(s, "Motor UUID"))]
+    expected_uuid: Option<[u8; 8]>,
+}
+
+impl SelectedTarget {
+    fn detect(&self) -> Result<(Config, hardware::DiscoveredMotor)> {
+        let (config, motor) = detected(&self.target)?;
+        if let Some(expected) = self.expected_uuid {
+            ensure!(
+                motor.uuid == expected,
+                "Motor UUID at this ID changed; scan again"
+            );
+        }
+        Ok((config, motor))
+    }
+}
+
+#[derive(Args)]
+struct Calibrate {
+    #[command(flatten)]
+    target: SelectedTarget,
     /// New recording directory; an existing directory is never overwritten.
     #[arg(long)]
     output: Option<PathBuf>,
@@ -234,6 +256,9 @@ enum FirmwareCommand {
     Update {
         #[command(flatten)]
         target: Target,
+        /// Reuse the motor identity and versions returned by firmware prepare.
+        #[arg(long, hide = true, value_parser = |s: &str| serde_json::from_str::<firmware::Prepared>(s))]
+        prepared: Option<firmware::Prepared>,
         #[arg(long, required = true)]
         yes: bool,
     },
@@ -372,7 +397,7 @@ enum ManualInput {
     Stop,
 }
 
-fn manual_session(target: Target, out: &JobOutput<'_>) -> Result<()> {
+fn manual_session(selected: SelectedTarget, out: &JobOutput<'_>) -> Result<()> {
     let cancel = out.cancel;
     let mut first = String::new();
     ensure!(
@@ -380,7 +405,8 @@ fn manual_session(target: Target, out: &JobOutput<'_>) -> Result<()> {
         "Manual session needs a configuration"
     );
     let requested: Config = serde_json::from_str(&first).context("Invalid manual configuration")?;
-    let (detected, motor) = detected(&target)?;
+    let (detected, motor) = selected.detect()?;
+    let target = selected.target;
     let config = requested_config(&detected, requested)?;
     let session = manual::Session::start(config.clone(), motor.uuid);
     let (tx, rx) = mpsc::channel::<Result<ManualInput>>();
@@ -577,7 +603,7 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
             out.result(&preview_config(&config)?)
         }
         Command::Calibrate(args) => {
-            let (mut config, motor) = detected(&args.target)?;
+            let (mut config, motor) = args.target.detect()?;
             if args.config_stdin {
                 let requested = match desktop_config {
                     Some(config) => config,
@@ -625,7 +651,7 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
                 );
                 eprintln!("Recording to {}. Ctrl+C stops the motor.", dir.display());
             }
-            if let Err(e) = hardware::acquire(&config, &dir, cancel, |p| out.show(p)) {
+            if let Err(e) = hardware::acquire(&config, motor.uuid, &dir, cancel, |p| out.show(p)) {
                 let _ =
                     bridge::write_json(&dir.join("error.json"), &json!({"error":format!("{e:#}")}));
                 return Err(e);
@@ -663,16 +689,16 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
             out.result(&json!({"id":target.id,"enabled":false}))
         }
         Command::Zero { target, .. } => {
-            let (c, _) = detected(&target)?;
+            let (c, motor) = target.detect()?;
             crate::cancel::check(cancel)?;
-            hardware::set_zero(&c)?;
-            out.result(&json!({"id":target.id,"zero_set":true}))
+            hardware::set_zero(&c, motor.uuid)?;
+            out.result(&json!({"id":motor.id,"zero_set":true}))
         }
         Command::SetId { target, new_id, .. } => {
-            let (c, _) = detected(&target)?;
+            let (c, motor) = target.detect()?;
             crate::cancel::check(cancel)?;
-            hardware::change_id(&c, new_id)?;
-            out.result(&json!({"previous_id":target.id,"id":new_id}))
+            hardware::change_id(&c, motor.uuid, new_id)?;
+            out.result(&json!({"previous_id":motor.id,"id":new_id}))
         }
         Command::Firmware {
             command: FirmwareCommand::Check(target),
@@ -687,17 +713,22 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
         } => {
             let (c, _) = detected(&target)?;
             let prepared = firmware::prepare(&c, |s| out.progress(&s, None))?;
-            out.result(
-                &json!({"model":prepared.release.model,"version":prepared.release.version,
-                "current_version":prepared.current_version,"id":prepared.motor_id,
-                "uuid":prepared.uuid}),
-            )
+            out.result(&prepared)
         }
         Command::Firmware {
-            command: FirmwareCommand::Update { target, .. },
+            command: FirmwareCommand::Update {
+                target, prepared, ..
+            },
         } => {
+            ensure!(
+                !out.desktop || prepared.is_some(),
+                "Prepare and confirm this motor’s firmware first"
+            );
             let (c, _) = detected(&target)?;
-            let prepared = firmware::prepare(&c, |s| out.progress(&s, None))?;
+            let prepared = match prepared {
+                Some(prepared) => prepared,
+                None => firmware::prepare(&c, |s| out.progress(&s, None))?,
+            };
             crate::cancel::check(cancel)?;
             out.progress(
                 "Firmware transfer starting. Keep power on; transfer finishes before exiting.",

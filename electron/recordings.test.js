@@ -93,3 +93,16 @@ test('deletion removes an empty run folder and rejects unrelated folders', async
   await deleteRun(directory);
   await assert.rejects(fs.stat(directory), { code: 'ENOENT' });
 });
+
+test('refreshing the recordings list observes a report replaced by a refit', async t => {
+  const { directory } = await fixture(t);
+  for (const name of ['config.json', 'hardware.json']) await fs.unlink(path.join(directory, name));
+  const file = path.join(directory, 'report.json');
+  assert.equal((await inspectRun(directory)).uuid, null);
+  const report = JSON.parse(await fs.readFile(file));
+  report.motor_uuid = '0123456789abcdef';
+  await fs.writeFile(file + '.tmp', JSON.stringify(report));
+  await fs.rename(file + '.tmp', file);
+  assert.equal((await inspectRun(directory)).uuid, '0123456789ABCDEF');
+  assert.deepEqual((await loadRun(directory)).report, report);
+});

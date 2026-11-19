@@ -11,7 +11,6 @@ import { Badge } from "@motomindkr/ui/components/badge";
 import { Panel, Field, Check, Button, Empty, Disclosure } from "../ui.jsx";
 import { Chart } from "../Chart.jsx";
 import { conciseNumber } from "../format.mjs";
-import { Report } from "./Recordings.jsx";
 
 const limitFields = [
   ["torque_limit", "Torque limit", "Nm", 0.01],
@@ -158,22 +157,6 @@ function CalibrationPreview({ s }) {
 }
 
 export function CalibratePage({ s, a, c }) {
-  if (s.report)
-    return (
-      <div className="stack">
-        <div className="calibration-result-action">
-          <Button
-            variant="outline"
-            onClick={a.newCalibration}
-            disabled={c.busy}
-          >
-            <RefreshCw />
-            New calibration
-          </Button>
-        </div>
-        <Report s={s} a={a} c={c} />
-      </div>
-    );
   if (!s.config)
     return (
       <Empty
