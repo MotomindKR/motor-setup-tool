@@ -68,7 +68,6 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
 
     const connect = page.getByRole("button", { name: "Connect", exact: true });
     const serialPort = page.getByLabel("Serial port");
-    await expect(page.getByRole("checkbox", { name: "Demo motors" })).toHaveCount(0);
     await serialPort.clear();
     await expect(connect).toBeDisabled();
     await serialPort.fill("/dev/ttyUSB3");
@@ -83,12 +82,16 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     const newId = Array.from({ length: 253 }, (_, id) => id).find((id) => !takenIds.has(id));
     const motors = page.getByRole("table", { name: "Dynamixel motors" });
     const selectMotor = (id) => page.getByRole("checkbox", { name: `Select ${id}`, exact: true });
-    await expect(page.getByLabel("Motor IDs", { exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Read IDs" })).toHaveCount(0);
-    await motors.getByRole("checkbox", { name: "Select all filtered rows" }).uncheck();
+    const saveZero = page.getByRole("button", { name: "Save zero" });
+    await expect(saveZero).toBeDisabled();
     await selectMotor(zeroId).check();
-    await expect(page.getByRole("button", { name: "Preview zero" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Save zero" }).click();
+    const filter = page.getByRole("textbox", { name: "Filter motors" });
+    await filter.fill(String(discovered.find(motor => motor.motor_id === modeId).position));
+    await expect(selectMotor(modeId)).toBeVisible();
+    await expect(selectMotor(zeroId)).toHaveCount(0);
+    await expect(page.getByText(`Selected IDs: ${zeroId}`, { exact: true }).first()).toBeVisible();
+    await saveZero.click();
+    await filter.clear();
     await expect(page.getByText(/Zero saved and verified/)).toBeVisible();
     const zeroRow = motors.getByRole("row").filter({ has: selectMotor(zeroId) });
     await expect(zeroRow.getByRole("cell", { name: "2048", exact: true })).toBeVisible();
@@ -118,6 +121,8 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await expect(page.getByRole("button", { name: "Torque off" })).toBeEnabled();
     expect(writes).toEqual([]);
     failPolling = false;
+    await expect(modeButton).toBeEnabled();
+    await expect(page.getByText("Status read failed")).toHaveCount(0);
     await modeButton.click();
     await expect(page.getByRole("dialog")).toContainText(`ID ${modeId} (Mode ${oldMode})`);
     await page.getByRole("button", { name: "Confirm", exact: true }).click();

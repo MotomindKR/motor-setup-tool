@@ -1,4 +1,5 @@
 import { message, messageText } from "../i18n.mjs";
+import { numberText } from "../format.mjs";
 import { formatLocale } from "../language.mjs";
 import { useTranslation } from "react-i18next";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -35,14 +36,7 @@ import {
 import { FreshnessIndicator } from "@motomindkr/ui/components/freshness-indicator";
 import { Button, Choice, Field, Panel } from "../ui.jsx";
 
-function motorColumns(t, locale) {
-  const angleFormat = (digits) =>
-    new Intl.NumberFormat(locale, {
-      minimumFractionDigits: digits,
-      maximumFractionDigits: digits,
-    });
-  const radians = angleFormat(3),
-    degrees = angleFormat(1);
+function motorColumns(t) {
   return [
     { id: "motor_id", header: t("ID"), value: (row) => row.motor_id },
     {
@@ -78,7 +72,7 @@ function motorColumns(t, locale) {
       value: (row) => row.joint_radians,
       align: "right",
       cell: (row) =>
-        `${radians.format(row.joint_radians)} rad / ${degrees.format(row.joint_degrees)}°`,
+        `${numberText(row.joint_radians, 3)} rad / ${numberText(row.joint_degrees, 1)}°`,
     },
     {
       id: "torque",
@@ -96,7 +90,7 @@ function MotorDetails({ motor }) {
     [t("Direction"), motor.reverse ? t("Reverse") : t("Forward")],
     [
       t("Motor angle"),
-      `${motor.radians.toLocaleString(formatLocale, { maximumFractionDigits: 3 })} rad / ${motor.degrees.toLocaleString(formatLocale, { maximumFractionDigits: 1 })}°`,
+      `${numberText(motor.radians, 3)} rad / ${numberText(motor.degrees, 1)}°`,
     ],
     [t("Homing offset"), motor.homing_offset],
     [t("HW error"), motor.hardware_error],
@@ -124,10 +118,7 @@ const directionChoices = [
 
 export function DxlPage({ platform, active }) {
   const { t } = useTranslation();
-  const columns = React.useMemo(
-    () => motorColumns(t, formatLocale),
-    [t, formatLocale],
-  );
+  const columns = React.useMemo(() => motorColumns(t), [t]);
   const api = window.motorApp;
   const [ports, setPorts] = useState([]);
   const [port, setPort] = useState(platform === "linux" ? "/dev/ttyACM0" : "");
@@ -136,6 +127,7 @@ export function DxlPage({ platform, active }) {
   const [connected, setConnected] = useState(false);
   const [faulted, setFaulted] = useState(false);
   const [fresh, setFresh] = useState(false);
+  const [pollError, setPollError] = useState("");
   const [visible, setVisible] = useState(!document.hidden);
   const [motors, setMotors] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -150,6 +142,10 @@ export function DxlPage({ platform, active }) {
   const loadedPorts = useRef(false);
   const ids = selected.map(Number).sort((a, b) => a - b);
   const motorIds = motors.map((row) => row.motor_id).join(",");
+  const selectedIdsText = ids.join(", ");
+  const targets = ids.length
+    ? t("Selected IDs: {{ids}}", { ids: selectedIdsText })
+    : t("Select a motor in the table.");
   const canRead = connected && !busy;
   const hasSelection = canRead && ids.length > 0;
   const canWrite = active && visible && hasSelection && fresh && !faulted;
@@ -165,6 +161,8 @@ export function DxlPage({ platform, active }) {
     setConnected(reply.connected);
     setFaulted(reply.faulted);
     if (!reply.connected) {
+      setPollError("");
+      setConfirm(null);
       setMotors([]);
       setSelected([]);
       setFresh(false);
@@ -235,6 +233,7 @@ export function DxlPage({ platform, active }) {
         if (request !== generation.current) return;
         updateConnection(reply);
         if (reply.error) throw new Error(reply.error);
+        setPollError("");
         setMotors(reply.result.motors);
         setFresh(true);
       } catch (error) {
@@ -243,7 +242,7 @@ export function DxlPage({ platform, active }) {
         setConfirm((pending) =>
           pending?.operation === "torqueOff" ? pending : null,
         );
-        setNotice({ error: error.message });
+        setPollError(error.message);
       } finally {
         pollPending.current = false;
       }
@@ -253,12 +252,11 @@ export function DxlPage({ platform, active }) {
     return () => clearInterval(timer);
   }, [active, api, connected, motorIds, visible]);
 
-  function load(result, selectAll) {
-    const available = result.motors.map(rowId);
-    setMotors(result.motors);
-    setSelected((previous) =>
-      selectAll ? available : previous.filter((id) => available.includes(id)),
-    );
+  function loadMotors({ motors }, selection = selected) {
+    const available = new Set(motors.map(rowId));
+    setPollError("");
+    setMotors(motors);
+    setSelected(selection.filter((id) => available.has(id)));
     setFresh(true);
   }
 
@@ -270,7 +268,7 @@ export function DxlPage({ platform, active }) {
       action: () =>
         run(operation, { ids, ...params }, (result) => {
           if (operation === "set1Mbps") {
-            load(result, true);
+            loadMotors(result);
             setActiveBaud(result.baud);
             setBaud(String(result.baud));
             setNotice({
@@ -352,6 +350,13 @@ export function DxlPage({ platform, active }) {
                 {t("Backup saved to {{path}}", { path: notice.backup })}
               </div>
             )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {pollError && (
+        <Alert variant="error">
+          <AlertDescription className="dxl-message">
+            {pollError}
           </AlertDescription>
         </Alert>
       )}
@@ -446,7 +451,12 @@ export function DxlPage({ platform, active }) {
                     "connect",
                     { port: port.trim(), baud: Number(baud) },
                     (result) => {
-                      load(result, true);
+                      loadMotors(
+                        result,
+                        result.motors.length === 1
+                          ? result.motors.map(rowId)
+                          : [],
+                      );
                       setActiveBaud(result.baud);
                       setNewId("");
                     },
@@ -500,9 +510,7 @@ export function DxlPage({ platform, active }) {
                   variant="outline"
                   size="sm"
                   disabled={!canRead}
-                  onClick={() =>
-                    run("scan", {}, (result) => load(result, false))
-                  }
+                  onClick={() => run("scan", {}, loadMotors)}
                 >
                   <Search />
                   {t("Scan bus")}
@@ -533,12 +541,12 @@ export function DxlPage({ platform, active }) {
               }}
             />
           </Panel>
-          <Panel
-            title={t("EEPROM settings")}
-            description={t(
-              "Support the mechanism before turning torque off. Hold the reference pose while saving zero at 2048 pulses (0° joint angle).",
-            )}
-          >
+          <Panel title={t("EEPROM settings")} description={targets}>
+            <p className="dxl-safety">
+              {t(
+                "Support the mechanism before turning torque off. Hold the reference pose while saving zero at 2048 pulses (0° joint angle).",
+              )}
+            </p>
             <div className="dxl-actions">
               <Button
                 variant="outline"
@@ -549,7 +557,7 @@ export function DxlPage({ platform, active }) {
                     t("Turn torque off?"),
                     t(
                       "Support the mechanism first. Torque will be disabled for IDs {{ids}}.",
-                      { ids: ids.join(", ") },
+                      { ids: selectedIdsText },
                     ),
                   )
                 }
@@ -638,7 +646,7 @@ export function DxlPage({ platform, active }) {
                       t("Set direction to {{direction}} for IDs {{ids}}.", {
                         direction:
                           direction === "reverse" ? t("Reverse") : t("Forward"),
-                        ids: ids.join(", "),
+                        ids: selectedIdsText,
                       }),
                       { reverse: direction === "reverse" },
                     )
@@ -681,7 +689,7 @@ export function DxlPage({ platform, active }) {
               </div>
             </div>
           </Panel>
-          <Panel title={t("Settings backups")}>
+          <Panel title={t("Settings backups")} description={targets}>
             <div className="dxl-actions">
               <Button
                 variant="outline"
@@ -707,7 +715,7 @@ export function DxlPage({ platform, active }) {
                     t("Restore zero and direction?"),
                     t(
                       "Choose a backup for IDs {{ids}}. The selected motors keep their current IDs.",
-                      { ids: ids.join(", ") },
+                      { ids: selectedIdsText },
                     ),
                   )
                 }

@@ -51,7 +51,7 @@ class MotorState:
 
     @property
     def name(self) -> str:
-        return MODELS.get(self.model, translate("Unsupported model ({model})", model=self.model))
+        return MODELS.get(self.model) or translate("Unsupported model ({model})", model=self.model)
 
     @property
     def reverse(self) -> bool:

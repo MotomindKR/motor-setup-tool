@@ -1,6 +1,7 @@
 'use strict';
 
 const { t } = require('./i18n.js');
+const { exitError } = require('./worker-exit');
 
 const { execFile, spawn } = require('node:child_process');
 const { once } = require('node:events');
@@ -134,12 +135,6 @@ function backendPath(root, resourcesPath = null, override = process.env.MOTOMIND
   throw new Error(t("Rust backend missing. Build it with cargo build --release."));
 }
 
-function exitError(code, signal, stderr, name = t("Backend")) {
-  const detail = stderr.trim();
-  if (signal) return new Error(t("{{name}} terminated by {{signal}}{{detail}}", { name, signal, detail: detail ? `\n${detail}` : '' }));
-  return new Error(detail || t("{{name}} exited with status {{code}}", { name, code }));
-}
-
 class Backend {
   constructor(binary, emit) {
     this.binary = binary;
@@ -215,7 +210,7 @@ class Backend {
         if (spawnError) return reject(spawnError);
         if (protocolError) return reject(protocolError);
         if (code !== 0) {
-          reject(exitError(code, signal, stderr));
+          reject(exitError(t("Backend"), code, signal, stderr));
           return;
         }
         if (pending || result === undefined) return reject(new Error(t("Backend exited with an incomplete response")));
@@ -271,7 +266,7 @@ class Backend {
       const child = execFile(this.binary, ['preview'], { env: this.environment, maxBuffer: 2_000_000 }, (error, stdout, stderr) => {
         if (error) {
           return reject(typeof error.code === 'number' || error.signal
-            ? exitError(error.code, error.signal, stderr.slice(-4000), t("Preview backend"))
+            ? exitError(t("Preview backend"), error.code, error.signal, stderr.slice(-4000))
             : error);
         }
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error(t("Invalid preview result"))); }

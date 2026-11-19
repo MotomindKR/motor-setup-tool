@@ -1,6 +1,7 @@
 'use strict';
 
 const { i18n, t } = require('./i18n.js');
+const { exitError } = require('./worker-exit');
 
 const { execFile, spawn } = require('node:child_process');
 const { constants } = require('node:fs');
@@ -65,13 +66,13 @@ class DxlWorker {
       }
     });
     this.exited = new Promise(resolve => {
-      child.once('close', code => {
+      child.once('close', (code, signal) => {
         output.close();
         this.child = null;
         this.closing = false;
-        const message = stderr.trim() || failure?.message || t("DXL worker exited ({{code}})", { code });
+        const error = exitError(t("Dynamixel worker"), code, signal, stderr.trim() || failure?.message || '');
         for (const request of this.pending.splice(0)) {
-          request.resolve({ connected: false, faulted: false, error: message });
+          request.resolve({ connected: false, faulted: false, error: error.message });
         }
         resolve();
       });

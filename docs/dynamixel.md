@@ -14,7 +14,8 @@ motors separately. Close other programs using the same serial port.
    selected device node. Unplugging the adapter removes that grant. The app
    uses `pkexec` and `setfacl`, supplied by polkit and acl.
 3. Click **Connect** to discover motors and select them in the **Motors**
-   table. Expand a motor row to see its stored baud rate and diagnostics. **Scan bus**
+   table. Filtering keeps the selection. Check **Selected IDs** before saving.
+   Expand a motor row to see its stored baud rate and diagnostics. **Scan bus**
    refreshes the list at the session's active speed.
 
 Support the mechanism before using **Torque off**. To save direction,

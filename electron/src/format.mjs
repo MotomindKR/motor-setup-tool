@@ -1,5 +1,19 @@
 import { messageText } from "./i18n.mjs";
 import { formatLocale } from "./language.mjs";
+
+const decimalFormats = new Map();
+
+export function numberText(value, digits = 3) {
+  if (!Number.isFinite(value)) return "—";
+  const key = `${formatLocale}:${digits}`;
+  if (!decimalFormats.has(key)) {
+    decimalFormats.set(key, new Intl.NumberFormat(formatLocale, {
+      useGrouping: false, minimumFractionDigits: digits, maximumFractionDigits: digits,
+    }));
+  }
+  return decimalFormats.get(key).format(value);
+}
+
 export function inputNumberFormat({ step, min, significantDigits } = {}) {
   if (significantDigits || step === "any") {
     return {

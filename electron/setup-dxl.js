@@ -12,7 +12,8 @@ const options = { stdio: 'inherit' };
 if (process.env.MOTOMIND_DXL_PYTHON) {
   execFileSync(python, ['-c', 'from serial.tools import list_ports; import dynamixel_sdk'], options);
 } else {
-  if (!existsSync(python)) {
+  const pip = path.join(path.dirname(python), process.platform === 'win32' ? 'pip.exe' : 'pip');
+  if (!existsSync(python) || !existsSync(pip)) {
     execFileSync(process.platform === 'win32' ? 'python' : 'python3',
       ['-m', 'venv', path.join(root, '.tools', 'dxl-venv')], options);
   }

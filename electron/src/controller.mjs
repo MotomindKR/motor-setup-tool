@@ -1,5 +1,5 @@
 import { message, t } from "./i18n.mjs";
-import { displayAngle } from "./format.mjs";
+import { displayAngle, numberText } from "./format.mjs";
 
 const operationNames = {
   interfaces: "Checking interfaces",
@@ -19,8 +19,6 @@ const operationNames = {
   registerRead: "Reading register",
   registerWrite: "Saving register",
 };
-export const numberText = (value, digits = 3) =>
-  Number.isFinite(value) ? value.toFixed(digits) : "—";
 function readableError(message) {
   const text = String(message).replace(
     /^Error invoking remote method '[^']+':\s*/,

@@ -17,7 +17,8 @@ import { Slider } from "@motomindkr/ui/components/slider";
 import { Separator } from "@motomindkr/ui/components/separator";
 import { Panel, Button, Check, Empty, Metric } from "../ui.jsx";
 import { SingleTraceChart } from "../Chart.jsx";
-import { maxJogSpeed, numberText } from "../controller.mjs";
+import { maxJogSpeed } from "../controller.mjs";
+import { numberText } from "../format.mjs";
 
 const motionSignals = [
   ["Position", "position_rad", "rad", 3],

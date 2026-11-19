@@ -1,3 +1,4 @@
+import { numberText } from "./format.mjs";
 import { formatLocale } from "./language.mjs";
 import { useTranslation } from "react-i18next";
 import React, { useMemo } from "react";
@@ -49,7 +50,10 @@ function chartRows(series) {
 }
 export function Chart({ title, unit, series, compact = false }) {
   const { t } = useTranslation();
-  const formatYAxisTick = new Intl.NumberFormat(formatLocale, { maximumSignificantDigits: 3 }).format;
+  const formatYAxisTick = useMemo(
+    () => new Intl.NumberFormat(formatLocale, { maximumSignificantDigits: 3 }).format,
+    [formatLocale],
+  );
   const data = useMemo(() => chartRows(series), [series]);
   const config = Object.fromEntries(
     series.map((trace, i) => [
@@ -84,7 +88,7 @@ export function Chart({ title, unit, series, compact = false }) {
               axisLine={false}
               tickLine={false}
               minTickGap={32}
-              tickFormatter={(value) => Number(value).toFixed(1)}
+              tickFormatter={(value) => numberText(Number(value), 1)}
             />
             <YAxis
               axisLine={false}
@@ -96,7 +100,7 @@ export function Chart({ title, unit, series, compact = false }) {
             <ChartTooltip
               content={
                 <ChartTooltipContent
-                  labelFormatter={(value) => `${Number(value).toFixed(3)} s`}
+                  labelFormatter={(value) => `${numberText(Number(value), 3)} s`}
                 />
               }
             />

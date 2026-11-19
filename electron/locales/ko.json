@@ -438,7 +438,6 @@
   "{{name}} exited with status {{code}}": "{{name}} 종료 코드: {{code}}",
   "Invalid backend response: {{error}}": "백엔드 응답이 올바르지 않습니다: {{error}}",
   "{{name}} is too large": "{{name}} 파일이 너무 큽니다",
-  "DXL worker exited ({{code}})": "다이나믹셀 작업 프로세스 종료 ({{code}})",
   "Connect the adapter and confirm that {{port}} exists": "어댑터를 연결한 뒤 {{port}} 포트가 있는지 확인하세요",
   "Could not authorize {{port}}. {{error}}": "{{port}} 접근 권한을 얻지 못했습니다. {{error}}",
   "Downloading update · {{percent}}%": "업데이트 다운로드 중 · {{percent}}%",
@@ -536,5 +535,8 @@
   "Objective: velocity residual plus position residual weighted by 0.3 /s, normalized by training velocity standard deviation. Validation is never reset, fitted or used to select a seed.": "목적 함수는 속도 잔차와 가중치 0.3 /s를 적용한 위치 잔차의 합을 학습 속도의 표준편차로 정규화한 값입니다. 검증 궤적은 초기화하지 않으며 모델 적합이나 초깃값 선택에 사용하지 않습니다.",
   "Breakaway calibration remains deferred: constant MuJoCo frictionloss, no separate static peak. These are effective parameters under the fixed torque-gain assumption.": "기동 마찰은 별도로 보정하지 않습니다. MuJoCo frictionloss를 상수로 두며 정지 마찰의 최댓값은 따로 추정하지 않습니다. 추정값은 고정된 토크 게인을 가정합니다.",
   "No matching ports. Enter a port name to connect.": "일치하는 포트가 없습니다. 연결할 포트 이름을 직접 입력하세요.",
-  "Downloaded calibration run.": "보정 기록을 다운로드했습니다."
+  "Downloaded calibration run.": "보정 기록을 다운로드했습니다.",
+  "Selected IDs: {{ids}}": "선택한 ID: {{ids}}",
+  "Select a motor in the table.": "표에서 모터를 선택하세요.",
+  "Dynamixel worker": "다이나믹셀 작업 프로세스"
 }

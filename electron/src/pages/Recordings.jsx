@@ -38,8 +38,7 @@ import {
   Disclosure,
 } from "../ui.jsx";
 import { Chart } from "../Chart.jsx";
-import { numberText } from "../controller.mjs";
-import { conciseNumber } from "../format.mjs";
+import { conciseNumber, numberText } from "../format.mjs";
 
 function RunMenu({ directory, files = [], a, disabled, compact = false }) {
   const { t } = useTranslation();

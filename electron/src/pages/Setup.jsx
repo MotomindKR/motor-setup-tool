@@ -35,8 +35,8 @@ import {
   Disclosure,
   NumericInput,
 } from "../ui.jsx";
-import { numberText, registerValueText } from "../controller.mjs";
-import { conciseNumber, displayAngle } from "../format.mjs";
+import { registerValueText } from "../controller.mjs";
+import { conciseNumber, displayAngle, numberText } from "../format.mjs";
 
 function RegisterPanel({ s, a, c }) {
   const { t } = useTranslation();

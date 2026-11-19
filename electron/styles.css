@@ -1055,6 +1055,10 @@ html[data-platform="darwin"] .app-header {
   align-items: center;
   gap: 8px;
 }
+.dxl-safety {
+  margin-bottom: 12px;
+  font-size: 14px;
+}
 .dxl-edits,
 .dxl-readings {
   display: grid;
