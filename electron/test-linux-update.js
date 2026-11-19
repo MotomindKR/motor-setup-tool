@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn, execFileSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
 
 (async () => {
   assert.equal(process.getuid(), 0);
@@ -31,21 +32,21 @@ const { spawn, execFileSync } = require('node:child_process');
     const configFile = path.join(caseDirectory, 'request.json');
     await fs.writeFile(configFile, JSON.stringify({ installer, entry, version: badChecksum ? '99.0.0' : version, directory: userData, screenshot, handoff, badChecksum }));
     const log = await fs.open(path.join(caseDirectory, 'app.log'), 'w');
-    const child = spawn(executable, ['--no-sandbox', `--user-data-dir=${userData}`], {
-      env: { ...process.env, MOTOMIND_UPDATE_TEST_CONFIG: configFile }, stdio: ['ignore', log.fd, log.fd],
-    });
-    await log.close();
-    const timer = setTimeout(() => child.kill(), 60_000);
-    const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
-    clearTimeout(timer);
-    if (code !== 0) console.error(await fs.readFile(path.join(caseDirectory, 'app.log'), 'utf8'));
-    assert.equal(code, 0, `Packaged update handoff failed; see ${caseDirectory}`);
+    try {
+      execFileSync(executable, ['--no-sandbox', `--user-data-dir=${userData}`], {
+        env: { ...process.env, MOTOMIND_UPDATE_TEST_CONFIG: configFile },
+        stdio: ['ignore', log.fd, log.fd], timeout: 60_000,
+      });
+    } catch (error) {
+      console.error(await fs.readFile(path.join(caseDirectory, 'app.log'), 'utf8'));
+      throw error;
+    } finally { await log.close(); }
     const deadline = Date.now() + 30_000;
     let runtime;
     while (Date.now() < deadline) {
       try { runtime = JSON.parse(await fs.readFile(`${screenshot}.json`, 'utf8')); break; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await delay(200);
     }
     assert.equal(runtime?.version, version, `Updated app did not restart; see ${caseDirectory}`);
     const source = JSON.parse(await fs.readFile(handoff, 'utf8'));

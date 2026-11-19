@@ -21,7 +21,7 @@ const recentPathFile = () => path.join(app.getPath('userData'), 'recent-calibrat
 const referenceFile = () => path.join(app.getPath('userData'), 'motor-references.json');
 function uuidKey(value) {
   if (!Array.isArray(value) || value.length !== 8 || value.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error('Select a motor with a valid UUID');
-  return value.map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return Buffer.from(value).toString('hex');
 }
 async function readSettings(file, initial) {
   let contents;

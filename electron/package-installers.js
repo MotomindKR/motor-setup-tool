@@ -68,7 +68,7 @@ config.electronVersion = require('electron/package.json').version;
 if (platform === 'linux') {
   // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
   // Set the public architecture once so metadata and existing clients agree.
-  config.linux.artifactName = 'motor-setup-tool-${version}-linux-' + arch + '.${ext}';
+  config.linux.artifactName = config.linux.artifactName.replace('${arch}', arch);
   // Append the udev reload to builder's own desktop and sandbox hooks.
   const packageOptions = { fpm: [path.join(root, 'packaging', '70-motomind-gsusb.rules') + '=/usr/lib/udev/rules.d/70-motomind-gsusb.rules'] };
   const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates', 'linux');
@@ -105,7 +105,7 @@ execFileSync(process.execPath, [require.resolve('electron-builder/cli.js'), '--c
 
 const platformName = { darwin: 'mac', win32: 'win', linux: 'linux' }[platform];
 const unpacked = path.join(installers, platformName + (arch === 'x64' ? '' : `-${arch}`) + (platform === 'darwin' ? '' : '-unpacked'));
-const bundle = path.join(unpacked, 'Motor Setup Tool.app');
+const bundle = path.join(unpacked, config.productName + '.app');
 const resources = platform === 'darwin' ? path.join(bundle, 'Contents', 'Resources') : path.join(unpacked, 'resources');
 const executable = path.join(resources, 'backend', backendName);
 const library = path.join(resources, 'backend', 'lib');
@@ -140,7 +140,7 @@ if (unpackedOnly) {
   for (const name of assets) {
     const destination = path.join(dist, name);
     fs.renameSync(path.join(installers, name), destination);
-    const digest = crypto.createHash('sha256').update(fs.readFileSync(destination)).digest('hex');
+    const digest = crypto.hash('sha256', fs.readFileSync(destination), 'hex');
     fs.writeFileSync(`${destination}.sha256`, `${digest}  ${name}\n`);
     const blockmap = name + '.blockmap';
     if (fs.existsSync(path.join(installers, blockmap))) {

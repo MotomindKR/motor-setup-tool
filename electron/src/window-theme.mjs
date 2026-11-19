@@ -16,11 +16,6 @@ export function syncWindowTheme(bridge, choice, theme) {
   const schedule = () => {
     if (frame === null) frame = requestAnimationFrame(sync);
   };
-  const hex = (pixels, offset) =>
-    "#" +
-    [...pixels.slice(offset, offset + 3)]
-      .map((value) => value.toString(16).padStart(2, "0"))
-      .join("");
   function sync() {
     frame = null;
     context.globalAlpha = 1;
@@ -41,8 +36,11 @@ export function syncWindowTheme(bridge, choice, theme) {
         .getAnimations()
         .some((animation) => animation.playState === "running");
     }
-    const pixels = context.getImageData(0, 0, 2, 1).data;
-    const caption = { color: hex(pixels, 0), symbolColor: hex(pixels, 4) };
+    const pixels = new Uint8Array(context.getImageData(0, 0, 2, 1).data.buffer);
+    const caption = {
+      color: `#${pixels.subarray(0, 3).toHex()}`,
+      symbolColor: `#${pixels.subarray(4, 7).toHex()}`,
+    };
     const key = caption.color + caption.symbolColor;
     if (key !== previous) {
       previous = key;

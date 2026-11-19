@@ -286,10 +286,8 @@ fn gsusb_wire_frame(frame: &UsbCanFrame) -> Option<WireFrame> {
     if let UsbCanId::Extended(id) = frame.id()
         && !frame.is_remote()
         && !frame.is_fd()
-        && frame.data().len() == 8
+        && let Ok(data) = frame.data().try_into()
     {
-        let mut data = [0; 8];
-        data.copy_from_slice(frame.data());
         Some(WireFrame { id, data })
     } else {
         None
@@ -425,10 +423,8 @@ impl Bus {
                         return Ok(BusEvent::Filtered);
                     }
                     if let Id::Extended(id) = f.id()
-                        && f.data().len() == 8
+                        && let Ok(data) = f.data().try_into()
                     {
-                        let mut data = [0; 8];
-                        data.copy_from_slice(f.data());
                         Some(WireFrame {
                             id: id.as_raw(),
                             data,
@@ -684,11 +680,7 @@ impl Bus {
                 let trace_frame = QuietCanFrame {
                     elapsed_ms: elapsed.as_millis(),
                     id: format!("{:08X}", frame.id),
-                    data: frame
-                        .data
-                        .iter()
-                        .map(|byte| format!("{byte:02X}"))
-                        .collect(),
+                    data: format!("{:016X}", u64::from_be_bytes(frame.data)),
                 };
                 if quiet_frames.len() == 128 {
                     // Preserve the first and last 64 frames if the bus is busy.

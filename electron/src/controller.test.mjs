@@ -44,7 +44,7 @@ async function setup(t, overrides = {}) {
   const calls = [],
     intents = [];
   let receive,
-    finishManual,
+    manual,
     clock = 1000,
     focus = true;
   const bridge = {
@@ -85,10 +85,10 @@ async function setup(t, overrides = {}) {
           value: op === "registerWrite" ? params.value : 1,
           raw: "0000803F",
         };
-      if (op === "manual")
-        return new Promise((resolve) => {
-          finishManual = resolve;
-        });
+      if (op === "manual") {
+        manual = Promise.withResolvers();
+        return manual.promise;
+      }
       if (op === "zero") return { zeroed: true };
       if (op === "stop") return { stopped: true };
       throw new Error(`Unexpected test operation: ${op}`);
@@ -97,7 +97,7 @@ async function setup(t, overrides = {}) {
       intents.push(value);
     },
     cancel: async () => {
-      finishManual?.({ cancelled: true });
+      manual?.resolve({ cancelled: true });
     },
     ...overrides,
   };
@@ -261,19 +261,15 @@ test("adapter refresh blocks connection edits throughout enumeration", async (t)
   const ctx = await setup(t);
   await ctx.connect();
   const run = ctx.bridge.run;
-  let finish;
+  const enumeration = Promise.withResolvers();
   ctx.bridge.run = async (op, params) =>
-    op === "usbAdapters"
-      ? new Promise((resolve) => {
-          finish = resolve;
-        })
-      : run(op, params);
+    op === "usbAdapters" ? enumeration.promise : run(op, params);
   const refresh = ctx.actions.refreshInterfaces();
   await tick();
   assert.equal(ctx.flags().busy, true);
   ctx.actions.changeConnection("transport", "gsusb");
   assert.equal(ctx.getSnapshot().connection.transport, "socketcan");
-  finish([]);
+  enumeration.resolve([]);
   await refresh;
   assert.equal(ctx.flags().busy, false);
   assert.ok(ctx.getSnapshot().motor);
@@ -479,18 +475,13 @@ test("recording deletion is confirmed, permanent, and clears only the deleted se
 });
 
 test("file downloads block concurrent actions and a cancelled dialog leaves the recording open", async (t) => {
-  let finish;
-  const ctx = await setup(t, {
-    exportRun: () =>
-      new Promise((resolve) => {
-        finish = resolve;
-      }),
-  });
+  const download = Promise.withResolvers();
+  const ctx = await setup(t, { exportRun: () => download.promise });
   const operation = ctx.actions.exportRun("/recordings/run", "training.csv");
   assert.equal(ctx.flags().busy, true);
   ctx.actions.deleteRun("/recordings/run");
   assert.equal(ctx.getSnapshot().confirmation, undefined);
-  finish(null);
+  download.resolve(null);
   await operation;
   assert.equal(ctx.flags().busy, false);
 });
@@ -524,11 +515,11 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   const ctx = await setup(t);
   await ctx.connect();
   await ctx.actions.prepareFirmware();
-  let finish;
+  const transfer = Promise.withResolvers();
   const reviewed = ctx.getSnapshot().firmware;
   ctx.bridge.run = async (_op, params) => {
     assert.deepEqual(params.prepared, reviewed);
-    return new Promise(resolve => { finish = resolve; });
+    return transfer.promise;
   };
   let cancelled = false;
   ctx.bridge.cancel = async () => {
@@ -542,7 +533,7 @@ test("firmware transfer requires confirmation and blocks stop until verified com
   await ctx.actions.disable();
   ctx.actions.cancel();
   assert.equal(cancelled, false);
-  finish({ id: 1, firmware: "1.2.4" });
+  transfer.resolve({ id: 1, firmware: "1.2.4" });
   await updating;
   assert.equal(ctx.getSnapshot().motor.firmware, "1.2.4");
   assert.equal(ctx.getSnapshot().motors[0].firmware, "1.2.4");
@@ -762,12 +753,12 @@ test("a zero confirmation expires when another motor is selected", async t => {
 test("a stale recordings list cannot restore a deleted run", async t => {
   const directory = "/recordings/incomplete";
   const ctx = await setup(t, { deleteRun: async () => {} });
-  let resolve;
-  ctx.bridge.listRuns = () => new Promise(done => { resolve = done; });
+  const listing = Promise.withResolvers();
+  ctx.bridge.listRuns = () => listing.promise;
   const refresh = ctx.actions.refreshRuns();
   ctx.actions.deleteRun(directory);
   await ctx.actions.confirm();
-  resolve([{ directory }]);
+  listing.resolve([{ directory }]);
   await refresh;
   assert.deepEqual(ctx.getSnapshot().runs, []);
   assert.equal(ctx.getSnapshot().runsLoading, false);

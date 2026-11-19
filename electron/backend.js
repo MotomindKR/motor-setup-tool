@@ -1,6 +1,6 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const path = require('node:path');
 const motorModels = require('./motor-models.json');
 const fs = require('node:fs');
@@ -167,7 +167,6 @@ class Backend {
       let result;
       let protocolError;
       let stderr = '';
-      let settled = false;
       const onLine = line => {
         const event = JSON.parse(line);
         switch (event.type) {
@@ -203,18 +202,12 @@ class Backend {
       child.stderr.setEncoding('utf8').on('data', chunk => {
         stderr = (stderr + chunk).slice(-16_000);
       });
-      child.on('error', error => {
-        if (settled) return;
-        settled = true;
-        this.active = null;
-        this.emit({ type: 'finish' });
-        reject(error);
-      });
+      let spawnError;
+      child.once('error', error => { spawnError = error; });
       child.on('close', (code, signal) => {
-        if (settled) return;
-        settled = true;
         this.active = null;
         this.emit({ type: 'finish' });
+        if (spawnError) return reject(spawnError);
         if (protocolError) return reject(protocolError);
         if (code !== 0) {
           reject(exitError(code, signal, stderr));
@@ -253,17 +246,16 @@ class Backend {
     const input = JSON.stringify(config);
     if (!config || typeof config !== 'object' || input.length > 10_000) throw new Error('Invalid preview configuration');
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, ['preview'], { stdio: ['pipe', 'pipe', 'pipe'], shell: false, env: this.environment });
-      let stdout = '', stderr = '';
-      child.stdin.on('error', () => {});
-      child.stdin.end(input);
-      child.stdout.on('data', chunk => { stdout += chunk; if (stdout.length > 2_000_000) child.kill('SIGTERM'); });
-      child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
-      child.on('error', reject);
-      child.on('close', (code, signal) => {
-        if (code !== 0) return reject(exitError(code, signal, stderr, 'Preview backend'));
+      const child = execFile(this.binary, ['preview'], { env: this.environment, maxBuffer: 2_000_000 }, (error, stdout, stderr) => {
+        if (error) {
+          return reject(typeof error.code === 'number' || error.signal
+            ? exitError(error.code, error.signal, stderr.slice(-4000), 'Preview backend')
+            : error);
+        }
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Invalid preview result')); }
       });
+      child.stdin.on('error', () => {});
+      child.stdin.end(input);
     });
   }
 }

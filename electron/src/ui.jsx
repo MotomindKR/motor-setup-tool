@@ -164,7 +164,7 @@ export function Choice({
   return (
     <Select
       value={value === "" || value == null ? null : value}
-      items={Object.fromEntries(options.map((o) => [o.value, o.label]))}
+      items={options}
       onValueChange={(value) => onChange(value ?? "")}
       disabled={disabled}
     >

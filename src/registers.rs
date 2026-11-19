@@ -181,17 +181,13 @@ fn register(index: u16) -> Result<&'static Register> {
         .with_context(|| format!("Register 0x{index:04X} is not in the documented setup catalog"))
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
-}
-
 fn reading(index: u16, raw: [u8; 4], uuid: [u8; 8], save_acknowledged: bool) -> Result<Reading> {
     let value = register(index)?.decode(raw)?;
     Ok(Reading {
         index,
         value,
-        raw: hex(&raw),
-        uuid: hex(&uuid),
+        raw: format!("{:08X}", u32::from_be_bytes(raw)),
+        uuid: format!("{:016X}", u64::from_be_bytes(uuid)),
         save_acknowledged,
     })
 }

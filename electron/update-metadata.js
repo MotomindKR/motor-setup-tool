@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
+const { hash } = require('node:crypto');
 const yaml = require('js-yaml');
 
 function verifyMetadata(directory, names, version) {
@@ -13,7 +13,7 @@ function verifyMetadata(directory, names, version) {
     for (const file of info.files) {
       if (!/^[A-Za-z0-9._-]+$/.test(file.url) || !file.url.includes(version)) throw new Error(`Invalid update asset: ${file.url}`);
       const bytes = fs.readFileSync(path.join(directory, file.url));
-      if (file.size !== bytes.length || file.sha512 !== createHash('sha512').update(bytes).digest('base64')) throw new Error(`Update metadata does not match ${file.url}`);
+      if (file.size !== bytes.length || file.sha512 !== hash('sha512', bytes, 'base64')) throw new Error(`Update metadata does not match ${file.url}`);
       assets.add(file.url);
     }
   }

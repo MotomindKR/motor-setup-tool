@@ -8,6 +8,7 @@ import {
 import { Panel, Empty } from "./ui.jsx";
 
 const maxPointsPerTrace = 2000;
+const formatYAxisTick = new Intl.NumberFormat(undefined, { maximumSignificantDigits: 3 }).format;
 function chartRows(series) {
   const rows = new Map();
   series.forEach((trace, index) => {
@@ -86,11 +87,7 @@ export function Chart({ title, unit, series, compact = false }) {
               tickLine={false}
               width={54}
               domain={["auto", "auto"]}
-              tickFormatter={(value) =>
-                Number(value).toLocaleString(undefined, {
-                  maximumSignificantDigits: 3,
-                })
-              }
+              tickFormatter={formatYAxisTick}
             />
             <ChartTooltip
               content={

@@ -143,20 +143,16 @@ export function App({ controller }) {
   }, [s.tab, s.directory]);
   useEffect(() => {
     const cleanup = controller.start();
-    const revoke = () => a.revoke(),
-      release = () => a.release();
-    const visibility = () => {
-      if (document.hidden) revoke();
-    };
-    window.addEventListener("blur", revoke);
-    document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
+    const listeners = new AbortController();
+    const options = { signal: listeners.signal };
+    window.addEventListener("blur", a.revoke, options);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) a.revoke();
+    }, options);
+    window.addEventListener("pointerup", a.release, options);
+    window.addEventListener("pointercancel", a.release, options);
     return () => {
-      window.removeEventListener("blur", revoke);
-      document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("pointerup", release);
-      window.removeEventListener("pointercancel", release);
+      listeners.abort();
       cleanup();
     };
   }, [controller, a]);

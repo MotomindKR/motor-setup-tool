@@ -55,7 +55,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node -e 'const fs=require("fs"); const cargo=fs.readFileSync("Cargo.toml","utf8").match(/^version = "([^"]+)"/m)[1]; const electron=require("./electron/package.json").version; if (cargo!==electron || process.env.RELEASE_TAG!==`v${cargo}`) process.exit(1)'
+          cargo metadata --locked --no-deps --format-version 1 |
+            jq -e --slurpfile desktop electron/package.json '
+              .packages[] | select(.name == "motor-setup-tool") |
+              .version == $desktop[0].version and ("v" + .version == env.RELEASE_TAG)'
       - name: Install Linux build and desktop libraries
         if: runner.os == 'Linux'
         run: |

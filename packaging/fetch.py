@@ -14,15 +14,12 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
-def download_request(url):
-    return urllib.request.Request(url, headers={'Accept': 'application/octet-stream'})
-
-
 def download(url, name):
     for attempt in range(5):
         delay = 2 ** (attempt + 1)
         try:
-            with urllib.request.urlopen(download_request(url), timeout=120) as response:
+            request = urllib.request.Request(url, headers={'Accept': 'application/octet-stream'})
+            with urllib.request.urlopen(request, timeout=120) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
             limited = error.code == 403 and (
