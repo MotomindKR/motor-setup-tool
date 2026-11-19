@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$OldInstaller,
-  [Parameter(Mandatory = $true)][string]$Installer
+  [Parameter(Mandatory = $true)][string]$Installer,
+  [Parameter(Mandatory = $true)][string]$NextInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,8 +23,9 @@ function Install-Previous([string]$Scope, [string]$Directory) {
   if (-not (Test-Path (Join-Path $Directory 'Motor Setup Tool.exe'))) { throw "Previous app missing in $Directory" }
 }
 
-function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]$ExpectedVersion, [string]$ExpectedError = '') {
-  Write-Output "Testing $Name in $Directory"
+function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]$ExpectedVersion, [string]$ExpectedError = '', [string]$FromVersion = $PreviousVersion) {
+  $Version = Get-InstallerVersion $Setup
+  Write-Output "Testing $Name in $Directory ($FromVersion -> $ExpectedVersion)"
   $caseDirectory = Join-Path $testRoot $Name
   New-Item -ItemType Directory -Path $caseDirectory -Force | Out-Null
   $appExe = Join-Path $Directory 'Motor Setup Tool.exe'
@@ -49,8 +51,8 @@ function Test-Update([string]$Name, [string]$Directory, [string]$Setup, [string]
     if ($running.ExitCode -ne 0) { throw "The packaged app update handoff failed ($($running.ExitCode))" }
     if (-not $ExpectedError) {
       $source = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
-      if ($source.version -ne $PreviousVersion -or $source.target -ne $ExpectedVersion) {
-        throw "Expected $PreviousVersion to download $ExpectedVersion, saw $($source.version) download $($source.target)"
+      if ($source.version -ne $FromVersion -or $source.target -ne $ExpectedVersion) {
+        throw "Expected $FromVersion to download $ExpectedVersion, saw $($source.version) download $($source.target)"
       }
       $deadline = (Get-Date).AddSeconds(75)
       do {
@@ -140,3 +142,7 @@ try {
 } finally {
   if (-not $stub.HasExited) { $stub.Kill(); $stub.WaitForExit() }
 }
+
+$nextVersion = Get-InstallerVersion $NextInstaller
+Test-Update 'next-patch-user' $specialDirectory $NextInstaller $nextVersion -FromVersion $Version
+Test-Update 'next-patch-machine' $machineDirectory $NextInstaller $nextVersion -FromVersion $Version

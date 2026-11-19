@@ -117,6 +117,28 @@ jobs:
             dist-electron/latest*.yml
             dist-electron/*.blockmap
 
+      - name: Build disposable next patch for updater tests
+        if: runner.os != 'macOS'
+        id: next
+        shell: bash
+        run: |
+          cd electron
+          npm version patch --no-git-tag-version --ignore-scripts
+          version=$(node -p "require('./package.json').version")
+          cd ..
+          sed -i "/^version = /c\version = \"$version\"" Cargo.toml
+          cargo build --offline --release
+          npm --prefix electron run package:installers
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: runner.os != 'macOS'
+        with:
+          name: next-patch-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
+
   verify-installers:
     needs: build
     uses: ./.github/workflows/windows-update.yml

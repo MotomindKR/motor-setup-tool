@@ -10,17 +10,22 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 (async () => {
   assert.equal(process.getuid(), 0);
-  const [oldInstaller, installer] = process.argv.slice(2);
-  const previous = execFileSync('dpkg-deb', ['--field', oldInstaller, 'Version'], { encoding: 'utf8' }).trim();
-  const version = execFileSync('dpkg-deb', ['--field', installer, 'Version'], { encoding: 'utf8' }).trim();
+  const [oldInstaller, candidate, nextInstaller] = process.argv.slice(2);
+  const packageVersion = file => execFileSync('dpkg-deb', ['--field', file, 'Version'], { encoding: 'utf8' }).trim();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motor-linux-updater-'));
   const executable = '/opt/Motor Setup Tool/motor-setup-tool';
   const appRoot = path.join(path.dirname(executable), 'resources', 'app');
   const userData = path.join(directory, 'state');
   await fs.mkdir(userData);
   execFileSync('dpkg', ['-i', oldInstaller], { stdio: 'inherit' });
-  for (const badChecksum of [false, true]) {
-    const caseDirectory = path.join(directory, badChecksum ? 'checksum-failure' : 'upgrade');
+  for (const [sourceInstaller, installer, badChecksum] of [
+    [oldInstaller, candidate, false],
+    [candidate, candidate, true],
+    [candidate, nextInstaller, false],
+  ]) {
+    const previous = packageVersion(sourceInstaller);
+    const version = packageVersion(installer);
+    const caseDirectory = path.join(directory, badChecksum ? 'checksum-failure' : `upgrade-${previous}-to-${version}`);
     await fs.mkdir(caseDirectory);
     await fs.copyFile(path.join(__dirname, 'packaged-update-worker.js'), path.join(appRoot, 'electron', 'packaged-update-worker.js'));
     const manifestFile = path.join(appRoot, 'package.json');
@@ -64,9 +69,9 @@ const { setTimeout: delay } = require('node:timers/promises');
       assert.equal(stat.uid, 0);
       assert.equal(stat.mode & 0o777, 0o644);
     }
-    console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${version}`);
+    console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${previous} -> ${version}`);
   }
-  const packageName = execFileSync('dpkg-deb', ['--field', installer, 'Package'], { encoding: 'utf8' }).trim();
+  const packageName = execFileSync('dpkg-deb', ['--field', candidate, 'Package'], { encoding: 'utf8' }).trim();
   execFileSync('dpkg', ['--remove', packageName], { stdio: 'inherit' });
   await assert.rejects(fs.access('/usr/lib/udev/rules.d/70-motomind-gsusb.rules'), { code: 'ENOENT' });
   console.log('USB rule installed by the update and removed with the package.');
