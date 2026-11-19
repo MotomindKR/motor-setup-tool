@@ -5,11 +5,15 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const { Backend, backendPath } = require('./backend');
+const { DxlWorker, grantPortAccess } = require('./dxl');
 const updater = require('./updater');
 const nativeInstall = require('./native-install');
 const recordings = require('./recordings');
 
 if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
+if (!app.isPackaged && process.env.MOTOMIND_TEST_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.MOTOMIND_TEST_USER_DATA));
+}
 
 const root = path.resolve(__dirname, '..');
 const titleBarHeight = 40;
@@ -35,6 +39,10 @@ let checkedUpdate = null;
 let installingUpdate = false;
 let updateError = null;
 let recordingOperation = false;
+let dxl;
+let dxlDialog = false;
+
+const dxlBackupDir = () => path.join(app.getPath('userData'), 'dxl-backups');
 
 function send(event) {
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
@@ -108,7 +116,10 @@ function createWindow() {
   window.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.webContents.on('render-process-gone', () => { try { backend?.cancel(); } catch { /* Firmware transfer finishes before exit. */ } });
+  window.webContents.on('render-process-gone', () => {
+    try { backend?.cancel(); } catch { /* Firmware transfer finishes before exit. */ }
+    void dxl.close();
+  });
   window.webContents.on('did-finish-load', () => {
     if (backendError) send({ type: 'error', message: backendError.message });
     if (updateError) send({ type: 'updateFailure', message: updateError, version: app.getVersion() });
@@ -121,7 +132,7 @@ function createWindow() {
             await window.webContents.executeJavaScript(`window.motorSmoke.actions.openRun(${JSON.stringify(directory)})`);
             await new Promise(resolve => setTimeout(resolve, 200));
           }
-          if (['calibrate', 'test', 'setup', 'files'].includes(process.env.MOTOMIND_SMOKE_TAB)) {
+          if (['calibrate', 'test', 'setup', 'dxl', 'files'].includes(process.env.MOTOMIND_SMOKE_TAB)) {
             await window.webContents.executeJavaScript(`window.motorSmoke.actions.setTab(${JSON.stringify(process.env.MOTOMIND_SMOKE_TAB)})`);
             await new Promise(resolve => setTimeout(resolve, 400));
           }
@@ -166,6 +177,43 @@ app.whenReady().then(async () => {
   try {
     backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
+  dxl = new DxlWorker({ root, resourcesPath: app.isPackaged ? process.resourcesPath : null, backupDir: dxlBackupDir() });
+
+  ipcMain.handle('dxl:run', async (event, operation, params) => {
+    assertSender(event);
+    if (quitting || installingUpdate) throw new Error('Wait for the app to finish');
+    if (dxlDialog && operation !== 'poll') throw new Error('Finish the current DXL operation');
+    if (operation === 'disconnect') {
+      await dxl.close();
+      return { connected: false, faulted: false, result: {} };
+    }
+    const filters = [{ name: 'DXL settings', extensions: ['json'] }];
+    if (operation === 'export' || operation === 'restore') {
+      dxlDialog = true;
+      try {
+        const selection = operation === 'export'
+          ? await dialog.showSaveDialog(window, { title: 'Export DXL settings', defaultPath: 'dxl-settings.json', filters })
+          : await dialog.showOpenDialog(window, { title: 'Restore DXL zero and direction', defaultPath: dxlBackupDir(), filters, properties: ['openFile'] });
+        if (selection.canceled || quitting) return null;
+        return await dxl.run(operation, { ids: params.ids, path: selection.filePath || selection.filePaths[0] });
+      } finally { dxlDialog = false; }
+    }
+    if (operation === 'authorize') {
+      dxlDialog = true;
+      try {
+        await grantPortAccess(params.port);
+        return { connected: false, faulted: false, result: {} };
+      } finally { dxlDialog = false; }
+    }
+    return dxl.run(operation, params);
+  });
+  ipcMain.handle('dxl:backups', async event => {
+    assertSender(event);
+    const directory = dxlBackupDir();
+    await fs.mkdir(directory, { recursive: true });
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
+  });
 
   ipcMain.handle('backend:run', async (event, operation, params) => {
     assertSender(event);
@@ -262,6 +310,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('updates:install', async event => {
     assertSender(event);
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
+    if (dxl.active || dxlDialog) throw new Error('Finish the current DXL operation before updating');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
     if (!nativeInstall.mode(app)) throw new Error('Install a packaged copy to update from the app');
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
@@ -338,6 +387,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', event => {
+  if (dxl?.child) {
+    event.preventDefault();
+    quitting = true;
+    void dxl.close().then(() => app.quit());
+  }
   if (!backend?.active) return;
   event.preventDefault();
   quitting = true;

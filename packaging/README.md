@@ -1,16 +1,16 @@
 # Desktop release guide
 
-Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, and UI assets.
+Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, the
+Dynamixel serial worker, and UI assets.
 
 | System | Output |
 |---|---|
 | Linux x64 and ARM64 | DEB and RPM |
-| macOS ARM64 | DMG |
+| macOS ARM64 and x64 | DMG |
 | Windows x64 | NSIS EXE |
 
-The release also contains `SHA256SUMS` for all six installers. There is no
-AppImage or macOS x64 target. Windows ARM64 is omitted because MuJoCo 3.12.0
-does not publish a Windows ARM64 library.
+The release also contains `SHA256SUMS` for all seven installers. Windows ARM64 is omitted
+because MuJoCo 3.12.0 does not publish a Windows ARM64 library.
 
 ## Publish
 
@@ -18,7 +18,8 @@ does not publish a Windows ARM64 library.
    lockfiles and commit.
 2. Let [unit tests](../.github/workflows/tests.yml) pass on `main`.
 3. Push `vX.Y.Z`. The [release workflow](../.github/workflows/release.yml)
-   builds all four variants, verifies checksums, and publishes the release.
+   builds all five variants, tests DEB installation and startup on Ubuntu
+   20.04, 22.04, 24.04, and 26.04, verifies checksums, and publishes the release.
 
 ## Build locally
 
@@ -30,6 +31,8 @@ handles this. RPM packaging needs `rpmbuild` (the `rpm` package).
 
 ```sh
 cargo build --locked --release
+python3 -m pip install -r dxl/requirements-build.txt
+python3 dxl/build.py
 cd electron
 npm ci
 npm run check

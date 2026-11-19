@@ -8,6 +8,7 @@
 
 Calibrate a bare RobStride motor, compare its motion with MuJoCo, and manage
 its ID, zero position, and firmware. Supports RS-00 through RS-06 and RS-10P over Classic CAN.
+The desktop app also configures Dynamixel XL330 motors via a U2D2 TTL adapter.
 
 ## Install
 
@@ -16,7 +17,7 @@ Get the latest installer from **[Releases](https://github.com/MotomindKR/motor-s
 | System | Installer |
 |---|---|
 | Linux x64 or ARM64 | `.deb` or `.rpm` |
-| macOS Apple silicon | `.dmg` |
+| macOS Apple silicon or Intel | `.dmg` |
 | Windows x64 | `.exe` |
 
 MuJoCo is bundled. **Settings → Check for update** downloads and opens a
@@ -42,6 +43,7 @@ Accepted runs export `calibration.json` and `post_calibration.xml`. See the
 | I want to… | Read |
 |---|---|
 | Connect, calibrate, or configure a motor | [User guide](docs/user-guide.md) |
+| Connect a U2D2 or configure XL330 motors | [Dynamixel setup](docs/dynamixel.md) |
 | Operate from a terminal or over SSH | [CLI guide](docs/cli.md) |
 | Use a result in MuJoCo | [Simulation and exports](docs/simulation.md) |
 | Build, test, or change the app | [Developer guide](docs/development.md) |

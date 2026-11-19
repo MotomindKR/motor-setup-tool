@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -20,6 +21,8 @@ const backend = path.join(resources, 'backend');
 const backendName = process.platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
 const launcherName = process.platform === 'win32' ? 'Motor Setup Tool.exe' : 'motor-setup-tool';
 const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', 'release', backendName);
+const dxlName = process.platform === 'win32' ? 'dxl-worker.exe' : 'dxl-worker';
+const sourceDxl = path.join(root, '.tools', 'dxl', dxlName);
 const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', 'mujoco-3.12.0', 'lib');
 const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : process.platform === 'win32' ? 'mujoco.dll' : 'libmujoco.so.3.12.0';
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
@@ -30,6 +33,7 @@ execFileSync(process.execPath, [path.join(path.dirname(require.resolve('vite/pac
 for (const source of [sourceBinary, mujoco]) {
   if (!fs.existsSync(source)) throw new Error(`Missing ${source}. Build the release backend and install the pinned MuJoCo SDK first.`);
 }
+if (!fs.existsSync(sourceDxl)) throw new Error('Build the DXL worker with python dxl/build.py before packaging.');
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 fs.rmSync(output, { recursive: true, force: true });
@@ -63,7 +67,7 @@ if (process.platform === 'linux') {
 }
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'recordings.js', 'updater.js', 'native-install.js', 'install-windows.ps1']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'dxl.js', 'register-catalog.json', 'recordings.js', 'updater.js', 'native-install.js', 'install-windows.ps1']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
 fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist'), { recursive: true });
@@ -80,6 +84,12 @@ fs.copyFileSync(sourceBinary, path.join(backend, backendName));
 if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
+const dxlDir = path.join(resources, 'dxl');
+fs.mkdirSync(dxlDir, { recursive: true });
+const dxlBinary = path.join(dxlDir, dxlName);
+fs.copyFileSync(sourceDxl, dxlBinary);
+if (process.platform !== 'win32') fs.chmodSync(dxlBinary, 0o755);
+fs.cpSync(path.join(root, '.tools', 'dxl', 'licenses'), path.join(dxlDir, 'licenses'), { recursive: true });
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
   const source = path.join(sdkDir, '..', name);
   if (fs.existsSync(source)) fs.copyFileSync(source, path.join(backend, name));
@@ -89,6 +99,15 @@ const smokeEnv = { ...process.env, [libraryKey]: [path.join(backend, 'lib'), pro
 const selfCheck = JSON.parse(execFileSync(path.join(backend, backendName), ['self-check'], { env: smokeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (selfCheck.version !== pkg.version || selfCheck.mujoco !== '3.12.0') {
   throw new Error('Packaged backend self-check returned an unexpected version');
+}
+const dxlSmoke = [
+  { operation: 'ports', params: {} },
+  { operation: 'connect', params: { demo: true, port: '', baud: 1_000_000 } },
+].map(request => JSON.stringify(request)).join('\n') + '\n';
+const replies = execFileSync(dxlBinary, [os.tmpdir()], { input: dxlSmoke, encoding: 'utf8', timeout: 30_000 })
+  .trim().split('\n').map(line => JSON.parse(line));
+if (replies.length !== 2 || !Array.isArray(replies[0].result?.ports) || replies[1].result?.motors.length !== 7) {
+  throw new Error('Packaged Dynamixel worker self-check failed');
 }
 if (process.platform === 'darwin') execFileSync('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', bundle]);
 

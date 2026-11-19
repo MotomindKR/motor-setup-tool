@@ -11,6 +11,7 @@ From the repository root:
 
 ```sh
 cargo build --locked --release
+python3 -m pip install -r dxl/requirements.txt
 cd electron
 npm ci
 npm start
@@ -36,10 +37,15 @@ See the [developer guide](../docs/development.md) for MuJoCo setup and the
 [user guide](../docs/user-guide.md#connect-a-motor) for CAN adapters. Saved runs
 can be viewed without hardware.
 
+Set `MOTOMIND_DXL_PYTHON` to the Python executable that has the DXL
+dependencies when developing in a virtual environment.
+
 ## Desktop installers
 
 ```sh
 cargo build --locked --release
+python3 -m pip install -r dxl/requirements-build.txt
+python3 dxl/build.py
 cd electron
 npm run package:installers
 ```
@@ -55,6 +61,7 @@ with a `.sha256` file. Set `MUJOCO_DYNAMIC_LINK_DIR` if MuJoCo is outside
 | Calibrate | Review limits and motion preview, record a run, fit, and inspect results |
 | Test | Monitor feedback and use bounded hold-to-jog controls |
 | Setup | Set zero/reference angle, change ID, search and edit persistent registers in the main area, update firmware |
+| Dynamixel | Configure XL330 zero, direction, and ID over a serial adapter |
 | Files | Open saved runs, compare traces, download files, refit, or permanently delete |
 
 Navigation uses Motomind's Sidebar, with an icon collapse mode and a mobile
@@ -66,7 +73,7 @@ bottom of the rail.
 
 ## Frontend source
 
-`src/App.jsx` owns the shell and appearance. `src/pages/` contains the four
+`src/App.jsx` owns the shell and appearance. `src/pages/` contains the
 workspaces, `src/components/` shared connection/settings panels, and
 `src/Chart.jsx` the measured-data plots. `src/controller.mjs` owns bridge calls,
 operation state, preview sequencing, and the manual intent lease independently

@@ -10,7 +10,7 @@ const pkg = require('./package.json');
 const platform = process.platform;
 const arch = process.arch;
 if (!['linux', 'darwin', 'win32'].includes(platform)) throw new Error('Unsupported desktop platform');
-if (platform === 'darwin' && arch !== 'arm64') throw new Error('macOS releases require ARM64');
+if (platform === 'darwin' && !['arm64', 'x64'].includes(arch)) throw new Error('macOS releases require ARM64 or x64');
 if (platform === 'win32' && arch !== 'x64') throw new Error('Windows releases require x64');
 
 const staged = path.join(root, 'dist-electron', `motor-setup-tool-electron-${platform}-${arch}`);

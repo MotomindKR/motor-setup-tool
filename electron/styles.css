@@ -1044,3 +1044,30 @@ html[data-platform="darwin"] .app-header {
   gap: 4px;
   align-items: center;
 }
+
+.dxl-workspace {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.dxl-workspace[hidden] {
+  display: none;
+}
+.dxl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+.dxl-row + .dxl-row,
+.dxl-row + [data-slot="data-table"],
+[data-slot="data-table"] + .dxl-row {
+  margin-top: 12px;
+}
+.dxl-row .field {
+  min-width: min(140px, 100%);
+}
+.dxl-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

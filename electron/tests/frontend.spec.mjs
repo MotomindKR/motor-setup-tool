@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { fixture, installBridge } from "./fixtures.mjs";
+import { DxlWorker } from "../dxl.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -24,6 +28,72 @@ async function connect(page) {
     page.getByRole("button", { name: "Start calibration", exact: true }),
   ).toBeDisabled();
 }
+test("Dynamixel setup grants port access and saves demo zero, mode, ID, and baud", async ({ page }) => {
+  const backupDir = await mkdtemp(`${tmpdir()}/motor-dxl-ui-`);
+  const worker = new DxlWorker({ root: fileURLToPath(new URL("../..", import.meta.url)), backupDir });
+  const authorized = [];
+  try {
+    await page.exposeFunction("testDxl", (operation, params) => {
+      if (operation === "ports") return { connected: false, result: { ports: ["/dev/ttyACM1"] } };
+      if (operation === "authorize") {
+        authorized.push(params.port);
+        return { connected: false, result: {} };
+      }
+      return worker.run(operation, params);
+    });
+    await page.evaluate(() => { window.motorApp.dxl = window.testDxl; });
+    await navigate(page, "Dynamixel");
+    await page.getByLabel("Serial port").fill("/dev/ttyACM1");
+    await page.getByRole("button", { name: "Grant port access" }).click();
+    await expect(page.getByText("Access ready for /dev/ttyACM1. Connect to continue.")).toBeVisible();
+    expect(authorized).toEqual(["/dev/ttyACM1"]);
+
+    await page.getByRole("checkbox", { name: "Demo motors" }).check();
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByText("Demo connected")).toBeVisible();
+    const motors = page.getByRole("table", { name: "Dynamixel motors" });
+    const selectMotor = (id) => motors.getByRole("checkbox", { name: `Select ${id}`, exact: true });
+    await expect(page.getByLabel("Motor IDs", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Read IDs" })).toHaveCount(0);
+    await motors.getByRole("checkbox", { name: "Select all filtered rows" }).uncheck();
+    await selectMotor(30).check();
+    await expect(page.getByRole("button", { name: "Preview zero" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Save zero" }).click();
+    await expect(page.getByText(/Zero saved and verified/)).toBeVisible();
+    await expect(page.getByRole("cell", { name: "2048", exact: true })).toBeVisible();
+
+    await page.getByLabel("New ID").fill("46");
+    await page.getByRole("button", { name: "Save ID" }).click();
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(selectMotor(46)).toBeChecked();
+    await navigate(page, "Setup");
+    await expect(page.getByRole("button", { name: "Scan motors", exact: true })).toBeVisible();
+    await navigate(page, "Dynamixel");
+    await expect(page.getByRole("cell", { name: "46", exact: true })).toBeVisible();
+
+    await selectMotor(46).uncheck();
+    await selectMotor(36).check();
+    await page.getByRole("button", { name: "Set Mode 5" }).click();
+    await expect(page.getByRole("dialog")).toContainText("ID 36 (Mode 3)");
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(page.getByText(/Mode 5 verified for IDs 36/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Set Mode 5" })).toBeDisabled();
+
+    await expect(page.getByLabel("Baud rate")).toHaveValue("57600");
+    await expect(motors.getByRole("columnheader", { name: "Baud rate (bps)" })).toBeVisible();
+    await expect(motors.getByRole("cell", { name: "57,600", exact: true })).toHaveCount(7);
+    await page.getByRole("button", { name: "Set 1 Mbps" }).click();
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(page.getByText(/1 Mbps verified for ID 36/)).toBeVisible();
+    await expect(page.getByLabel("Baud rate")).toHaveValue("1000000");
+    await expect(motors.getByRole("cell", { name: "1,000,000", exact: true })).toBeVisible();
+    await expect(selectMotor(36)).toBeChecked();
+    await expect(selectMotor(46)).toHaveCount(0);
+  } finally {
+    await worker.close();
+    await rm(backupDir, { recursive: true, force: true });
+  }
+});
 test("startup, navigation, and disconnected states never send motion commands", async ({
   page,
 }) => {

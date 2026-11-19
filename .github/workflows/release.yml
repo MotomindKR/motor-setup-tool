@@ -3,6 +3,8 @@ name: Electron desktop release
 on:
   push:
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -20,11 +22,15 @@ jobs:
       matrix:
         include:
           - platform: linux-x64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
+            manylinux: x86_64
           - platform: linux-arm64
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
+            manylinux: aarch64
           - platform: darwin-arm64
             runner: macos-15
+          - platform: darwin-x64
+            runner: macos-15-intel
           - platform: win32-x64
             runner: windows-2022
     runs-on: ${{ matrix.runner }}
@@ -34,6 +40,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Linux'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -72,7 +82,31 @@ jobs:
           hdiutil detach "$RUNNER_TEMP/mujoco-mount"
           echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
       - name: Build Rust backend
+        if: runner.os != 'Linux'
         run: cargo build --locked --release
+      - name: Build Linux Rust backend and DXL worker with a glibc 2.28 baseline
+        if: runner.os == 'Linux'
+        env:
+          MANYLINUX_ARCH: ${{ matrix.manylinux }}
+        run: |
+          mkdir -p .tools/mujoco
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+            -e HOME=/work/.tools -e RUSTUP_HOME=/work/.tools/rustup \
+            -e CARGO_HOME=/work/.tools/release-cargo -e MUJOCO_DOWNLOAD_DIR=/work/.tools/mujoco \
+            "quay.io/pypa/manylinux_2_28_${MANYLINUX_ARCH}:2026.05.07-2" bash -euc '
+              curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh
+              sh /tmp/rustup-init.sh -y --profile minimal --no-modify-path --default-toolchain 1.98.1
+              "$CARGO_HOME/bin/cargo" build --locked --release
+              /opt/python/cp312-cp312/bin/python -m venv .tools/dxl-build-venv
+              .tools/dxl-build-venv/bin/python -m pip install -r dxl/requirements-build.txt
+              .tools/dxl-build-venv/bin/python dxl/build.py
+            '
+      - name: Build and test the Windows or macOS DXL worker
+        if: runner.os != 'Linux'
+        run: |
+          python -m pip install -r dxl/requirements-build.txt pytest
+          python -m pytest -q -o pythonpath=dxl dxl/tests
+          python dxl/build.py
       - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
@@ -106,7 +140,6 @@ jobs:
             ${{ runner.temp }}/motomind-update-tests/*/*.txt
             ${{ runner.temp }}/motomind-update-tests/*/*.png
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
         with:
           name: installers-${{ matrix.platform }}
           if-no-files-found: error
@@ -117,10 +150,45 @@ jobs:
             dist-electron/*.exe
             dist-electron/*.sha256
 
+  linux-compatibility:
+    name: Install and launch on Ubuntu ${{ matrix.ubuntu }} (${{ matrix.arch }})
+    needs: build
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['20.04', '22.04', '24.04', '26.04']
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-linux-${{ matrix.arch }}
+          path: dist-electron
+      - name: Check installed app and DXL worker
+        env:
+          UBUNTU_VERSION: ${{ matrix.ubuntu }}
+        run: |
+          docker run --rm --shm-size=1g -v "$PWD/dist-electron:/installers:ro" "ubuntu:$UBUNTU_VERSION" bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends /installers/*.deb xvfb xauth
+            app="/opt/Motor Setup Tool"
+            "$app/resources/backend/motor-setup-tool" self-check
+            printf "%s\n" "{\"operation\":\"ports\",\"params\":{}}" "{\"operation\":\"connect\",\"params\":{\"demo\":true,\"port\":\"\",\"baud\":1000000}}" |
+              "$app/resources/dxl/dxl-worker" /tmp/dxl-backups > /tmp/dxl-replies
+            grep -q "\"ports\":" /tmp/dxl-replies
+            grep -q "\"motor_id\": 36" /tmp/dxl-replies
+            export MOTOMIND_SMOKE_TAB=dxl MOTOMIND_SMOKE_PATH=/tmp/smoke.png
+            timeout 45 xvfb-run -a "$app/motor-setup-tool" --no-sandbox
+            grep -q "\"tab\":\"dxl\"" /tmp/smoke.png.json
+            grep -q "\"backendReady\":true" /tmp/smoke.png.json
+          '
+
   publish:
     name: Publish desktop installers
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, linux-compatibility]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -140,7 +208,7 @@ jobs:
         run: |
           cat ./*.sha256 > SHA256SUMS
           sha256sum -c SHA256SUMS
-          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 6
+          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 7
           notes="$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md"
           test -f "$notes"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then

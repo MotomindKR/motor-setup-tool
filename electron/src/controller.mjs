@@ -630,7 +630,7 @@ export function createController(bridge, env = {}) {
     }
   }
   async function setTab(tab) {
-    if (!["calibrate", "test", "setup", "files"].includes(tab)) return;
+    if (!["calibrate", "test", "setup", "dxl", "files"].includes(tab)) return;
     if (s.tab === "test" && tab !== "test") {
       revoke();
       await stopMonitor();
