@@ -61,6 +61,10 @@ function busReady(s, platform) {
       /^ERROR-(ACTIVE|WARNING|PASSIVE)$/.test(b.state),
   );
 }
+export function maxJogSpeed(config) {
+  return Math.max(0.01, Math.min(Number(config?.speed_limit || 1) * 0.1, 1));
+}
+
 export function controls(s, platform, now = performance.now()) {
   const busy = Boolean(
     s.busy || s.refreshingAdapters || s.installingUpdate || s.fileOperation,
@@ -82,6 +86,7 @@ export function controls(s, platform, now = performance.now()) {
     s.registerRead?.index === r.index &&
     s.registerRead?.uuid === uuidText(s.motor);
   const value = Number(s.registerValue);
+  const newId = Number(s.newId);
   const changed =
     read &&
     (r.value_type === "float32"
@@ -117,6 +122,11 @@ export function controls(s, platform, now = performance.now()) {
       s.busy !== "firmwareUpdate" &&
       !s.refreshingAdapters &&
       !s.installingUpdate,
+    changeId:
+      !busy && motor && Number.isInteger(newId) &&
+      newId >= 1 && newId <= 254 &&
+      newId !== s.motor.id && newId !== Number(s.connection.hostId),
+    updateFirmware: !busy && motor && Boolean(s.firmware && s.firmware.id === s.motor.id),
     registerRead: !busy && motor && Boolean(r?.readable),
     registerWrite:
       !busy &&
@@ -138,12 +148,44 @@ export function controls(s, platform, now = performance.now()) {
 
 class OperationCancelled extends Error {}
 
+function clearedMotorControls() {
+  return {
+    reviewed: false,
+    jogReviewed: false,
+    manualStatus: null,
+    manualHistory: [],
+    firmware: null,
+    firmwareMessage: "",
+    registerRead: null,
+    registerValue: "",
+    registerMessage: "",
+  };
+}
+
+function emptyMotorSelection() {
+  return {
+    ...clearedMotorControls(),
+    motors: [],
+    motor: null,
+    preset: null,
+    limits: null,
+    config: null,
+    preview: null,
+    previewLoading: false,
+    referenceAngle: 0,
+    referenceInput: "0",
+    registers: null,
+    registerIndex: null,
+  };
+}
+
 export function createController(bridge, env = {}) {
   const now = env.now || (() => performance.now());
   const focused =
     env.focused || (() => document.hasFocus() && !document.hidden);
   const listeners = new Set();
   let s = {
+    ...emptyMotorSelection(),
     tab: "calibrate",
     connection: {
       transport: bridge.platform === "linux" ? "socketcan" : "gsusb",
@@ -154,35 +196,15 @@ export function createController(bridge, env = {}) {
     interfaces: [],
     refreshingAdapters: false,
     usbAdapters: [],
-    motors: [],
-    motor: null,
-    preset: null,
-    limits: null,
-    config: null,
-    preview: null,
-    previewLoading: false,
-    reviewed: false,
     outputDirectory: null,
     busy: null,
     work: null,
     notice: null,
     connectionOpen: true,
-    manualStatus: null,
-    manualHistory: [],
     lastStatusAt: 0,
-    jogReviewed: false,
     jogSpeed: 0.5,
-    referenceAngle: 0,
-    referenceInput: "0",
     referenceUnit: "rad",
     newId: "",
-    firmware: null,
-    firmwareMessage: "",
-    registers: null,
-    registerIndex: null,
-    registerRead: null,
-    registerValue: "",
-    registerMessage: "",
     registerSearch: "",
     runs: [],
     runsLoading: false,
@@ -274,47 +296,17 @@ export function createController(bridge, env = {}) {
     connectionEpoch++;
     wantEnabled = false;
     direction = 0;
-    set({
-      motors: [],
-      motor: null,
-      preset: null,
-      limits: null,
-      config: null,
-      preview: null,
-      previewLoading: false,
-      reviewed: false,
-      jogReviewed: false,
-      referenceAngle: 0,
-      referenceInput: "0",
-      firmware: null,
-      firmwareMessage: "",
-      registerRead: null,
-      registers: null,
-      registerIndex: null,
-      registerValue: "",
-      registerMessage: "",
-      manualStatus: null,
-      manualHistory: [],
-      ...extra,
-    });
+    set({ ...emptyMotorSelection(), ...extra });
   }
   function updateSelectedMotor(motor, changes, extra = {}) {
     if (s.motor !== motor) return false;
     const updated = { ...motor, ...changes };
     set({
+      ...clearedMotorControls(),
       motor: updated,
       motors: s.motors.map((item) => (item.id === motor.id ? updated : item)),
       config: s.config ? { ...s.config, motor_id: updated.id } : null,
       newId: "",
-      firmware: null,
-      firmwareMessage: "",
-      registerRead: null,
-      registerValue: "",
-      registerMessage: "",
-      manualStatus: null,
-      manualHistory: [],
-      reviewed: false,
-      jogReviewed: false,
       ...extra,
     });
     return true;
@@ -470,9 +462,6 @@ export function createController(bridge, env = {}) {
       }
     }
     if (referenceError) reportError(referenceError);
-  }
-  function maxJogSpeed(config = s.config) {
-    return Math.max(0.01, Math.min(Number(config?.speed_limit || 1) * 0.1, 1));
   }
   function sendIntent() {
     if (s.busy !== "manual") return;
@@ -749,7 +738,7 @@ export function createController(bridge, env = {}) {
     setJogSpeed(value) {
       if (!s.manualStatus?.enabled && !s.manualStatus?.preparing)
         set({
-          jogSpeed: Math.min(maxJogSpeed(), Math.max(0.01, Number(value))),
+          jogSpeed: Math.min(maxJogSpeed(s.config), Math.max(0.01, Number(value))),
         });
     },
     enable() {
@@ -850,16 +839,7 @@ export function createController(bridge, env = {}) {
     setNewId: (value) => set({ newId: value }),
     changeId() {
       const newId = Number(s.newId);
-      if (
-        !flags().motor ||
-        flags().busy ||
-        !Number.isInteger(newId) ||
-        newId < 1 ||
-        newId > 254 ||
-        newId === s.motor.id ||
-        newId === Number(s.connection.hostId)
-      )
-        return;
+      if (!flags().changeId) return;
       const motor = s.motor;
       const params = target();
       confirmAction(
@@ -897,13 +877,7 @@ export function createController(bridge, env = {}) {
       }
     },
     updateFirmware() {
-      if (
-        flags().busy ||
-        !flags().motor ||
-        !s.firmware ||
-        s.firmware.id !== s.motor.id
-      )
-        return;
+      if (!flags().updateFirmware) return;
       const motor = s.motor;
       const params = target();
       const prepared = s.firmware;

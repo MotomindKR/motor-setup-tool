@@ -5,11 +5,7 @@
 
 ## Build and run
 
-Electron hosts the Motomind React frontend. The Rust backend provides the CLI,
-CAN control, calibration, and MuJoCo fitting; it has no standalone GUI.
-Use Node.js 22 or newer and a C compiler/linker. The project setup script installs
-the Rust toolchain. Install the pinned MuJoCo SDK as described in the
-[release guide](../packaging/README.md#build-locally).
+Install Node.js 22 or newer, a C compiler/linker, and the [MuJoCo SDK](../packaging/README.md#build-locally).
 
 ```sh
 ./scripts/setup.sh
@@ -51,15 +47,7 @@ export RUSTUP_HOME="$PWD/.tools/rustup"
 export PATH="$CARGO_HOME/bin:$PATH"
 ```
 
-`check.sh` runs download-integrity checks, Rust formatting, Clippy with warnings
-denied, and unit tests. Frontend checks cover the controller, IPC arguments,
-recording files, updates, and production build. Browser interaction tests inject
-a test-only bridge and send no physical CAN frames.
-
-| Workflow | Trigger | Output |
-|---|---|---|
-| [Unit tests](../.github/workflows/tests.yml) | Main, pull request, manual | Rust checks in the Ubuntu container; frontend build and interaction tests |
-| [Desktop release](../.github/workflows/release.yml) | Matching version tag | Linux DEB/RPM, macOS DMG, Windows EXE |
+CI runs the same [backend and frontend checks](../.github/workflows/tests.yml) on pull requests to `main`.
 
 For the Linux test environment locally:
 

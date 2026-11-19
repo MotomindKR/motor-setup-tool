@@ -90,10 +90,23 @@ function checkForUpdate() {
   return updateCheck;
 }
 
-function assertSender(event) {
-  if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
-    throw new Error('Invalid app window');
-  }
+function handle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) {
+      throw new Error('Invalid app window');
+    }
+    return handler(...args);
+  });
+}
+
+function handleRecordingWrite(channel, handler) {
+  handle(channel, async (directory, ...args) => {
+    requireKnownRun(directory);
+    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
+    recordingOperation = true;
+    try { return await handler(directory, ...args); }
+    finally { recordingOperation = false; }
+  });
 }
 
 function dataDirectory() {
@@ -103,9 +116,9 @@ function dataDirectory() {
   return path.join(base, 'motomind-motor-calib', 'runs');
 }
 
-async function loadRun(directory) {
+function requireKnownRun(directory) {
   if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
-  return recordings.loadRun(directory);
+  return directory;
 }
 
 async function listRuns() {
@@ -205,30 +218,24 @@ app.whenReady().then(async () => {
     backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
 
-  ipcMain.handle('backend:run', async (event, operation, params) => {
-    assertSender(event);
+  handle('backend:run', async (operation, params) => {
     if (installingUpdate) throw new Error('Wait for the update to finish');
     if (backendError) throw backendError;
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
-    if (operation === 'analyze' && !knownRuns.has(params?.directory)) throw new Error('Select a saved run first');
+    if (operation === 'analyze') requireKnownRun(params?.directory);
     if (operation === 'calibrate' && params?.output) {
       if (params.output !== selectedOutput) throw new Error('Choose the calibration folder with the file picker');
       selectedOutput = null;
     }
     return backend.run(operation, params);
   });
-  ipcMain.handle('backend:cancel', event => {
-    assertSender(event);
-    return backend?.cancel() ?? false;
-  });
-  ipcMain.handle('backend:manualIntent', (event, value) => {
-    assertSender(event);
+  handle('backend:cancel', () => backend?.cancel() ?? false);
+  handle('backend:manualIntent', (value) => {
     if (installingUpdate) throw new Error('Wait for the update to finish');
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
-  ipcMain.handle('window:setTheme', (event, theme, caption) => {
-    assertSender(event);
+  handle('window:setTheme', (theme, caption) => {
     if (!['system', 'light', 'dark'].includes(theme)) throw new Error('Unknown appearance');
     if (caption !== undefined && (!caption || !/^#[0-9a-f]{6}$/i.test(caption.color) || !/^#[0-9a-f]{6}$/i.test(caption.symbolColor))) throw new Error('Invalid window colors');
     nativeTheme.themeSource = theme;
@@ -241,13 +248,11 @@ app.whenReady().then(async () => {
       height: titleBarOverlayHeight,
     });
   });
-  ipcMain.handle('backend:preview', (event, config) => {
-    assertSender(event);
+  handle('backend:preview', (config) => {
     if (backendError) throw backendError;
     return backend.preview(config);
   });
-  ipcMain.handle('calibration:pickOutput', async event => {
-    assertSender(event);
+  handle('calibration:pickOutput', async () => {
     if (backend?.active) throw new Error('Finish the current operation first');
     const base = dataDirectory();
     await fs.mkdir(base, { recursive: true });
@@ -259,12 +264,10 @@ app.whenReady().then(async () => {
     selectedOutput = result.filePath;
     return result.filePath;
   });
-  ipcMain.handle('reference:get', async (event, uuid) => {
-    assertSender(event);
+  handle('reference:get', async (uuid) => {
     return Number((await readSettings(referenceFile(), {}))[uuidKey(uuid)]) || 0;
   });
-  ipcMain.handle('reference:set', async (event, uuid, angle) => {
-    assertSender(event);
+  handle('reference:set', async (uuid, angle) => {
     if (!Number.isFinite(angle) || Math.abs(angle) > 100) throw new Error('Reference angle must be within ±100 rad');
     const map = await readSettings(referenceFile(), {});
     map[uuidKey(uuid)] = angle;
@@ -273,19 +276,16 @@ app.whenReady().then(async () => {
     await fs.writeFile(temp, JSON.stringify(map));
     await fs.rename(temp, referenceFile());
   });
-  ipcMain.handle('updates:info', event => {
-    assertSender(event);
+  handle('updates:info', () => {
     return { version: app.getVersion(), updateError, updateResult: checkedUpdate };
   });
-  ipcMain.handle('updates:check', async event => {
-    assertSender(event);
+  handle('updates:check', async () => {
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     return checkForUpdate();
   });
-  ipcMain.handle('updates:install', async event => {
-    assertSender(event);
+  handle('updates:install', async () => {
     // A check can change the updater's selected release. Let it finish before downloading.
     if (updateCheck) await updateCheck.catch(() => {});
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
@@ -305,9 +305,8 @@ app.whenReady().then(async () => {
       handedOff = true;
     } finally { if (!handedOff) installingUpdate = false; }
   });
-  ipcMain.handle('runs:list', async event => { assertSender(event); return listRuns(); });
-  ipcMain.handle('runs:pick', async event => {
-    assertSender(event);
+  handle('runs:list', listRuns);
+  handle('runs:pick', async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Open motor recording' });
     if (selection.canceled || !selection.filePaths.length) return null;
     const directory = selection.filePaths[0];
@@ -315,53 +314,32 @@ app.whenReady().then(async () => {
     await rememberRun(directory);
     return result;
   });
-  ipcMain.handle('runs:load', async (event, directory) => {
-    assertSender(event);
-    return loadRun(directory);
+  handle('runs:load', directory => recordings.loadRun(requireKnownRun(directory)));
+  handleRecordingWrite('runs:export', async (directory, file = null) => {
+    const run = await recordings.inspectRun(directory);
+    if (file !== null && !recordings.SINGLE_FILES.includes(file)) throw new Error('Choose an available recording file');
+    if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
+    const extension = file ? path.extname(file).slice(1) : 'zip';
+    const selection = await dialog.showSaveDialog(window, {
+      title: file ? `Download ${file}` : 'Download calibration run',
+      defaultPath: path.join(app.getPath('downloads'), recordings.exportName(run, file)),
+      filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+    });
+    if (selection.canceled || !selection.filePath) return null;
+    return await recordings.exportRun(directory, selection.filePath, file);
   });
-  ipcMain.handle('runs:export', async (event, directory, file = null) => {
-    assertSender(event);
-    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
-    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
-    recordingOperation = true;
-    try {
-      const run = await recordings.inspectRun(directory);
-      if (file !== null && !recordings.SINGLE_FILES.includes(file)) throw new Error('Choose an available recording file');
-      if (file && !run.files.includes(file)) throw new Error('Recording file is missing');
-      const extension = file ? path.extname(file).slice(1) : 'zip';
-      const selection = await dialog.showSaveDialog(window, {
-        title: file ? `Download ${file}` : 'Download calibration run',
-        defaultPath: path.join(app.getPath('downloads'), recordings.exportName(run, file)),
-        filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
-      });
-      if (selection.canceled || !selection.filePath) return null;
-      return await recordings.exportRun(directory, selection.filePath, file);
-    } finally { recordingOperation = false; }
+  handleRecordingWrite('runs:delete', async (directory) => {
+    await recordings.deleteRun(directory);
+    knownRuns.delete(directory);
+    await updateRecent(directory, false);
+    return { directory };
   });
-  ipcMain.handle('runs:delete', async (event, directory) => {
-    assertSender(event);
-    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
-    if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
-    recordingOperation = true;
-    try {
-      await recordings.deleteRun(directory);
-      knownRuns.delete(directory);
-      await updateRecent(directory, false);
-      return { directory };
-    } finally { recordingOperation = false; }
-  });
-  ipcMain.handle('runs:show', async (event, directory) => {
-    assertSender(event);
-    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
+  handle('runs:show', async (directory) => {
+    requireKnownRun(directory);
     shell.showItemInFolder(path.join(directory, 'report.json'));
   });
-  ipcMain.handle('runs:copyPath', async (event, directory) => {
-    assertSender(event);
-    if (!knownRuns.has(directory)) throw new Error('Select a saved run first');
-    await clipboard.writeText(directory);
-  });
-  ipcMain.handle('links:firmwareRelease', async (event, model) => {
-    assertSender(event);
+  handle('runs:copyPath', directory => clipboard.writeText(requireKnownRun(directory)));
+  handle('links:firmwareRelease', async (model) => {
     const release = require('../src/firmware_catalog.json').find(entry => entry.model === model);
     const page = release
       ? new URL('.', release.url).href.replace('/releases/download/', '/releases/tag/').replace(/\/$/, '')

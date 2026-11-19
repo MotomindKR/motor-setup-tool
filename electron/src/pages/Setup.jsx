@@ -161,11 +161,7 @@ function RegisterPanel({ s, a, c }) {
             <>
               <Field
                 label="New value"
-                hint={
-                  r?.editable
-                    ? `${conciseNumber(r.min)} to ${conciseNumber(r.max)}`
-                    : "Read only"
-                }
+                hint={`${conciseNumber(r.min)} to ${conciseNumber(r.max)}`}
               >
                 {r?.choices?.length ? (
                   <Choice
@@ -175,9 +171,7 @@ function RegisterPanel({ s, a, c }) {
                       value: String(ch.value),
                       label: ch.label,
                     }))}
-                    disabled={
-                      !s.registerRead || !r?.editable || c.busy || !c.motor
-                    }
+                    disabled={!s.registerRead || c.busy}
                     placeholder="Read first"
                   />
                 ) : (
@@ -188,9 +182,7 @@ function RegisterPanel({ s, a, c }) {
                     placeholder="Read first"
                     value={s.registerValue}
                     onValueChange={a.setRegisterValue}
-                    disabled={
-                      !s.registerRead || !r?.editable || c.busy || !c.motor
-                    }
+                    disabled={!s.registerRead || c.busy}
                   />
                 )}
               </Field>
@@ -225,7 +217,6 @@ export function SetupPage({ s, a, c }) {
         Scan above to open motor settings.
       </Empty>
     );
-  const blocked = c.busy || !c.motor;
   const spec = s.preview?.spec;
   return (
     <div className="stack">
@@ -240,7 +231,7 @@ export function SetupPage({ s, a, c }) {
               max={s.referenceUnit === "deg" ? (100 * 180) / Math.PI : 100}
               value={s.referenceInput}
               onValueChange={a.setReferenceInput}
-              disabled={blocked}
+              disabled={c.busy}
             />
             <Field label="Unit">
               <Choice
@@ -250,14 +241,14 @@ export function SetupPage({ s, a, c }) {
                   { value: "rad", label: "Radians" },
                   { value: "deg", label: "Degrees" },
                 ]}
-                disabled={blocked}
+                disabled={c.busy}
               />
             </Field>
           </div>
           <Button
             className="full"
             variant="outline"
-            disabled={blocked}
+            disabled={c.busy}
             onClick={() => a.zero()}
           >
             <Target />
@@ -278,21 +269,13 @@ export function SetupPage({ s, a, c }) {
             placeholder="1–254"
             value={s.newId}
             onValueChange={a.setNewId}
-            disabled={blocked}
+            disabled={c.busy}
           />
           <Button
             className="full"
             variant="outline"
             onClick={a.changeId}
-            disabled={
-              blocked ||
-              !s.newId.trim() ||
-              !Number.isInteger(Number(s.newId)) ||
-              Number(s.newId) < 1 ||
-              Number(s.newId) > 254 ||
-              Number(s.newId) === s.motor?.id ||
-              Number(s.newId) === Number(s.connection.hostId)
-            }
+            disabled={!c.changeId}
           >
             <Cpu />
             Change ID
@@ -308,7 +291,7 @@ export function SetupPage({ s, a, c }) {
           <Button
             className="full"
             variant="outline"
-            disabled={blocked}
+            disabled={c.busy}
             onClick={a.prepareFirmware}
           >
             <ArrowDownToLine />
@@ -327,7 +310,7 @@ export function SetupPage({ s, a, c }) {
             <Button
               variant="destructive"
               size="sm"
-              disabled={blocked || !s.firmware || s.firmware.id !== s.motor?.id}
+              disabled={!c.updateFirmware}
               onClick={a.updateFirmware}
             >
               <Upload />

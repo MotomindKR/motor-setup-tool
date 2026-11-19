@@ -95,18 +95,10 @@ impl Register {
     fn for_model(&self, model: &str) -> Self {
         let mut item = self.clone();
         if let Some(change) = self.overrides.get(model) {
-            if let Some(value) = change.readable {
-                item.readable = value;
-            }
-            if let Some(value) = change.writable {
-                item.writable = value;
-            }
-            if let Some(value) = change.editable {
-                item.editable = value;
-            }
-            if let Some(value) = change.persistence {
-                item.persistence = value;
-            }
+            item.readable = change.readable.unwrap_or(item.readable);
+            item.writable = change.writable.unwrap_or(item.writable);
+            item.editable = change.editable.unwrap_or(item.editable);
+            item.persistence = change.persistence.unwrap_or(item.persistence);
             if let Some(value) = &change.availability {
                 item.availability = value.clone();
             }

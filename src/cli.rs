@@ -612,21 +612,12 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
                 };
                 config = requested_config(&config, requested)?;
             } else {
-                if let Some(seconds) = args.train_seconds {
-                    config.train_seconds = seconds;
-                }
-                if let Some(seconds) = args.validation_seconds {
-                    config.validation_seconds = seconds;
-                }
-                if let Some(v) = args.torque_limit {
-                    config.torque_limit = v;
-                }
-                if let Some(v) = args.speed_limit {
-                    config.speed_limit = v;
-                }
-                if let Some(v) = args.travel_limit {
-                    config.travel_limit = v;
-                }
+                config.train_seconds = args.train_seconds.unwrap_or(config.train_seconds);
+                config.validation_seconds =
+                    args.validation_seconds.unwrap_or(config.validation_seconds);
+                config.torque_limit = args.torque_limit.unwrap_or(config.torque_limit);
+                config.speed_limit = args.speed_limit.unwrap_or(config.speed_limit);
+                config.travel_limit = args.travel_limit.unwrap_or(config.travel_limit);
                 config.validate()?;
             }
             crate::cancel::check(cancel)?;
@@ -850,13 +841,17 @@ fn monitor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{CommandFactory, error::ErrorKind};
+
+    fn parse(args: &str) -> clap::error::Result<Cli> {
+        Cli::try_parse_from(std::iter::once("tool").chain(args.split_ascii_whitespace()))
+    }
 
     #[test]
     fn adapter_commands_only_expose_socketcan_and_direct_usb() {
-        assert!(Cli::try_parse_from(["tool", "can", "list"]).is_ok());
-        assert!(Cli::try_parse_from(["tool", "can", "usb-list"]).is_ok());
-        assert!(Cli::try_parse_from(["tool", "can", "serial-list"]).is_err());
+        assert!(parse("can list").is_ok());
+        assert!(parse("can usb-list").is_ok());
+        assert!(parse("can serial-list").is_err());
     }
 
     #[test]
@@ -904,80 +899,49 @@ mod tests {
     #[test]
     fn register_cli_accepts_negative_offsets_and_integer_flags() {
         for (index, value) in [("0x702B", "-1.25"), ("0x7029", "1")] {
-            assert!(
-                Cli::try_parse_from([
-                    "tool",
-                    "register",
-                    "write",
-                    "--id",
-                    "127",
-                    "--index",
-                    index,
-                    "--value",
-                    value,
-                    "--uuid",
-                    "0000000000000000",
-                    "--expected-raw",
-                    "00000000",
-                    "--yes"
-                ])
-                .is_ok()
+            let command = format!(
+                "register write --id 127 --index {index} --value {value} --uuid 0000000000000000 --expected-raw 00000000 --yes"
             );
+            assert!(parse(&command).is_ok(), "{command}");
         }
     }
 
     #[test]
-    fn motion_requires_explicit_confirmation_and_invalid_commands_never_open_gui() {
+    fn motor_changes_require_explicit_confirmation() {
+        for command in [
+            "calibrate --id 127",
+            "jog --id 127 --speed -0.5 --seconds 2",
+            "zero --id 127",
+            "set-id --id 127 --new-id 1",
+            "firmware update --id 127",
+            "register write --id 127 --index 0x7010 --value 1 --uuid 0000000000000000 --expected-raw 00000000",
+        ] {
+            assert_eq!(
+                parse(command).err().unwrap().kind(),
+                ErrorKind::MissingRequiredArgument,
+                "{command}"
+            );
+            assert!(parse(&format!("{command} --yes")).is_ok(), "{command}");
+        }
+    }
+
+    #[test]
+    fn cli_rejects_invalid_input_and_shows_help_without_a_command() {
         Cli::command().debug_assert();
         for command in [
-            vec!["calibrate", "--id", "127"],
-            vec!["jog", "--id", "127", "--speed", "0.5", "--seconds", "2"],
-            vec!["zero", "--id", "127"],
-            vec!["set-id", "--id", "127", "--new-id", "1"],
-            vec!["firmware", "update", "--id", "127"],
-            vec![
-                "register",
-                "write",
-                "--id",
-                "127",
-                "--index",
-                "0x7010",
-                "--value",
-                "1",
-                "--uuid",
-                "0000000000000000",
-                "--expected-raw",
-                "00000000",
-            ],
-            vec!["calibrat"],
-            vec!["--misspelled"],
-            vec!["monitor", "--id", "0"],
-            vec!["monitor", "--id", "127", "--seconds", "NaN"],
+            "calibrat",
+            "--misspelled",
+            "monitor --id 0",
+            "monitor --id 127 --seconds NaN",
         ] {
-            assert!(
-                Cli::try_parse_from(std::iter::once("motor-setup-tool").chain(command)).is_err()
-            );
+            assert!(parse(command).is_err(), "{command}");
         }
-        assert!(
-            Cli::try_parse_from([
-                "tool",
-                "jog",
-                "--id",
-                "127",
-                "--speed",
-                "-0.5",
-                "--seconds",
-                "2",
-                "--yes"
-            ])
-            .is_ok()
-        );
-        assert!(Cli::try_parse_from(["tool", "self-check"]).is_ok());
+        assert!(parse("self-check").is_ok());
         assert_eq!(register_index("0x7010").unwrap(), 0x7010);
         assert!(register_index("0xzzzz").is_err());
         assert_eq!(
-            Cli::try_parse_from(["tool"]).err().unwrap().kind(),
-            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            parse("").err().unwrap().kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
     }
 }

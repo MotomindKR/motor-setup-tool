@@ -15,7 +15,7 @@ import { Slider } from "@motomindkr/ui/components/slider";
 import { Separator } from "@motomindkr/ui/components/separator";
 import { Panel, Button, Check, Empty, Metric } from "../ui.jsx";
 import { Chart } from "../Chart.jsx";
-import { numberText } from "../controller.mjs";
+import { maxJogSpeed, numberText } from "../controller.mjs";
 
 function JogButton({ direction, disabled, a, children }) {
   const release = () => a.release();
@@ -57,6 +57,7 @@ export function TestPage({ s, a, c }) {
     );
   const status = s.manualStatus;
   const canDisable = c.manual && Boolean(status?.enabled || status?.preparing);
+  const controlsLocked = (c.busy && !c.manual) || canDisable;
   const feedbackLabel =
     status?.preparing && c.manual
       ? "Checking watchdog"
@@ -174,27 +175,16 @@ export function TestPage({ s, a, c }) {
             className="speed-slider"
             aria-labelledby="jog-speed-label"
             min={0.01}
-            max={Math.max(
-              0.01,
-              Math.min(Number(s.config?.speed_limit || 1) * 0.1, 1),
-            )}
+            max={maxJogSpeed(s.config)}
             step={0.01}
             value={Number(s.jogSpeed)}
             onValueChange={a.setJogSpeed}
-            disabled={
-              !c.motor ||
-              (c.busy && !c.manual) ||
-              Boolean(c.manual && (status?.enabled || status?.preparing))
-            }
+            disabled={controlsLocked}
           />
           <Check
             checked={s.jogReviewed}
             onChange={a.reviewJog}
-            disabled={
-              !c.motor ||
-              (c.busy && !c.manual) ||
-              Boolean(c.manual && (status?.enabled || status?.preparing))
-            }
+            disabled={controlsLocked}
           >
             Motor secured · shaft clear
           </Check>
