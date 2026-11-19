@@ -46,8 +46,7 @@ jobs:
               echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
             done
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        if: runner.os != 'Linux'
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - uses: actions/setup-node@v7
@@ -92,13 +91,8 @@ jobs:
           hdiutil detach "$RUNNER_TEMP/mujoco-mount"
           echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
       - name: Build Rust backend
-        if: runner.os != 'Linux'
         run: cargo build --locked --release
-      - name: Build Linux executables with a glibc 2.28 baseline
-        if: runner.os == 'Linux'
-        run: bash packaging/build-linux-release.sh --locked
       - name: Build and test the native DXL worker
-        if: runner.os != 'Linux'
         run: |
           python -m pip install -r dxl/requirements-build.txt pytest
           python -m pytest -q -o pythonpath=dxl dxl/tests
@@ -145,11 +139,7 @@ jobs:
           version=$(node -p "require('./package.json').version")
           cd ..
           sed -i "/^version = /c\version = \"$version\"" Cargo.toml
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            bash packaging/build-linux-release.sh --offline
-          else
-            cargo build --offline --release
-          fi
+          cargo build --offline --release
           npm --prefix electron run package:installers
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7

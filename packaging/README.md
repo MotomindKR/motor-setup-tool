@@ -23,9 +23,9 @@ does not publish a Windows ARM64 library.
    [release workflow](../.github/workflows/release.yml) builds all four variants,
    verifies checksums, and adds installer links to the release notes.
 
-The Linux executables are built against glibc 2.28. The workflow checks DEB
-installation and app startup on Ubuntu 20.04, 22.04, 24.04, and 26.04 for x64
-and ARM64.
+Linux releases are built natively on Ubuntu 22.04 for x64 and ARM64.
+The [release workflow](../.github/workflows/release.yml) lists the Ubuntu
+versions used to test the packaged app.
 
 A manual release workflow run on a branch exercises both upgrade directions on
 Windows and Linux DEB. It installs the previous stable release, updates to the
