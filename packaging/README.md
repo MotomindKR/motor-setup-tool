@@ -58,8 +58,9 @@ installation directory, preserving user/system scope when both copies exist.
 Its supported process-check hook waits for other app/backend processes to close
 normally and aborts after 30 seconds; it never force-stops a motor operation.
 
-Updates run only through **Settings → Check for update → Install update**.
-Automatic downloading and installation on ordinary app exit are disabled.
+The packaged app checks for updates at startup and every four hours while open.
+A dot on **Settings** indicates an available update. Choose **Install update**
+to download and install it, or **Check for update** to check immediately.
 The library validates download hashes and handles installation and restart.
 Motor activity blocks installation, including a second check after downloading.
 Diagnostics are in `update.log` in the app's user data folder; the restarted app

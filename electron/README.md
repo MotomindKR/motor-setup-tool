@@ -86,6 +86,7 @@ Only one backend operation runs at a time. Stop signals the CLI, whose worker
 disables the motor before exit. Opening the app or a recording sends no motor
 command. Firmware transfer finishes before the window closes.
 
-**Settings** shows the version, appearance mode, and updates. The update button
-verifies and installs Linux and Windows updates when the motor is idle. macOS
-opens the DMG for installation.
+**Settings** shows the version and appearance. The packaged app checks for
+updates in the background and marks the Settings button when one is available.
+Choose **Install update** when the motor is idle. For macOS builds with ad-hoc
+signing, install the DMG from the release page.

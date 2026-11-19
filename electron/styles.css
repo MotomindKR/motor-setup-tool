@@ -87,6 +87,21 @@ svg {
 .app-sidebar-footer {
   padding: 12px;
 }
+.settings-menu-icon {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.settings-update-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--sidebar);
+  border-radius: 50%;
+  background: var(--primary);
+}
 .app-sidebar-separator {
   width: auto;
   margin-inline: 12px;

@@ -460,6 +460,30 @@ test("Motomind sidebar collapses and opens as a mobile sheet", async ({
   await expect(page.getByRole("main", { name: "Recordings" })).toBeVisible();
 });
 
+test("a background update marks Settings in the collapsed sidebar", async ({ page }) => {
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
+  const dot = settings.locator(".settings-update-dot");
+  await expect(dot).toHaveCount(0);
+
+  await page.evaluate(() => window.testMotor.emit({
+    type: "updateChecked",
+    result: { available: true, installable: true, version: "0.1.23" },
+  }));
+  await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+  await expect(settings).toHaveAccessibleDescription("Update available");
+  await expect(dot).toBeVisible();
+  await page.locator('[data-slot="sidebar-trigger"]').click();
+  await expect(dot).toBeVisible();
+
+  await settings.click();
+  await expect(page.getByText("Version 0.1.23 is available.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Install update" })).toBeEnabled();
+  await page.getByRole("button", { name: "Check for update" }).click();
+  await expect(page.getByText("You have the latest version.")).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dot).toHaveCount(0);
+});
+
 test("number fields show short decimals and retain the precise preset", async ({
   page,
 }) => {

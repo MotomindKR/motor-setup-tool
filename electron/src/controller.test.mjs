@@ -52,6 +52,7 @@ async function setup(t, overrides = {}) {
       return () => {};
     },
     onUpdateProgress: () => () => {},
+    updateInfo: async () => ({ version: "0.1.22" }),
     listRuns: async () => [],
     preview: async () => ({
       spec: {},

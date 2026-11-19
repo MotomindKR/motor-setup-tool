@@ -221,6 +221,7 @@ export function App({ controller }) {
             activeTab={s.tab}
             onNavigate={a.setTab}
             onSettings={a.openSettings}
+            updateAvailable={s.updateResult?.available}
           />
           <SidebarInset className="app-body" aria-label={page.title}>
             <div id="workspace" className="workspace" tabIndex={-1}>

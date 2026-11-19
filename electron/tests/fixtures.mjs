@@ -107,7 +107,7 @@ export function installBridge(data) {
     ],
     usb: data.usbAdapters ?? [],
   };
-  window.testMotor = { calls, intents, adapters };
+  window.testMotor = { calls, intents, adapters, emit: (event) => listener(event) };
   const result = {
     directory: "/recordings/1760000000000-RS-00",
     report: data.report,

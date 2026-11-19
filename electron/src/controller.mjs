@@ -217,7 +217,7 @@ export function createController(bridge, env = {}) {
     settingsOpen: false,
     version: "",
     updateMessage: "",
-    updateCandidate: null,
+    updateResult: null,
     checkingUpdate: false,
     installingUpdate: false,
   };
@@ -558,7 +558,8 @@ export function createController(bridge, env = {}) {
     }
   }
   function eventReceived(event) {
-    if (event.type === "updateFailure")
+    if (event.type === "updateChecked") set({ updateResult: event.result });
+    else if (event.type === "updateFailure")
       set({
         settingsOpen: true,
         version: event.version,
@@ -1104,45 +1105,25 @@ export function createController(bridge, env = {}) {
         notice(error.message, true);
       }
     },
-    async openSettings() {
-      set({ settingsOpen: true });
-      try {
-        const info = await bridge.updateInfo();
-        set({
-          version: info.version,
-          ...(info.updateError ? { updateMessage: info.updateError } : {}),
-        });
-      } catch (error) {
-        set({ updateMessage: error.message });
-      }
-    },
+    openSettings: () => set({ settingsOpen: true }),
     closeSettings: () => set({ settingsOpen: false }),
     async checkUpdate() {
+      if (s.checkingUpdate || s.installingUpdate) return;
       set({
         checkingUpdate: true,
-        updateCandidate: null,
-        updateMessage: "Checking GitHub releases…",
+        updateMessage: "Checking for updates…",
       });
       try {
         const result = await bridge.checkUpdate();
-        set({
-          updateCandidate:
-            result.available && result.installable ? result : null,
-          updateMessage: result.available
-            ? result.installable
-              ? `Version ${result.version} is available.`
-              : result.reason ||
-                `No installer for version ${result.version} on this computer yet.`
-            : "You have the latest version.",
-        });
+        set({ updateResult: result, updateMessage: "" });
       } catch (error) {
-        set({ updateMessage: error.message });
+        set({ updateMessage: readableError(error.message) });
       } finally {
         set({ checkingUpdate: false });
       }
     },
     async installUpdate() {
-      if (flags().busy || !s.updateCandidate) return;
+      if (flags().busy || s.checkingUpdate || !s.updateResult?.installable) return;
       set({ installingUpdate: true, updateMessage: "Downloading update…" });
       try {
         await bridge.installUpdate();
@@ -1158,6 +1139,16 @@ export function createController(bridge, env = {}) {
     const offUpdate = bridge.onUpdateProgress((message) =>
       set({ updateMessage: message }),
     );
+    bridge
+      .updateInfo()
+      .then((info) => {
+        set({
+          version: info.version,
+          updateResult: s.updateResult ?? info.updateResult ?? null,
+          updateMessage: s.updateMessage || info.updateError || "",
+        });
+      })
+      .catch(() => {});
     const timer = setInterval(() => {
       if (s.busy === "manual") {
         sendIntent();

@@ -54,8 +54,11 @@ server.listen(0, '127.0.0.1', () => {
             process.env.MOTOMIND_SMOKE_TAB = 'setup';
           }
           await window.webContents.executeJavaScript(`(async () => {
-            const update = await window.motorApp.checkUpdate();
-            if (!update.installable) throw new Error('The packaged app did not offer installation');
+            const deadline = Date.now() + 15000;
+            while (!(await window.motorApp.updateInfo()).updateResult?.installable) {
+              if (Date.now() >= deadline) throw new Error('The background check did not offer an update');
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
             await window.motorApp.installUpdate();
           })()`);
           assert.equal(Boolean(config.badChecksum), false, 'A corrupt download was accepted');

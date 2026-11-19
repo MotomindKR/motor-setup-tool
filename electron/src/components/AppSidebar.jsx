@@ -18,7 +18,13 @@ import {
   useSidebar,
 } from "@motomindkr/ui/components/sidebar";
 
-export function AppSidebar({ pages, activeTab, onNavigate, onSettings }) {
+export function AppSidebar({
+  pages,
+  activeTab,
+  onNavigate,
+  onSettings,
+  updateAvailable,
+}) {
   const { state, isMobile, setOpenMobile } = useSidebar();
   const compact = state === "collapsed" && !isMobile;
   const navigate = (tab) => {
@@ -72,13 +78,19 @@ export function AppSidebar({ pages, activeTab, onNavigate, onSettings }) {
           <SidebarMenuItem>
             <SidebarMenuButton
               aria-label="Settings"
-              tooltip="Settings"
+              aria-description={updateAvailable ? "Update available" : undefined}
+              tooltip={
+                updateAvailable ? "Settings · Update available" : "Settings"
+              }
               onClick={() => {
                 if (isMobile) setOpenMobile(false);
                 onSettings();
               }}
             >
-              <Settings2 />
+              <span className="settings-menu-icon" aria-hidden="true">
+                <Settings2 />
+                {updateAvailable && <span className="settings-update-dot" />}
+              </span>
               <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

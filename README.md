@@ -17,7 +17,7 @@ Classic CAN.
 | Ubuntu, Debian, or Mint | `.deb` for x64 or ARM64 |
 | Fedora, RHEL, or openSUSE | `.rpm` for x64 or ARM64 |
 
-MuJoCo is included. For updates, open **Settings → Check for update**.
+MuJoCo is included. A dot on **Settings** indicates an available update.
 
 ## Your first calibration
 

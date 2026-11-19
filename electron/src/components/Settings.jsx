@@ -12,6 +12,17 @@ import {
 import { Button, Field, Choice } from "../ui.jsx";
 
 export function Settings({ s, a, appearance, c }) {
+  const result = s.updateResult;
+  let updateMessage = s.updateMessage;
+  if (!updateMessage && result) {
+    if (!result.available) updateMessage = "You have the latest version.";
+    else if (result.installable)
+      updateMessage = `Version ${result.version} is available.`;
+    else
+      updateMessage =
+        result.reason ||
+        `No installer for version ${result.version} on this computer yet.`;
+  }
   return (
     <Dialog
       open={s.settingsOpen}
@@ -41,9 +52,9 @@ export function Settings({ s, a, appearance, c }) {
             {s.version ? `v${s.version}` : "Version unavailable"}
           </Badge>
         </div>
-        {s.updateMessage && (
+        {updateMessage && (
           <p className="field-hint" role="status">
-            {s.updateMessage}
+            {updateMessage}
           </p>
         )}
         <DialogFooter>
@@ -55,8 +66,11 @@ export function Settings({ s, a, appearance, c }) {
             <RefreshCw className={s.checkingUpdate ? "spinning" : ""} />
             Check for update
           </Button>
-          {s.updateCandidate && (
-            <Button onClick={a.installUpdate} disabled={c.busy}>
+          {result?.installable && (
+            <Button
+              onClick={a.installUpdate}
+              disabled={c.busy || s.checkingUpdate}
+            >
               <ArrowDownToLine />
               Install update
             </Button>

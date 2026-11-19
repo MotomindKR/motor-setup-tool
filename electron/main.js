@@ -12,6 +12,7 @@ if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop')
 
 const root = path.resolve(__dirname, '..');
 const titleBarHeight = 40;
+const updateCheckInterval = 4 * 60 * 60 * 1000;
 // Leave the header's bottom border below the opaque native window controls.
 const titleBarOverlayHeight = process.platform === 'darwin' ? titleBarHeight : titleBarHeight - 1;
 const knownRuns = new Set();
@@ -33,6 +34,7 @@ let backend;
 let backendError;
 let quitting = false;
 let checkedUpdate = null;
+let updateCheck = null;
 let installingUpdate = false;
 let updateError = null;
 let managedUpdater = null;
@@ -41,6 +43,15 @@ let recordingOperation = false;
 function send(event) {
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
   if (quitting && event.type === 'finish') app.quit();
+}
+
+function checkForUpdate() {
+  updateCheck ??= managedUpdater.check().then(result => {
+    checkedUpdate = result;
+    send({ type: 'updateChecked', result });
+    return result;
+  }).finally(() => { updateCheck = null; });
+  return updateCheck;
 }
 
 function assertSender(event) {
@@ -166,6 +177,7 @@ app.whenReady().then(async () => {
     updateError = await updater.readUpdateError(app);
   } catch { /* No previous update error. */ }
   managedUpdater = updater.createUpdater(app, error => {
+    if (!installingUpdate) return;
     installingUpdate = false;
     send({ type: 'updateFailure', message: error.message, version: app.getVersion() });
   });
@@ -254,18 +266,19 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('updates:info', event => {
     assertSender(event);
-    return { version: app.getVersion(), updateError };
+    return { version: app.getVersion(), updateError, updateResult: checkedUpdate };
   });
   ipcMain.handle('updates:check', async event => {
     assertSender(event);
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
-    checkedUpdate = await managedUpdater.check();
-    return checkedUpdate;
+    return checkForUpdate();
   });
   ipcMain.handle('updates:install', async event => {
     assertSender(event);
+    // A check can change the updater's selected release. Let it finish before downloading.
+    if (updateCheck) await updateCheck.catch(() => {});
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.installable) throw new Error('Check for an available update first');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
@@ -345,6 +358,14 @@ app.whenReady().then(async () => {
     await shell.openExternal('https://github.com/RobStride/Product_Information/releases/tag/V26.05.19');
   });
   createWindow();
+  if (managedUpdater && !process.env.MOTOMIND_SMOKE_PATH) {
+    const checkInBackground = () => {
+      if (!installingUpdate && !quitting) checkForUpdate().catch(() => {});
+    };
+    checkInBackground();
+    const timer = setInterval(checkInBackground, updateCheckInterval);
+    app.once('will-quit', () => clearInterval(timer));
+  }
 });
 
 app.on('before-quit', event => {
