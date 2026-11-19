@@ -118,20 +118,20 @@ const MotionCharts = React.memo(function MotionCharts({ replay, visible, residua
   });
 });
 
-function Report({ s, a, c }) {
+function Recording({ s, a, c }) {
   const r = s.report;
-  const replay = r.replays.find((item) => item.name === s.trace);
-  const ref = Number(r.reference_angle_rad) || 0;
+  const run = s.runs.find((item) => item.directory === s.directory);
+  const motorId = r?.motor_id ?? run?.motorId;
   const folder = s.directory?.split(/[\\/]/).at(-1);
   const recordedAt =
-    s.runs.find((run) => run.directory === s.directory)?.timestamp ??
+    run?.timestamp ??
     Number(/^\d{13}(?=-|$)/.exec(folder || "")?.[0]);
   return (
     <div className="stack report">
       <div className="section-heading">
         <div>
           <h2>
-            {r.model} <span className="muted">/ ID {r.motor_id}</span>
+            {r?.model || run?.model || folder} {motorId != null && <span className="muted">/ ID {motorId}</span>}
           </h2>
           <p className="report-path" title={s.directory}>
             {Number.isFinite(recordedAt)
@@ -145,9 +145,9 @@ function Report({ s, a, c }) {
             Actuator UUID <code>{s.reportUuid || "Not recorded"}</code>
           </p>
         </div>
-        <Badge variant={r.accepted ? "success" : "warning"}>
-          {r.accepted ? <CheckCircle2 /> : <CircleAlert />}
-          {r.accepted ? "Validated" : "Needs improvement"}
+        <Badge variant={r?.accepted ? "success" : "warning"}>
+          {r?.accepted ? <CheckCircle2 /> : <CircleAlert />}
+          {r ? (r.accepted ? "Validated" : "Needs improvement") : "No report"}
         </Badge>
       </div>
       <div className="report-actions">
@@ -165,11 +165,22 @@ function Report({ s, a, c }) {
           <Copy />
           Copy path
         </Button>
-        <Button variant="ghost" size="sm" onClick={a.refit} disabled={c.busy}>
+        <Button variant="ghost" size="sm" onClick={a.refit} disabled={c.busy || !s.reportFiles.includes("session.json")}>
           <RefreshCw />
           Refit recording
         </Button>
       </div>
+      {r && <Report s={s} a={a} />}
+    </div>
+  );
+}
+
+function Report({ s, a }) {
+  const r = s.report;
+  const replay = r.replays.find((item) => item.name === s.trace);
+  const ref = Number(r.reference_angle_rad) || 0;
+  return (
+    <>
       <div className="report-toolbar">
         <Segments
           label="Recording segment"
@@ -292,7 +303,7 @@ function Report({ s, a, c }) {
             .join("\n")}
         </p>
       </Disclosure>
-    </div>
+    </>
   );
 }
 export function FilesPage({ s, a, c }) {
@@ -337,7 +348,7 @@ export function FilesPage({ s, a, c }) {
                 variant="ghost"
                 className="recording-open"
                 onClick={() => a.openRun(item.directory)}
-                disabled={c.busy || item.completed === false}
+                disabled={c.busy}
                 aria-current={
                   s.directory === item.directory ? "true" : undefined
                 }
@@ -358,7 +369,7 @@ export function FilesPage({ s, a, c }) {
                   </ItemDescription>
                   <span className="recording-uuid">
                     {item.uuid ? `UUID ${item.uuid}` : "UUID not recorded"}
-                    {item.completed === false ? " · Incomplete run" : ""}
+                    {item.completed === false ? " · No report" : ""}
                   </span>
                 </ItemContent>
               </Button>
@@ -381,8 +392,8 @@ export function FilesPage({ s, a, c }) {
         )}
       </Panel>
       <div className="task-content">
-        {s.report ? (
-          <Report s={s} a={a} c={c} />
+        {s.directory ? (
+          <Recording s={s} a={a} c={c} />
         ) : (
           <Panel className="files-empty">
             <Empty icon={FolderOpen} title="No recording open">

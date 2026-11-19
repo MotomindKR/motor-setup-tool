@@ -13,9 +13,7 @@ import { Button, Field, Choice } from "../ui.jsx";
 
 export function Settings({ s, a, appearance, c }) {
   const result = s.updateResult;
-  const updateMessage = s.updateMessage || (result && (
-    result.available ? `Version ${result.version} is available.` : "You have the latest version."
-  ));
+  const updateMessage = s.updateMessage || (result && !result.available && "You have the latest version.");
   return (
     <Dialog
       open={s.settingsOpen}
@@ -45,6 +43,7 @@ export function Settings({ s, a, appearance, c }) {
             {s.version ? `v${s.version}` : "Version unavailable"}
           </Badge>
         </div>
+        {result?.available && <p className="field-hint" role="status">Version {result.version} is available.</p>}
         {updateMessage && (
           <p className="field-hint" role="status">
             {updateMessage}
@@ -61,7 +60,7 @@ export function Settings({ s, a, appearance, c }) {
           </Button>
           {result?.available && (
             <Button
-              onClick={a.installUpdate}
+              onClick={() => a.installUpdate(result.version)}
               disabled={c.busy || s.checkingUpdate}
             >
               <ArrowDownToLine />

@@ -56,19 +56,20 @@ async function serve() {
   async function exercise(window) {
     const evaluate = source => window.webContents.executeJavaScript(source);
     await waitFor(() => evaluate(`document.querySelector('button[aria-label="Refresh adapters"]')?.disabled === false`), 'Startup did not finish');
-    if (config.badChecksum) {
-      await waitFor(() => evaluate('(async () => (await window.motorApp.updateInfo()).updateResult?.available)()'), 'The background check did not offer an update');
-    } else {
-      assert.equal(await evaluate('(async () => (await window.motorApp.checkUpdate()).available)()'), true);
-    }
+    const offer = config.badChecksum
+      ? await waitFor(() => evaluate('(async () => { const { updateResult } = await window.motorApp.updateInfo(); return updateResult?.available && updateResult })()'), 'The background check did not offer an update')
+      : await evaluate('window.motorApp.checkUpdate()');
+    assert.equal(offer.available, true);
+    assert.equal(offer.version, config.version);
+    const install = () => evaluate(`window.motorApp.installUpdate(${JSON.stringify(offer.version)})`);
     assert.equal(earlyDownload, false, 'Checking for an update downloaded the installer');
     installRequested = true;
     if (!config.badChecksum) {
       if (process.platform !== 'win32') process.env.MOTOMIND_SMOKE_PATH = config.screenshot;
-      await evaluate('window.motorApp.installUpdate()');
+      await install();
       return;
     }
-    await assert.rejects(evaluate('window.motorApp.installUpdate()'), /checksum mismatch/i);
+    await assert.rejects(install(), /checksum mismatch/i);
     assert.equal(fs.existsSync(config.handoff), false, 'The updater accepted the corrupt download');
     const visibleError = await waitFor(async () => {
       const text = await evaluate(`document.querySelector('[role="dialog"]')?.innerText || ""`);

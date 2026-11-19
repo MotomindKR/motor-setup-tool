@@ -8,9 +8,6 @@ fn rmse(a: &[f64], b: &[f64]) -> f64 {
 pub fn analyze(dir: &Path, cancel: &AtomicBool, progress: impl Fn(WorkProgress)) -> Result<Report> {
     progress(WorkProgress::fitting(0., "Checking recorded measurements"));
     let recording = fs::File::open(dir.join("session.json")).context("Open session.json")?;
-    recording
-        .try_lock()
-        .context("Cannot lock session.json for refitting")?;
     let mut session: Session =
         serde_json::from_reader(io::BufReader::new(&recording)).context("Invalid session.json")?;
     anyhow::ensure!(

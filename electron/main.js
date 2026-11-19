@@ -104,6 +104,7 @@ function handle(channel, handler) {
 function handleRecordingWrite(channel, handler) {
   handle(channel, async (directory, ...args) => {
     requireKnownRun(directory);
+    if (backendError) throw backendError;
     if (backend?.active || installingUpdate || recordingOperation) throw new Error('Finish the current operation first');
     recordingOperation = true;
     try { return await handler(directory, ...args); }
@@ -289,21 +290,21 @@ app.whenReady().then(async () => {
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     return checkForUpdate();
   });
-  handle('updates:install', async () => {
+  handle('updates:install', async version => {
     // A check can change the updater's selected release. Let it finish before downloading.
-    if (updateCheck) await updateCheck.catch(() => {});
+    if (updateCheck) await updateCheck;
     if (backend?.active) throw new Error('Stop the motor operation before installing an update');
     if (!checkedUpdate?.available) throw new Error('Check for an available update first');
+    if (checkedUpdate.version !== version) throw new Error('The available update changed. Review the new version before installing.');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
     if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     if (checkedUpdate.releasePage) return shell.openExternal(checkedUpdate.releasePage);
     installingUpdate = true;
-    const release = checkedUpdate;
     const progress = message => window?.webContents.send('updates:progress', message);
     let handedOff = false;
     try {
-      await managedUpdater.install(release.version, progress, () => {
+      await managedUpdater.install(version, progress, () => {
         if (backend?.active) throw new Error('Stop the motor operation before installing an update');
         if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
       });
@@ -315,7 +316,7 @@ app.whenReady().then(async () => {
     const selection = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Open motor recording' });
     if (selection.canceled || !selection.filePaths.length) return null;
     const directory = selection.filePaths[0];
-    const result = await recordings.loadRun(directory, { allowIncomplete: true });
+    const result = await recordings.loadRun(directory);
     await rememberRun(directory);
     return result;
   });
@@ -331,17 +332,18 @@ app.whenReady().then(async () => {
       filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
     });
     if (selection.canceled || !selection.filePath) return null;
-    return await recordings.exportRun(directory, selection.filePath, file);
+    return backend.withRecordingLock(directory, () => recordings.exportRun(directory, selection.filePath, file));
   });
   handleRecordingWrite('runs:delete', async (directory) => {
-    await recordings.deleteRun(directory);
+    await backend.withRecordingLock(directory, () => recordings.deleteRun(directory));
     knownRuns.delete(directory);
     await updateRecent(directory, false);
     return { directory };
   });
   handle('runs:show', async (directory) => {
     requireKnownRun(directory);
-    shell.showItemInFolder(path.join(directory, 'report.json'));
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
   });
   handle('runs:copyPath', directory => clipboard.writeText(requireKnownRun(directory)));
   handle('links:firmwareRelease', async (model) => {

@@ -114,7 +114,7 @@ export function installBridge(data) {
     directory: "/recordings/1760000000000-RS-00",
     uuid: "0102030405060708",
     report: data.report,
-    files: ["training.csv", "validation.csv", "calibration.json"],
+    files: ["session.json", "training.csv", "validation.csv", "calibration.json"],
   };
   let motor = {
     model: "RS-00",
@@ -222,7 +222,7 @@ export function installBridge(data) {
     openReleaseNotes: async () => {},
     updateInfo: async () => ({ version: "0.1.17" }),
     checkUpdate: async () => ({ available: false }),
-    installUpdate: async () => {},
+    installUpdate: async version => { calls.push({ operation: "installUpdate", version }); },
     manualIntent: async (intent) => {
       intents.push(intent);
       enabled = intent.enabled;

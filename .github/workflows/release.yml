@@ -32,7 +32,7 @@ jobs:
     env:
       MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify upstream firmware images
         if: matrix.platform == 'linux-x64'
         shell: bash
@@ -44,7 +44,7 @@ jobs:
               echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
             done
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -102,7 +102,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
         run: npm run package:installers
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: installers-${{ matrix.platform }}
@@ -130,7 +130,7 @@ jobs:
           cargo build --offline --release
           npm --prefix electron run package:installers
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: runner.os != 'macOS'
         with:
           name: next-patch-${{ matrix.platform }}
@@ -146,43 +146,16 @@ jobs:
       actions: read
       contents: read
 
-  publish:
-    name: Publish desktop installers
-    if: startsWith(github.ref, 'refs/tags/')
+  preview:
+    name: Preview release
+    if: github.ref_type == 'branch'
     needs: verify-installers
-    runs-on: ubuntu-22.04
+    uses: ./.github/workflows/release-assets.yml
+
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: verify-installers
+    uses: ./.github/workflows/release-assets.yml
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci --ignore-scripts
-        working-directory: electron
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: installers-*
-          merge-multiple: true
-          path: dist-electron
-      - name: Verify and publish
-        working-directory: dist-electron
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          node "$GITHUB_WORKSPACE/electron/update-metadata.js" . > "$RUNNER_TEMP/release-assets"
-          mapfile -t assets < "$RUNNER_TEMP/release-assets"
-          for asset in "${assets[@]}"; do
-            case "$asset" in *.yml|*.blockmap) continue ;; esac
-            cat "$asset.sha256"
-          done > SHA256SUMS
-          sha256sum -c SHA256SUMS
-          notes="$RUNNER_TEMP/release-notes.md"
-          node "$GITHUB_WORKSPACE/packaging/render-release-notes.mjs" "$GH_REPO" "$RELEASE_TAG" "$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md" SHA256SUMS > "$notes"
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes-file "$notes"
-          fi
-          gh release upload "$RELEASE_TAG" "${assets[@]}" SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --notes-file "$notes" --draft=false

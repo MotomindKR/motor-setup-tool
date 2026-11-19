@@ -65,6 +65,9 @@ enum Command {
     Calibrate(Calibrate),
     /// Refit a saved real recording; replaces analysis artifacts.
     Analyze { directory: PathBuf },
+    /// Hold a recording for a desktop file operation until its input pipe closes.
+    #[command(hide = true)]
+    LockRecording { directory: PathBuf },
     /// Stream disabled-motor feedback as JSON lines until Ctrl+C or timeout.
     Monitor {
         #[command(flatten)]
@@ -527,18 +530,12 @@ pub fn dispatch() -> Result<()> {
         last_progress: Cell::new(None),
     };
     let result = execute(command, &out, desktop_config);
-    if desktop {
-        return match result {
-            Err(error) if error.is::<crate::cancel::Cancelled>() => {
-                out.result(&json!({"cancelled":true}))
-            }
-            other => other,
-        };
+    match result {
+        Err(error) if desktop && error.is::<crate::cancel::Cancelled>() => {
+            out.result(&json!({"cancelled":true}))
+        }
+        other => other,
     }
-    if cancel.load(Ordering::Relaxed) {
-        anyhow::bail!("Command cancelled; active motor control has stopped");
-    }
-    result
 }
 
 fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>) -> Result<()> {
@@ -628,6 +625,7 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
             } else {
                 bridge::new_run_dir()?
             };
+            let _recording = bridge::lock_recording(&dir)?;
             bridge::write_json(&dir.join("config.json"), &config)?;
             if out.desktop {
                 output_line(&json!({"type":"recordingCreated","directory":dir}))?;
@@ -653,12 +651,22 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
             )
         }
         Command::Analyze { directory } => {
+            let _recording = bridge::lock_recording(&directory)?;
             let report = pipeline::analyze(&directory, cancel, |p| out.show(p))?;
             if out.desktop {
                 out.result(&json!({"directory":directory,"accepted":report.accepted}))
             } else {
                 out.result(&report)
             }
+        }
+        Command::LockRecording { directory } => {
+            ensure!(!out.desktop, "Use lock-recording directly");
+            let _recording = bridge::lock_recording(&directory)?;
+            let mut stdout = io::stdout().lock();
+            writeln!(stdout, "locked")?;
+            stdout.flush()?;
+            io::copy(&mut io::stdin().lock(), &mut io::sink())?;
+            Ok(())
         }
         Command::Monitor { target, seconds } => monitor(target, seconds, None, out),
         Command::ManualSession(target) => manual_session(target, out),
@@ -702,8 +710,8 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
         Command::Firmware {
             command: FirmwareCommand::Prepare(target),
         } => {
-            let (c, _) = detected(&target)?;
-            let prepared = firmware::prepare(&c, |s| out.progress(&s, None))?;
+            let (c, motor) = detected(&target)?;
+            let prepared = firmware::prepare(&c, motor, cancel, |s| out.progress(&s, None))?;
             out.result(&prepared)
         }
         Command::Firmware {
@@ -715,17 +723,17 @@ fn execute(command: Command, out: &JobOutput<'_>, desktop_config: Option<Config>
                 !out.desktop || prepared.is_some(),
                 "Prepare and confirm this motor’s firmware first"
             );
-            let (c, _) = detected(&target)?;
+            let (c, motor) = detected(&target)?;
             let prepared = match prepared {
                 Some(prepared) => prepared,
-                None => firmware::prepare(&c, |s| out.progress(&s, None))?,
+                None => firmware::prepare(&c, motor, cancel, |s| out.progress(&s, None))?,
             };
             crate::cancel::check(cancel)?;
             out.progress(
                 "Firmware transfer starting. Keep power on; transfer finishes before exiting.",
                 None,
             );
-            let version = firmware::update(&c, &prepared, |fraction, s| {
+            let version = firmware::update(&c, &prepared, cancel, |fraction, s| {
                 out.progress(&s, Some((fraction * 100.).round() as i32))
             })?;
             out.result(&json!({"id":target.id,"firmware":version}))

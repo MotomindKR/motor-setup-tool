@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('motorApp', {
   setReferenceAngle: (uuid, angle) => ipcRenderer.invoke('reference:set', uuid, angle),
   updateInfo: () => ipcRenderer.invoke('updates:info'),
   checkUpdate: () => ipcRenderer.invoke('updates:check'),
-  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  installUpdate: version => ipcRenderer.invoke('updates:install', version),
   onUpdateProgress: callback => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('updates:progress', listener);

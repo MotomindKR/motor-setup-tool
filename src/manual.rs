@@ -221,6 +221,7 @@ fn run(
             stop_reason = None;
             output.lock().unwrap().preparing = false;
             last_tick = Instant::now();
+            continue;
         } else if !wanted && enabled {
             stop_reason = Some(
                 if !request.fresh(now) {

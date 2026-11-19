@@ -589,7 +589,6 @@ export function createController(bridge, env = {}) {
         chart: "motion",
         notice: null,
       });
-      if (!result.report) notice("Incomplete run. Use its menu to download or delete the files.");
       if (!directory) refreshRuns();
       return true;
     } catch (error) {
@@ -992,14 +991,17 @@ export function createController(bridge, env = {}) {
         .catch(reportError),
     refit() {
       const directory = s.directory;
-      if (!directory || flags().busy) return;
+      if (!directory || flags().busy || !s.reportFiles.includes("session.json")) return;
       confirmAction(
         "Refit this recording?",
         "Analysis artifacts in this folder will be replaced. The original recorded samples are preserved.",
         async () => {
           if (s.directory !== directory || flags().busy) return;
           await run("analyze", { directory });
-          if (await openRun(directory, false)) notice("Recording refitted.");
+          if (await openRun(directory, false)) {
+            await refreshRuns();
+            notice("Recording refitted.");
+          }
         },
       );
     },
@@ -1034,16 +1036,17 @@ export function createController(bridge, env = {}) {
         set({ checkingUpdate: false });
       }
     },
-    async installUpdate() {
+    async installUpdate(version) {
       if (flags().busy || s.checkingUpdate || !s.updateResult?.available) return;
+      if (s.updateResult.version !== version) return;
       set({
         installingUpdate: true,
         updateMessage: s.updateResult.releasePage ? "" : "Downloading update…",
       });
       try {
-        await bridge.installUpdate();
+        await bridge.installUpdate(version);
       } catch (error) {
-        set({ updateMessage: error.message });
+        set({ updateMessage: readableError(error.message) });
       } finally {
         set({ installingUpdate: false });
       }

@@ -24,10 +24,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Debug)]
 enum BusEvent {
     Empty,
-    Filtered,
-    Frame(WireFrame),
+    ControllerStatus,
+    Frame(Option<WireFrame>),
 }
 
 /// Returns true only when the transport reports an empty queue.
@@ -38,8 +39,8 @@ fn drain_frames(
     for event in events {
         match event? {
             BusEvent::Empty => return Ok(true),
-            BusEvent::Filtered => {}
-            BusEvent::Frame(frame) => visit(frame)?,
+            BusEvent::ControllerStatus | BusEvent::Frame(None) => {}
+            BusEvent::Frame(Some(frame)) => visit(frame)?,
         }
     }
     Ok(false)
@@ -294,7 +295,7 @@ fn gsusb_wire_frame(frame: &UsbCanFrame) -> Option<WireFrame> {
     }
 }
 
-fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
+fn gsusb_event(event: UsbReceiveEvent) -> Result<BusEvent> {
     match event {
         UsbReceiveEvent::Frame(received) => {
             let frame = received.frame;
@@ -306,7 +307,7 @@ fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
                     frame.data()
                 );
             }
-            Ok(gsusb_wire_frame(&frame))
+            Ok(BusEvent::Frame(gsusb_wire_frame(&frame)))
         }
         UsbReceiveEvent::ErrorFrame { can_id, data, .. } => {
             if let Some(reason) = bus_error_reason(can_id, &data) {
@@ -317,7 +318,7 @@ fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
             if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
                 eprintln!("GS-USB CAN status 0x{can_id:08x} {data:02x?}");
             }
-            Ok(None)
+            Ok(BusEvent::ControllerStatus)
         }
         UsbReceiveEvent::Overflow { .. } => {
             anyhow::bail!("GS-USB adapter receive overflow; check CAN bus traffic and wiring")
@@ -420,9 +421,9 @@ impl Bus {
                                 self.config.interface
                             );
                         }
-                        return Ok(BusEvent::Filtered);
+                        return Ok(BusEvent::ControllerStatus);
                     }
-                    if let Id::Extended(id) = f.id()
+                    let wire = if let Id::Extended(id) = f.id()
                         && let Ok(data) = f.data().try_into()
                     {
                         Some(WireFrame {
@@ -431,7 +432,8 @@ impl Bus {
                         })
                     } else {
                         None
-                    }
+                    };
+                    BusEvent::Frame(wire)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(BusEvent::Empty),
                 Err(e) => return Err(e).context("CAN receive failed"),
@@ -441,10 +443,10 @@ impl Bus {
                     Some(event) => event,
                     None => return Ok(BusEvent::Empty),
                 };
-                gsusb_event_frame(event)?
+                gsusb_event(event)?
             }
         };
-        if let Some(wire) = &received
+        if let BusEvent::Frame(Some(wire)) = &received
             && let Some((faults, warnings)) =
                 protocol::fault_report(wire, self.config.motor_id, self.config.host_id)
         {
@@ -454,12 +456,12 @@ impl Bus {
                 faults & 2 != 0
             );
         }
-        Ok(received.map_or(BusEvent::Filtered, BusEvent::Frame))
+        Ok(received)
     }
     pub(crate) fn receive(&self) -> Result<Option<WireFrame>> {
         match self.next_event()? {
-            BusEvent::Frame(frame) => Ok(Some(frame)),
-            BusEvent::Empty | BusEvent::Filtered => Ok(None),
+            BusEvent::Frame(frame) => Ok(frame),
+            BusEvent::Empty | BusEvent::ControllerStatus => Ok(None),
         }
     }
     pub(crate) fn flush(&self) -> Result<()> {
@@ -467,6 +469,21 @@ impl Bus {
             drain_frames((0..4096).map(|_| self.next_event()), |_| Ok(()))?,
             "CAN receive queue did not drain before the next request"
         );
+        Ok(())
+    }
+    pub(crate) fn require_quiet(&self, duration: Duration, cancel: &AtomicBool) -> Result<()> {
+        self.flush()?;
+        let end = Instant::now() + duration;
+        while Instant::now() < end {
+            crate::cancel::check(cancel)?;
+            match self.next_event()? {
+                BusEvent::Frame(_) => anyhow::bail!(
+                    "CAN traffic detected; close other CAN tools and disable periodic reports before updating"
+                ),
+                BusEvent::Empty => thread::sleep(Duration::from_millis(1)),
+                BusEvent::ControllerStatus => {}
+            }
+        }
         Ok(())
     }
     pub(crate) fn wait_for<T>(
@@ -477,12 +494,12 @@ impl Bus {
         let end = Instant::now() + timeout;
         while Instant::now() < end {
             match self.next_event()? {
-                BusEvent::Frame(frame) => {
+                BusEvent::Frame(Some(frame)) => {
                     if let Some(value) = decode(frame) {
                         return Ok(Some(value));
                     }
                 }
-                BusEvent::Filtered => {}
+                BusEvent::ControllerStatus | BusEvent::Frame(None) => {}
                 BusEvent::Empty => thread::sleep(Duration::from_micros(200)),
             }
         }
@@ -739,7 +756,19 @@ impl Bus {
     pub(crate) fn stopped(&self) -> Result<Feedback> {
         self.wait_until_stopped(Duration::from_secs(1), None)
     }
-    fn wait_until_stopped(
+    fn stop_and_confirm(&self) -> Result<()> {
+        self.stop()?;
+        // Stop immediately, then request a fresh status after draining queued feedback.
+        self.flush()?;
+        self.stop()?;
+        let c = &self.config;
+        self.wait_for(Duration::from_millis(100), |frame| {
+            protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile).filter(|fb| fb.mode == 0)
+        })?
+        .context("Motor did not acknowledge stopped mode")?;
+        Ok(())
+    }
+    pub(crate) fn wait_until_stopped(
         &self,
         timeout: Duration,
         cancel: Option<&AtomicBool>,
@@ -1094,15 +1123,7 @@ pub fn set_zero(c: &Config, uuid: [u8; 8]) -> Result<()> {
     Ok(())
 }
 pub fn disable(c: &Config) -> Result<()> {
-    let bus = Bus::open(c)?;
-    bus.flush()?;
-    bus.stop()?;
-    let fb = bus.feedback(Duration::from_millis(100))?;
-    ensure!(
-        fb.mode == 0,
-        "Disable sent, but motor did not acknowledge stopped mode"
-    );
-    Ok(())
+    Bus::open(c)?.stop_and_confirm()
 }
 fn check_firmware_model(c: &Config, version: Option<&str>) -> Result<()> {
     let version = version.context("Firmware did not reply; scan again before calibration")?;
@@ -1395,7 +1416,7 @@ pub fn acquire(
                 }
                 Ok(())
             })();
-            finish_segment(&mut session, trace, result, bus.stop())?;
+            finish_segment(&mut session, trace, result, bus.stop_and_confirm())?;
             if !validation {
                 bridge::write_json(&dir.join("session.json"), &session)?;
             }
@@ -1458,9 +1479,9 @@ mod diagnostics_tests {
         let frame = |position: u8| {
             let mut frame = protocol::frame(2, 0, 1);
             frame.data[0] = position;
-            BusEvent::Frame(frame)
+            BusEvent::Frame(Some(frame))
         };
-        let mut events = [frame(23), BusEvent::Filtered, frame(37), BusEvent::Empty]
+        let mut events = [frame(23), BusEvent::Frame(None), frame(37), BusEvent::Empty]
             .into_iter()
             .map(Ok);
         let mut encoder = EncoderTracker::new(0., 4. * std::f64::consts::PI, 10.);
@@ -1478,7 +1499,11 @@ mod diagnostics_tests {
         }
         assert!((position - 0.37).abs() < 1e-12);
 
-        let events = [Ok(BusEvent::Filtered), Err(anyhow::anyhow!("bus off"))].into_iter();
+        let events = [
+            Ok(BusEvent::ControllerStatus),
+            Err(anyhow::anyhow!("bus off")),
+        ]
+        .into_iter();
         assert_eq!(
             drain_frames(events, |_| Ok(())).unwrap_err().to_string(),
             "bus off"
@@ -1500,11 +1525,10 @@ mod diagnostics_tests {
             (0x2000_0100, [0; 8]),
             (0x2000_0200, [0; 8]),
         ] {
-            assert!(
-                gsusb_event_frame(usb_error(can_id, data))
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(matches!(
+                gsusb_event(usb_error(can_id, data)).unwrap(),
+                BusEvent::ControllerStatus
+            ));
         }
     }
     #[test]
@@ -1529,15 +1553,14 @@ mod diagnostics_tests {
             (0x400, 0, 0, "unknown"),
         ] {
             let can_id = 0x2000_0000 | bits;
-            let error =
-                gsusb_event_frame(usb_error(can_id, [0, controller, protocol, 0, 0, 0, 0, 0]))
-                    .unwrap_err()
-                    .to_string();
+            let error = gsusb_event(usb_error(can_id, [0, controller, protocol, 0, 0, 0, 0, 0]))
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(expected), "{error}");
             assert!(error.contains(&format!("0x{can_id:08x}")), "{error}");
         }
         assert!(
-            gsusb_event_frame(UsbReceiveEvent::Overflow { channel: 0 })
+            gsusb_event(UsbReceiveEvent::Overflow { channel: 0 })
                 .unwrap_err()
                 .to_string()
                 .contains("receive overflow")
@@ -1570,19 +1593,23 @@ mod diagnostics_tests {
             &[1, 2, 3, 4, 5, 6, 7, 8],
         )
         .unwrap();
-        let wire = gsusb_event_frame(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
-            frame,
-            channel: 0,
-            timestamp: None,
-        }))
-        .unwrap()
-        .unwrap();
+        let received = |frame| {
+            gsusb_event(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
+                frame,
+                channel: 0,
+                timestamp: None,
+            }))
+            .unwrap()
+        };
+        let BusEvent::Frame(Some(wire)) = received(frame) else {
+            panic!("Expected a protocol frame")
+        };
         assert_eq!(wire.id, 0x1234);
         assert_eq!(wire.data, [1, 2, 3, 4, 5, 6, 7, 8]);
         let standard = UsbCanFrame::classic(UsbCanId::standard(0x123).unwrap(), &[0; 8]).unwrap();
-        assert!(gsusb_wire_frame(&standard).is_none());
+        assert!(matches!(received(standard), BusEvent::Frame(None)));
         let short = UsbCanFrame::classic(UsbCanId::extended(0x1234).unwrap(), &[0; 7]).unwrap();
-        assert!(gsusb_wire_frame(&short).is_none());
+        assert!(matches!(received(short), BusEvent::Frame(None)));
     }
     #[cfg(target_os = "linux")]
     #[test]

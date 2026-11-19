@@ -1,15 +1,15 @@
 //! RobStride private-CAN firmware updates (types 11–14).
 //! Protocol: RobStride/Product_Information/OTA (PDF + vendor OTA.py).
-use crate::{bridge, hardware::Bus, protocol, types::Config};
+use crate::{
+    bridge,
+    hardware::{Bus, DiscoveredMotor},
+    protocol,
+    types::Config,
+};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    io::Write,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{fs, io::Write, sync::atomic::AtomicBool, thread, time::Duration};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Release {
@@ -113,7 +113,17 @@ fn check_model(version: &str, model: &str) -> Result<()> {
     );
     Ok(())
 }
-pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
+pub fn prepare(
+    c: &Config,
+    motor: DiscoveredMotor,
+    cancel: &AtomicBool,
+    progress: impl Fn(String),
+) -> Result<Prepared> {
+    crate::cancel::check(cancel)?;
+    let current_version = motor
+        .firmware
+        .context("Motor firmware version unavailable")?;
+    check_model(&current_version, &c.profile.model)?;
     let r = release(&c.profile.model)?;
     progress(format!(
         "Preparing official {} firmware {}",
@@ -128,16 +138,12 @@ pub fn prepare(c: &Config, progress: impl Fn(String)) -> Result<Prepared> {
         image.write_all(&bytes)?;
         image.persist(path)?;
     }
-    let bus = Bus::open(c)?;
-    bus.stopped()?;
-    let current_version = bus.firmware_version()?;
-    check_model(&current_version, &r.model)?;
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(200))?;
+    crate::cancel::check(cancel)?;
     Ok(Prepared {
         model: r.model,
         version: r.version,
         current_version,
-        uuid,
+        uuid: motor.uuid,
         interface: c.interface.clone(),
         motor_id: c.motor_id,
         host_id: c.host_id,
@@ -207,9 +213,12 @@ fn transfer(
     Ok(())
 }
 
-/// Once type 11 is sent this intentionally has no cancel flag. Interrupting
-/// an erase/write can leave the motor in its bootloader until a recovery update.
-pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -> Result<String> {
+pub fn update(
+    c: &Config,
+    prepared: &Prepared,
+    cancel: &AtomicBool,
+    progress: impl Fn(f32, String),
+) -> Result<String> {
     ensure!(
         prepared.matches(c),
         "Motor selection changed; prepare firmware again"
@@ -237,17 +246,8 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
     let bus = Bus::open(c)?;
     let outcome = (|| -> Result<String> {
         progress(0., "Disabling motor before firmware update".into());
-        bus.stopped()?;
-        // Detect other senders/autoreporting before entering the bootloader.
-        bus.flush()?;
-        let quiet = Instant::now();
-        while quiet.elapsed() < Duration::from_millis(500) {
-            ensure!(
-                bus.receive()?.is_none(),
-                "CAN traffic detected; close other CAN tools and disable periodic reports before updating"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
+        bus.wait_until_stopped(Duration::from_secs(1), Some(cancel))?;
+        bus.require_quiet(Duration::from_millis(500), cancel)?;
         let version = bus.firmware_version()?;
         check_model(&version, &official.model)?;
         prepared.verify_motor(&version, bus.ping(c.motor_id, Duration::from_millis(200))?)?;
@@ -284,6 +284,8 @@ pub fn update(c: &Config, prepared: &Prepared, progress: impl Fn(f32, String)) -
             0.,
             "Entering firmware updater · keep USB and motor power connected".into(),
         );
+        // Once the bootloader accepts type 11, finish the transfer even if the app closes.
+        crate::cancel::check(cancel)?;
         transfer(&bytes, c.host_id, prepared.uuid, &mut exchange, &progress)?;
         progress(
             0.97,

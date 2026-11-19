@@ -54,12 +54,11 @@ test('individual downloads preserve CSV bytes and cannot overwrite run artifacts
 test('incomplete calibration runs can be managed without a completed report', async t => {
   const { base, directory } = await fixture(t, false);
   assert.equal((await inspectRun(directory)).completed, false);
-  await assert.rejects(loadRun(directory), /no completed report/);
-  const partial = await loadRun(directory, { allowIncomplete: true });
+  const partial = await loadRun(directory);
   assert.equal(partial.report, null);
   assert.equal(partial.uuid, '0102030405060708');
   assert.ok(partial.files.includes('training.csv'));
-  await assert.rejects(loadRun(base, { allowIncomplete: true }), /does not contain/);
+  await assert.rejects(loadRun(base), /does not contain/);
   await exportRun(directory, path.join(base, 'partial.zip'));
   await fs.rm(path.join(directory, 'hardware.json'));
   assert.equal((await inspectRun(directory)).uuid, null);

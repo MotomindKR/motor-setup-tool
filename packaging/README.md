@@ -25,6 +25,7 @@ does not publish a Windows ARM64 library.
 A manual release workflow run on a branch exercises both upgrade directions on
 Windows and Linux DEB. It installs the previous stable release, updates to the
 candidate, then uses the candidate to install a disposable next patch.
+The run summary previews the download links and release notes.
 
 ## Build locally
 

@@ -403,6 +403,31 @@ test("recordings show identity, download individual files, and require confirmat
   ).toBe(1);
 });
 
+test("saved measurements can be fitted before a report exists", async ({ page }) => {
+  await page.evaluate(() => {
+    const { listRuns, loadRun, run } = window.motorApp;
+    let fitted = false;
+    window.motorApp.listRuns = async () => (await listRuns()).map(item => ({ ...item, completed: fitted }));
+    window.motorApp.loadRun = async directory => {
+      const recording = await loadRun(directory);
+      return fitted ? recording : { ...recording, report: null, files: ["session.json"] };
+    };
+    window.motorApp.run = async (operation, params) => {
+      const result = await run(operation, params);
+      if (operation === "analyze") fitted = true;
+      return result;
+    };
+  });
+  await navigate(page, "Files");
+  const run = page.locator(".recording-open");
+  await run.click();
+  await expect(run).toContainText("No report");
+  await page.getByRole("button", { name: "Refit recording", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByText("Validated", { exact: true })).toBeVisible();
+  await expect(run).not.toContainText("No report");
+});
+
 test("recording charts retain short torque spikes in long traces", async ({ page }) => {
   const recording = structuredClone(fixture.report);
   const validation = recording.replays.find(trace => trace.name === "validation");
@@ -508,7 +533,8 @@ test("a background update marks Settings in the collapsed sidebar", async ({ pag
 
   await settings.click();
   await expect(page.getByText("Version 0.1.23 is available.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Install update" })).toBeEnabled();
+  await page.getByRole("button", { name: "Install update" }).click();
+  expect(await page.evaluate(() => window.testMotor.calls.at(-1).version)).toBe("0.1.23");
   await page.getByRole("button", { name: "Check for update" }).click();
   await expect(page.getByText("You have the latest version.")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();

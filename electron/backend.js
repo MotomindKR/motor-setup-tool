@@ -1,6 +1,9 @@
 'use strict';
 
 const { execFile, spawn } = require('node:child_process');
+const { once } = require('node:events');
+const { createInterface } = require('node:readline');
+const { promisify } = require('node:util');
 const path = require('node:path');
 const motorModels = require('./motor-models.json');
 const fs = require('node:fs');
@@ -240,6 +243,23 @@ class Backend {
       throw new Error('Manual control input stalled; motor is being disabled');
     }
     input.write(`${JSON.stringify({ type: 'intent', enabled: value.enabled, direction, speed, reviewed: value.reviewed })}\n`);
+  }
+
+  async withRecordingLock(directory, action) {
+    const finished = promisify(execFile)(this.binary, ['lock-recording', directory], { env: this.environment, windowsHide: true });
+    const { child } = finished;
+    const lines = createInterface({ input: child.stdout });
+    try {
+      const ready = once(lines, 'line').then(([line]) => line);
+      if (await Promise.race([ready, finished.then(() => null)]) !== 'locked') {
+        throw new Error('Could not lock the recording');
+      }
+      return await action();
+    } finally {
+      lines.close();
+      child.stdin.end();
+      await finished;
+    }
   }
 
   preview(config) {

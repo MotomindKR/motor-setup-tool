@@ -80,9 +80,8 @@ async function inspectRun(directory) {
   return (await readRun(directory)).run;
 }
 
-async function loadRun(directory, { allowIncomplete = false } = {}) {
+async function loadRun(directory) {
   const { run, report } = await readRun(directory, true);
-  if (!report && !allowIncomplete) throw new Error('This run has no completed report. You can still download or delete its files.');
   return { directory, report, files: run.files, uuid: run.uuid };
 }
 
