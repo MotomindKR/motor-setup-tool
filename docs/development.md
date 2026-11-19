@@ -26,6 +26,42 @@ open Electron and select a saved folder in **Files**.
 Data, cache, and CAN lock paths retain their v0.1.0 locations so desktop and CLI
 sessions contend for the same bus ownership. See the [CLI guide](cli.md).
 
+## Dynamixel development
+
+From the repository root, set up the serial worker's Python environment before
+launching Electron or running the tests that exercise the worker.
+
+```sh
+python3 -m venv .tools/dxl-venv
+. .tools/dxl-venv/bin/activate
+python -m pip install -r dxl/requirements.txt pytest
+export MOTOMIND_DXL_PYTHON="$(command -v python)"
+python -m pytest -q -o pythonpath=dxl dxl/tests
+npm --prefix electron start
+```
+
+On Windows, use `python -m venv` and set `MOTOMIND_DXL_PYTHON` to the absolute
+path of `.tools\dxl-venv\Scripts\python.exe`.
+
+### U2D2 hardware checks
+
+1. Power an XL330 and connect the U2D2 to the machine running the app. Confirm
+   discovery at the motor's stored baud rate and verify the model, ID, and mode.
+   On Linux, check **Grant port access** if the port is inaccessible.
+2. Support the mechanism. With a single motor connected, verify **Torque off**,
+   **Set Mode 5**, and **Set 1 Mbps** where applicable. Keep the reference pose
+   fixed during **Save zero** and confirm 2048 pulses and a 0° joint angle.
+3. Power-cycle the motor and reconnect to check the saved settings. Follow the
+   [operator guide](dynamixel.md) when recovering from a write with an uncertain result.
+4. Check that the existing CAN adapter controls are available in **Setup** and
+   that the **Calibrate** workspace opens.
+
+The reverse offset response was observed on an XL330 with firmware 53 in Mode 5.
+The [ROBOTIS Drive Mode](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#drive-mode10)
+and [Homing Offset](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#homing-offset20)
+sections describe the relevant registers. Verify the resulting position on the
+connected motor for its model, firmware, and mode.
+
 ## Checks
 
 With Cargo on `PATH`:

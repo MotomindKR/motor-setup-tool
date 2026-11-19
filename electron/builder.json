@@ -15,6 +15,14 @@
     "syncDesktopName": true,
     "desktop": { "entry": { "Name": "Motor Setup Tool", "Comment": "Motomind motor setup and calibration" } }
   },
+  "deb": {
+    "depends": [
+      "libgtk-3-0 | libgtk-3-0t64", "libnotify4", "libnss3", "libxss1",
+      "libxtst6", "xdg-utils", "libatspi2.0-0 | libatspi2.0-0t64", "libuuid1",
+      "libsecret-1-0", "libasound2 | libasound2t64", "libgbm1"
+    ],
+    "recommends": ["acl", "pkexec | policykit-1"]
+  },
   "mac": {
     "target": ["dmg", "zip"],
     "artifactName": "motor-setup-tool-${version}-darwin-${arch}.${ext}",

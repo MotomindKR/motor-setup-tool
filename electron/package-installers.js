@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
@@ -21,11 +22,14 @@ const staging = path.join(dist, `stage-${platformArch}`);
 const installers = path.join(dist, unpackedOnly ? `unpacked-${platformArch}` : 'installers');
 const app = path.join(staging, 'app');
 const backend = path.join(staging, 'backend');
+const dxl = path.join(staging, 'dxl');
 const backendName = platform === 'win32' ? 'motor-setup-tool.exe' : 'motor-setup-tool';
+const dxlName = platform === 'win32' ? 'dxl-worker.exe' : 'dxl-worker';
 
 fs.rmSync(staging, { recursive: true, force: true });
 fs.rmSync(installers, { recursive: true, force: true });
 const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', 'release', backendName);
+const sourceDxl = path.join(root, '.tools', 'dxl', 'dxl-worker');
 const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', 'mujoco-3.12.0', 'lib');
 const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : process.platform === 'win32' ? 'mujoco.dll' : 'libmujoco.so.3.12.0';
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
@@ -34,11 +38,13 @@ execFileSync(process.execPath, [path.join(path.dirname(require.resolve('vite/pac
 for (const source of [sourceBinary, mujoco]) {
   if (!fs.existsSync(source)) throw new Error(`Missing ${source}. Build the release backend and install the pinned MuJoCo SDK first.`);
 }
+if (!fs.existsSync(path.join(sourceDxl, dxlName))) throw new Error('Build the DXL worker with python dxl/build.py before packaging.');
 
 fs.mkdirSync(path.join(app, 'electron'), { recursive: true });
-for (const name of ['main.js', 'preload.js', 'backend.js', 'register-catalog.json', 'motor-models.json', 'recordings.js', 'updater.js']) {
+for (const name of ['main.js', 'preload.js', 'backend.js', 'dxl.js', 'register-catalog.json', 'motor-models.json', 'recordings.js', 'updater.js']) {
   fs.copyFileSync(path.join(__dirname, name), path.join(app, 'electron', name));
 }
+fs.cpSync(sourceDxl, dxl, { recursive: true, verbatimSymlinks: true });
 fs.mkdirSync(path.join(app, 'src'), { recursive: true });
 fs.copyFileSync(path.join(root, 'src', 'firmware_catalog.json'), path.join(app, 'src', 'firmware_catalog.json'));
 fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist'), { recursive: true });
@@ -63,7 +69,8 @@ for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
 const config = structuredClone(require('./builder.json'));
 config.directories.app = app;
 config.directories.output = installers;
-config.extraResources = [{ from: backend, to: 'backend' }];
+config.extraResources = [{ from: backend, to: 'backend' }, { from: dxl, to: 'dxl' }];
+if (platform === 'darwin') config.mac.binaries.push(`Contents/Resources/dxl/${dxlName}`);
 config.electronVersion = require('electron/package.json').version;
 if (platform === 'linux') {
   // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
@@ -93,6 +100,7 @@ if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
   config.mac.notarize = true;
 } else if (platform === 'darwin' && !buildEnv.CSC_LINK && !buildEnv.CSC_NAME) {
   config.mac.identity = '-';
+  config.mac.notarize = false;
   config.extraMetadata = { manualUpdateReleases: `${pkg.homepage}/releases` };
   // Ad-hoc test signatures have no Team ID for hardened library validation.
   // Signed production builds keep the hardened runtime enabled.
@@ -112,7 +120,7 @@ const library = path.join(resources, 'backend', 'lib');
 const runtimeEnv = { ...process.env };
 if (platform === 'darwin') {
   delete runtimeEnv.DYLD_LIBRARY_PATH;
-  for (const binary of [bundle, executable, path.join(library, mujocoName)]) {
+  for (const binary of [bundle, executable, path.join(library, mujocoName), path.join(resources, 'dxl', dxlName)]) {
     execFileSync('codesign', ['--verify', '--strict', binary]);
   }
 } else if (platform === 'win32') {
@@ -123,6 +131,19 @@ if (platform === 'darwin') {
 }
 const result = JSON.parse(execFileSync(executable, ['self-check'], { env: runtimeEnv, encoding: 'utf8', timeout: 30_000 }));
 if (result.version !== pkg.version || result.mujoco !== '3.12.0') throw new Error('Packaged backend self-check failed');
+const requests = [
+  { operation: 'ports', params: {} },
+  { operation: 'connect', params: { demo: true, port: '', baud: 1_000_000 } },
+];
+const replies = execFileSync(path.join(resources, 'dxl', dxlName), [os.tmpdir()], {
+  input: requests.map(request => JSON.stringify(request)).join('\n') + '\n',
+  encoding: 'utf8', timeout: 30_000,
+}).trim().split('\n').map(line => JSON.parse(line));
+const discovered = replies[1]?.result;
+if (!Array.isArray(replies[0]?.result?.ports) || !discovered?.motors?.length ||
+    !discovered.motors.every(motor => motor.baud_rate === discovered.baud && Number.isInteger(motor.position))) {
+  throw new Error('Packaged DXL worker self-check failed');
+}
 
 if (unpackedOnly) {
   if (platform === 'linux') {

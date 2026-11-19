@@ -44,6 +44,9 @@ jobs:
               echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
             done
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
@@ -82,10 +85,16 @@ jobs:
           cp "$source_lib" "$sdk/libmujoco.3.12.0.dylib"
           ln -s libmujoco.3.12.0.dylib "$sdk/libmujoco.dylib"
           install_name_tool -id @rpath/libmujoco.3.12.0.dylib "$sdk/libmujoco.3.12.0.dylib"
+          codesign --force --sign - --timestamp=none "$sdk/libmujoco.3.12.0.dylib"
           hdiutil detach "$RUNNER_TEMP/mujoco-mount"
           echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
       - name: Build Rust backend
         run: cargo build --locked --release
+      - name: Build and test the native DXL worker
+        run: |
+          python -m pip install -r dxl/requirements-build.txt pytest
+          python -m pytest -q -o pythonpath=dxl dxl/tests
+          python dxl/build.py
       - name: Install Electron dependencies
         working-directory: electron
         run: npm ci
@@ -97,12 +106,12 @@ jobs:
       - name: Build desktop installers
         working-directory: electron
         env:
-          CSC_LINK: ${{ matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && matrix.platform == 'darwin-arm64' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
+          CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
         run: npm run package:installers
       - uses: actions/upload-artifact@v7
         with:

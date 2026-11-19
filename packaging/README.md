@@ -1,6 +1,7 @@
 # Desktop release guide
 
-Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, and UI assets.
+Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, the
+Dynamixel serial worker, and UI assets.
 
 | System | Output |
 |---|---|
@@ -37,6 +38,8 @@ handles this. RPM packaging needs `rpmbuild` (the `rpm` package).
 
 ```sh
 cargo build --locked --release
+python -m pip install -r dxl/requirements-build.txt
+python dxl/build.py
 cd electron
 npm ci
 npm run check

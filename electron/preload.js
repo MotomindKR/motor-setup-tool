@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('motorApp', {
   cancel: () => ipcRenderer.invoke('backend:cancel'),
   manualIntent: value => ipcRenderer.invoke('backend:manualIntent', value),
   preview: config => ipcRenderer.invoke('backend:preview', config),
+  dxl: (operation, params) => ipcRenderer.invoke('dxl:run', operation, params),
+  dxlBackups: () => ipcRenderer.invoke('dxl:backups'),
   pickCalibrationOutput: () => ipcRenderer.invoke('calibration:pickOutput'),
   getReferenceAngle: uuid => ipcRenderer.invoke('reference:get', uuid),
   setReferenceAngle: (uuid, angle) => ipcRenderer.invoke('reference:set', uuid, angle),

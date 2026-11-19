@@ -29,6 +29,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: electron/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - run: npm ci
       - run: npm run check
       - run: npx playwright install --with-deps chromium
@@ -47,6 +50,11 @@ jobs:
       RUSTUP_TOOLCHAIN: 1.98.1
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r dxl/requirements.txt pytest
+      - run: python -m pytest -q -o pythonpath=dxl dxl/tests
       - uses: actions/cache@v6
         with:
           path: |

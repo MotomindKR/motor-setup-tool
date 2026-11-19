@@ -7,6 +7,7 @@ import {
   Info,
   Settings2,
   SlidersHorizontal,
+  Usb,
   X,
 } from "lucide-react";
 import { UIProvider } from "@motomindkr/ui/components/ui-provider";
@@ -40,6 +41,7 @@ import { Settings } from "./components/Settings.jsx";
 import { CalibratePage } from "./pages/Calibration.jsx";
 import { TestPage } from "./pages/Test.jsx";
 import { SetupPage } from "./pages/Setup.jsx";
+import { DxlPage } from "./pages/Dxl.jsx";
 import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
 import { syncWindowTheme } from "./window-theme.mjs";
@@ -59,6 +61,11 @@ const pages = {
     label: "Setup",
     title: "Motor setup",
     icon: Settings2,
+  },
+  dxl: {
+    label: "Dynamixel",
+    title: "Dynamixel setup",
+    icon: Usb,
   },
   files: {
     label: "Files",
@@ -176,8 +183,8 @@ export function App({ controller }) {
             </Breadcrumb>
           </div>
           <div className="header-actions">
-            <Status s={s} c={c} />
-            {s.motor && s.tab !== "test" && (
+            {s.tab !== "dxl" && <Status s={s} c={c} />}
+            {s.motor && s.tab !== "test" && s.tab !== "dxl" && (
               <>
                 <Separator
                   orientation="vertical"
@@ -227,7 +234,7 @@ export function App({ controller }) {
                   </Button>
                 </Alert>
               )}
-              {s.tab !== "files" && (
+              {s.tab !== "files" && s.tab !== "dxl" && (
                 <Connection s={s} a={a} c={c} platform={controller.platform} />
               )}
               {s.work &&
@@ -266,6 +273,7 @@ export function App({ controller }) {
               {s.tab === "calibrate" && <CalibratePage s={s} a={a} c={c} />}
               {s.tab === "test" && <TestPage s={s} a={a} c={c} />}
               {s.tab === "setup" && <SetupPage s={s} a={a} c={c} />}
+              <DxlPage platform={controller.platform} active={s.tab === "dxl"} />
               {s.tab === "files" && <FilesPage s={s} a={a} c={c} />}
             </div>
           </SidebarInset>

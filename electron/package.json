@@ -1,7 +1,7 @@
 {
   "name": "motomind-motor-calib-electron",
   "desktopName": "motor-setup-tool.desktop",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "private": true,
   "description": "Electron desktop UI for the Motomind motor calibration tool",
   "homepage": "https://github.com/MotomindKR/motor-setup-tool",
@@ -11,7 +11,7 @@
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "check": "node --check main.js && node --check preload.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-installers.js && node --check build-icons.js && node --test recordings.test.js backend.test.js updater.test.js src/controller.test.mjs && npm run build",
+    "check": "node --check main.js && node --check preload.js && node --check dxl.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-installers.js && node --check build-icons.js && node --test recordings.test.js backend.test.js dxl.test.js updater.test.js src/controller.test.mjs && npm run build",
     "test:ui": "playwright test",
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",

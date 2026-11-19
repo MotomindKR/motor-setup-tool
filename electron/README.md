@@ -6,6 +6,8 @@ The desktop app uses React and the [Motomind UI components](https://github.com/M
 
 See the [developer guide](../docs/development.md#build-and-run) for setup, launch commands, and tests. For frontend development, `npm run dev` starts Vite on loopback. The motor bridge is available in Electron and simulated by the browser tests.
 
+The Dynamixel workspace uses a separate serial worker. See [Dynamixel development](../docs/development.md#dynamixel-development) for its dependencies and tests.
+
 ## Desktop installers
 
 Build on the target operating system using the [release guide](../packaging/README.md#build-locally).

@@ -7,10 +7,14 @@ const os = require('node:os');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { Backend, backendPath } = require('./backend');
+const { DxlWorker, grantPortAccess } = require('./dxl');
 const updater = require('./updater');
 const recordings = require('./recordings');
 
 if (process.platform === 'linux') app.setDesktopName('motor-setup-tool.desktop');
+if (!app.isPackaged && process.env.MOTOMIND_TEST_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.MOTOMIND_TEST_USER_DATA));
+}
 
 const root = path.resolve(__dirname, '..');
 const titleBarHeight = 40;
@@ -73,6 +77,10 @@ let installingUpdate = false;
 let updateError = null;
 let managedUpdater = null;
 let recordingOperation = false;
+let dxl;
+let dxlDialog = false;
+
+const dxlBackupDir = () => path.join(app.getPath('userData'), 'dxl-backups');
 
 function send(event) {
   if (event.type === 'recordingCreated') {
@@ -81,6 +89,12 @@ function send(event) {
   }
   if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
   if (quitting && event.type === 'finish') app.quit();
+}
+
+function requireIdleForUpdate() {
+  if (backend?.active) throw new Error('Stop the motor operation before installing an update');
+  if (dxl.active || dxlDialog) throw new Error('Finish the current DXL operation before updating');
+  if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
 }
 
 function checkForUpdate() {
@@ -193,7 +207,10 @@ function createWindow() {
   window.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.webContents.on('render-process-gone', () => backend?.cancel());
+  window.webContents.on('render-process-gone', () => {
+    void dxl.close();
+    backend?.cancel();
+  });
   window.webContents.on('did-finish-load', () => {
     if (backendError) send({ type: 'error', message: backendError.message });
     if (updateError) send({ type: 'updateFailure', message: updateError, version: app.getVersion() });
@@ -222,6 +239,44 @@ app.whenReady().then(async () => {
   try {
     backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
+  dxl = new DxlWorker({ root, resourcesPath: app.isPackaged ? process.resourcesPath : null, backupDir: dxlBackupDir() });
+
+  handle('dxl:run', async (operation, params) => {
+    if (quitting || installingUpdate) throw new Error('Wait for the app to finish');
+    if (dxlDialog && operation !== 'poll') throw new Error('Finish the current DXL operation');
+    if (operation === 'disconnect') {
+      await dxl.close();
+      return { connected: false, faulted: false, result: {} };
+    }
+    if (operation === 'connect') {
+      return dxl.run(operation, { port: params?.port, baud: params?.baud });
+    }
+    const filters = [{ name: 'DXL settings', extensions: ['json'] }];
+    if (operation === 'export' || operation === 'restore') {
+      dxlDialog = true;
+      try {
+        const selection = operation === 'export'
+          ? await dialog.showSaveDialog(window, { title: 'Export DXL settings', defaultPath: 'dxl-settings.json', filters })
+          : await dialog.showOpenDialog(window, { title: 'Restore DXL zero and direction', defaultPath: dxlBackupDir(), filters, properties: ['openFile'] });
+        if (selection.canceled || quitting) return null;
+        return await dxl.run(operation, { ids: params.ids, path: selection.filePath || selection.filePaths[0] });
+      } finally { dxlDialog = false; }
+    }
+    if (operation === 'authorize') {
+      dxlDialog = true;
+      try {
+        await grantPortAccess(params.port);
+        return { connected: false, faulted: false, result: {} };
+      } finally { dxlDialog = false; }
+    }
+    return dxl.run(operation, params);
+  });
+  handle('dxl:backups', async () => {
+    const directory = dxlBackupDir();
+    await fs.mkdir(directory, { recursive: true });
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
+  });
 
   handle('backend:run', async (operation, params) => {
     if (installingUpdate) throw new Error('Wait for the update to finish');
@@ -293,21 +348,17 @@ app.whenReady().then(async () => {
   handle('updates:install', async version => {
     // A check can change the updater's selected release. Let it finish before downloading.
     if (updateCheck) await updateCheck;
-    if (backend?.active) throw new Error('Stop the motor operation before installing an update');
+    requireIdleForUpdate();
     if (!checkedUpdate?.available) throw new Error('Check for an available update first');
     if (checkedUpdate.version !== version) throw new Error('The available update changed. Review the new version before installing.');
     if (!managedUpdater) throw new Error('Install a packaged copy of Motor Setup Tool to update from the app');
-    if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
     if (installingUpdate) throw new Error('Update already in progress');
     if (checkedUpdate.releasePage) return shell.openExternal(checkedUpdate.releasePage);
     installingUpdate = true;
     const progress = message => window?.webContents.send('updates:progress', message);
     let handedOff = false;
     try {
-      await managedUpdater.install(version, progress, () => {
-        if (backend?.active) throw new Error('Stop the motor operation before installing an update');
-        if (recordingOperation) throw new Error('Wait for the recording file operation to finish');
-      });
+      await managedUpdater.install(version, progress, requireIdleForUpdate);
       handedOff = true;
     } finally { if (!handedOff) installingUpdate = false; }
   });
@@ -365,6 +416,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('before-quit', event => {
+  if (dxl?.child) {
+    event.preventDefault();
+    quitting = true;
+    void dxl.close().then(() => app.quit());
+  }
   if (!backend?.active) return;
   event.preventDefault();
   quitting = true;

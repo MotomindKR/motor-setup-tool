@@ -5,6 +5,7 @@
 Calibrate RobStride motors, compare measured motion with MuJoCo, and manage CAN
 IDs, zero positions, and firmware. Supports RS-00 through RS-06 and RS-10P over
 Classic CAN.
+The Dynamixel workspace configures XL330 motors over a U2D2 TTL adapter.
 
 ## Download
 
@@ -36,5 +37,6 @@ Accepted runs export `calibration.json` and `post_calibration.xml`. See the
 ## Documentation
 
 - [User guide](docs/user-guide.md), [CLI guide](docs/cli.md), and [MuJoCo exports](docs/simulation.md)
+- [Dynamixel setup](docs/dynamixel.md) and [U2D2 hardware checks](docs/development.md#u2d2-hardware-checks)
 - [Fitting method](docs/identification.md) and [CAN protocol](docs/protocol.md)
 - [Development](docs/development.md) and [desktop releases](packaging/README.md)
