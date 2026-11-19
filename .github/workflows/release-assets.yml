@@ -1,0 +1,53 @@
+name: Prepare release assets
+
+on: workflow_call
+
+jobs:
+  assets:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: electron
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: installers-*
+          merge-multiple: true
+          path: dist-electron
+      - name: Verify downloads and render release notes
+        working-directory: dist-electron
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=v$(node -p "require('../electron/package.json').version")
+          node "$GITHUB_WORKSPACE/electron/update-metadata.js" . > "$RUNNER_TEMP/release-assets"
+          while IFS= read -r asset; do
+            case "$asset" in *.yml|*.blockmap) continue ;; esac
+            cat "$asset.sha256"
+          done < "$RUNNER_TEMP/release-assets" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          node "$GITHUB_WORKSPACE/packaging/render-release-notes.mjs" "$GH_REPO" "$tag" "$GITHUB_WORKSPACE/docs/releases/$tag.md" SHA256SUMS > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish desktop installers
+        if: github.ref_type == 'tag'
+        working-directory: dist-electron
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            if [[ "$draft" == false ]]; then
+              echo "$RELEASE_TAG is already published"
+              exit 0
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes-file "$notes"
+          fi
+          mapfile -t assets < "$RUNNER_TEMP/release-assets"
+          gh release upload "$RELEASE_TAG" "${assets[@]}" SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --notes-file "$notes" --draft=false

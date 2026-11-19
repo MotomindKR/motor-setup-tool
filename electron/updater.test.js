@@ -1,84 +1,119 @@
 'use strict';
-
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createHash } = require('node:crypto');
-const { check, install, installerName, isNewer } = require('./updater');
-const { mode, readUpdateError } = require('./native-install');
+const { EventEmitter } = require('node:events');
+const { ManagedUpdater, createUpdater, readUpdateError } = require('./updater');
 
-test('a helper failure cannot silently restart the previous version', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-update-state-'));
-  const pending = path.join(directory, 'pending-update.json');
-  const result = path.join(directory, 'update-error.txt');
-  const app = { getPath: () => directory, getVersion: () => '0.1.14' };
-  try {
-    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
-    assert.match(await readUpdateError(app), /Update to 0\.1\.15 did not complete.*still 0\.1\.14/);
+async function fixture(t, manualUpdateReleases) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-updater-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const native = new EventEmitter();
+  const calls = [];
+  const app = { getPath: name => name === 'exe' ? path.join(directory, 'Motor Setup Tool.exe') : directory, getVersion: () => '0.1.19' };
+  native.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: { version: '0.1.20' } });
+  native.downloadUpdate = async () => { calls.push('download'); native.emit('download-progress', { percent: 42.4 }); };
+  native.quitAndInstall = () => calls.push('install');
+  const updater = new ManagedUpdater(native, app, undefined, manualUpdateReleases);
+  return { directory, native, calls, app, updater, pending: path.join(directory, 'pending-update.json') };
+}
+
+test('development sessions do not create an updater', () => {
+  assert.equal(createUpdater({ isPackaged: false }), null);
+});
+
+test('a release becomes unavailable when the app is ineligible for its rollout', async t => {
+  const { native, updater } = await fixture(t);
+  assert.equal((await updater.check()).available, true);
+  native.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '0.1.20' } });
+  assert.equal((await updater.check()).available, false);
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
+});
+
+test('an ad-hoc Mac build offers the checked release page and cannot start a native install', async t => {
+  const { updater, native, calls } = await fixture(t, 'https://github.com/MotomindKR/motor-setup-tool/releases');
+  const result = await updater.check();
+  assert.equal(result.available, true);
+  assert.equal(result.releasePage, 'https://github.com/MotomindKR/motor-setup-tool/releases/tag/v0.1.20');
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
+  assert.deepEqual(calls, []);
+  native.checkForUpdates = async () => ({ isUpdateAvailable: false, updateInfo: { version: '0.1.19' } });
+  assert.equal((await updater.check()).releasePage, undefined);
+});
+
+test('only the offered release can be installed and its download reports progress', async t => {
+  const { updater, calls, app } = await fixture(t);
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
+  const offered = await updater.check();
+  assert.equal(offered.version, '0.1.20');
+  await assert.rejects(updater.install('0.1.21', () => {}, () => {}), /Check for an available update/);
+  const progress = [];
+  await updater.install(offered.version, value => progress.push(value), () => {});
+  assert.deepEqual(calls, ['download', 'install']);
+  assert.ok(progress.some(message => message.includes('42%')));
+  assert.match(await readUpdateError(app), /Update to 0\.1\.20 did not complete/);
+});
+
+test('an active motor blocks installation before downloading and after a long download', async t => {
+  const { updater, native, calls, app } = await fixture(t);
+  await updater.check();
+  const busy = () => { throw new Error('Motor operation active'); };
+  await assert.rejects(updater.install('0.1.20', () => {}, busy), /Motor operation active/);
+  assert.deepEqual(calls, []);
+  let motorActive = false;
+  native.downloadUpdate = async () => { calls.push('download'); motorActive = true; };
+  await assert.rejects(updater.install('0.1.20', () => {}, () => { if (motorActive) busy(); }), /Motor operation active/);
+  assert.deepEqual(calls, ['download']);
+  assert.equal(await readUpdateError(app), null);
+});
+
+test('a failed download keeps the app running and a retry reports fresh progress', async t => {
+  const { native, updater, calls, app } = await fixture(t);
+  await updater.check();
+  const download = native.downloadUpdate;
+  const first = [];
+  native.downloadUpdate = async () => { throw new Error('sha512 checksum mismatch'); };
+  await assert.rejects(updater.install('0.1.20', value => first.push(value), () => {}), /checksum mismatch/);
+  assert.deepEqual(calls, []);
+  assert.equal(await readUpdateError(app), null);
+  const beforeRetry = [...first];
+  native.downloadUpdate = download;
+  await updater.install('0.1.20', () => {}, () => {});
+  assert.deepEqual(calls, ['download', 'install']);
+  assert.deepEqual(first, beforeRetry);
+});
+
+test('native installation failures are logged and clear pending update state', async t => {
+  const { native, updater, directory, app } = await fixture(t);
+  await updater.check();
+  native.quitAndInstall = () => native.emit('error', new Error('Installation was denied'));
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Installation was denied/);
+  assert.equal(await readUpdateError(app), null);
+  assert.match(await fs.readFile(path.join(directory, 'update.log'), 'utf8'), /Installation was denied/);
+  native.quitAndInstall = () => { throw new Error('Could not start installer'); };
+  await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Could not start installer/);
+  assert.equal(await readUpdateError(app), null);
+});
+
+test('restart verification reports an incomplete update once and consumes old helper errors', async t => {
+  const { app, pending, directory } = await fixture(t);
+  await fs.writeFile(pending, JSON.stringify({ version: '0.1.20' }));
+  assert.match(await readUpdateError(app), /Update to 0\.1\.20 did not complete.*still 0\.1\.19/);
+  assert.equal(await readUpdateError(app), null);
+  await fs.writeFile(pending, JSON.stringify({ version: '0.1.20' }));
+  assert.equal(await readUpdateError({ ...app, getVersion: () => '0.1.20' }), null);
+  await fs.writeFile(path.join(directory, 'update-error.txt'), 'Previous Windows helper failure');
+  assert.equal(await readUpdateError(app), 'Previous Windows helper failure');
+  assert.equal(await readUpdateError(app), null);
+});
+
+test('a partial pending update marker is reported once on restart', async t => {
+  const { app, pending } = await fixture(t);
+  for (const contents of ['{"version":', '{}']) {
+    await fs.writeFile(pending, contents);
+    assert.match(await readUpdateError(app), /could not be verified/);
     assert.equal(await readUpdateError(app), null);
-    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
-    assert.equal(await readUpdateError({ ...app, getVersion: () => '0.1.15' }), null);
-    await assert.rejects(fs.access(pending), { code: 'ENOENT' });
-    await fs.writeFile(result, 'Update failed: launcher version mismatch');
-    await fs.writeFile(pending, JSON.stringify({ version: '0.1.15' }));
-    assert.match(await readUpdateError({ ...app, getVersion: () => '0.1.15' }), /launcher version mismatch/);
-  } finally { await fs.rm(directory, { recursive: true, force: true }); }
-});
-
-test('direct installation is offered only from supported packaged launchers', () => {
-  assert.equal(mode({ isPackaged: false }, 'linux', '/opt/Motor Setup Tool/motor-setup-tool'), null);
-  assert.equal(mode({ isPackaged: true }, 'linux', '/opt/Motor Setup Tool/motor-setup-tool'), 'linux');
-  assert.equal(mode({ isPackaged: true }, 'win32', 'C:\\Users\\Me\\AppData\\Local\\Programs\\Motor Setup Tool\\Motor Setup Tool.exe'), 'windows');
-  assert.equal(mode({ isPackaged: true }, 'darwin', '/Applications/Motor Setup Tool.app/Contents/MacOS/Motor Setup Tool'), 'mac-dmg');
-});
-
-test('version comparison accepts only newer numeric releases', () => {
-  assert.equal(isNewer('v0.1.6', '0.1.5'), true);
-  assert.equal(isNewer('0.2.0', '0.1.9'), true);
-  assert.equal(isNewer('0.1.5', '0.1.5'), false);
-  assert.equal(isNewer('0.1.4', '0.1.5'), false);
-  assert.equal(isNewer('not-a-version', '0.1.5'), false);
-});
-
-test('installer is run only after its downloaded bytes match SHA256SUMS', async () => {
-  const originalFetch = global.fetch;
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-update-'));
-  const filename = await installerName('0.1.7');
-  const bytes = Buffer.from('installer test payload');
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  let installed = false;
-  global.fetch = async url => url.endsWith('SHA256SUMS')
-    ? new Response(`${digest}  ${filename}\n`)
-    : new Response(bytes);
-  const candidate = { installable: true, filename, installerUrl: 'https://example.test/installer', checksumUrl: 'https://example.test/SHA256SUMS' };
-  try {
-    await install({ getPath: () => directory }, candidate, () => {}, async file => {
-      assert.deepEqual(await fs.readFile(file), bytes);
-      installed = true;
-    });
-    assert.equal(installed, true);
-    installed = false;
-    global.fetch = async url => url.endsWith('SHA256SUMS')
-      ? new Response(`${'0'.repeat(64)}  ${filename}\n`)
-      : new Response(bytes);
-    await assert.rejects(install({ getPath: () => directory }, candidate, () => {}, async () => { installed = true; }), /checksum/);
-    assert.equal(installed, false);
-  } finally {
-    global.fetch = originalFetch;
-    await fs.rm(directory, { recursive: true, force: true });
   }
-});
-
-test('GitHub update check requires an installer and checksum list for this platform', async () => {
-  const originalFetch = global.fetch;
-  const name = await installerName('0.1.6');
-  const assets = [name, 'SHA256SUMS'].map(file => ({ name: file, browser_download_url: `https://github.com/MotomindKR/motor-setup-tool/releases/download/v0.1.6/${file}` }));
-  global.fetch = async () => ({ ok: true, text: async () => JSON.stringify({ tag_name: 'v0.1.6', assets }) });
-  try {
-    assert.deepEqual(await check('0.1.5').then(({ available, version, installable }) => ({ available, version, installable })), { available: true, version: '0.1.6', installable: true });
-    assets.pop();
-    assert.equal((await check('0.1.5')).installable, false);
-  } finally { global.fetch = originalFetch; }
 });

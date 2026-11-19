@@ -1,4 +1,4 @@
-//! Exclusive, bounded manual control. The UI must renew its intent every frame.
+//! Exclusive, bounded manual control. The renderer renews a time-limited motion intent.
 use crate::{
     encoder::EncoderTracker,
     hardware::{Bus, StopGuard},
@@ -221,6 +221,7 @@ fn run(
             stop_reason = None;
             output.lock().unwrap().preparing = false;
             last_tick = Instant::now();
+            continue;
         } else if !wanted && enabled {
             stop_reason = Some(
                 if !request.fresh(now) {
@@ -320,11 +321,7 @@ mod tests {
     #[test]
     fn release_brakes_in_both_directions_without_residual_drive() {
         for profile in crate::types::Profile::presets() {
-            let mut c = Config {
-                profile,
-                ..Default::default()
-            };
-            c.apply_spec_limits();
+            let c = Config::preset(&profile.model).unwrap();
             for velocity in [-0.5_f64, 0.5] {
                 let mut integral = velocity.signum() * 0.5;
                 let torque = jog_torque(&c, 0., velocity, 0.005, &mut integral);
@@ -338,11 +335,7 @@ mod tests {
     #[test]
     fn every_model_has_bounded_jog_limits_and_faults_stop_motion() {
         for profile in crate::types::Profile::presets() {
-            let mut c = Config {
-                profile,
-                ..Default::default()
-            };
-            c.apply_spec_limits();
+            let c = Config::preset(&profile.model).unwrap();
             assert!(max_speed(&c) > 0. && max_speed(&c) <= 1.);
             assert!(torque_limit(&c) > 0. && torque_limit(&c) <= c.torque_limit);
             let mut fb = Feedback {

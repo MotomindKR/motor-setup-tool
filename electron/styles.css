@@ -87,6 +87,21 @@ svg {
 .app-sidebar-footer {
   padding: 12px;
 }
+.settings-menu-icon {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.settings-update-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--sidebar);
+  border-radius: 50%;
+  background: var(--primary);
+}
 .app-sidebar-separator {
   width: auto;
   margin-inline: 12px;
@@ -331,10 +346,6 @@ html[data-platform="darwin"] .app-header {
   flex-direction: column;
   gap: 24px;
 }
-.task-controls [data-slot="accordion-content"] .field-grid {
-  padding-top: 8px;
-  margin-bottom: 16px;
-}
 .form-subheading {
   margin-bottom: 12px;
   font-size: 13px;
@@ -357,19 +368,8 @@ html[data-platform="darwin"] .app-header {
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-.run-review {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-}
-.run-review .field-hint {
-  margin: 0;
-  text-align: center;
-}
-.aside-note,
-.footnote {
+.aside-note {
+  margin: 16px 0 0;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -377,11 +377,7 @@ html[data-platform="darwin"] .app-header {
   font-size: 12px;
   line-height: 1.7;
 }
-.aside-note {
-  margin: 16px 0 0;
-}
-.aside-note > svg,
-.footnote > svg {
+.aside-note > svg {
   width: 16px;
   height: 16px;
   margin-top: 2px;
@@ -998,10 +994,6 @@ html[data-platform="darwin"] .app-header {
 }
 .calibration-start > div {
   min-width: 0;
-}
-.calibration-result-action {
-  display: flex;
-  justify-content: flex-end;
 }
 .motion-preview {
   padding: 4px 16px;

@@ -1,4 +1,27 @@
 use crate::types::Profile;
+use anyhow::{Context, Result, ensure};
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub(crate) fn parse_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N]> {
+    ensure!(
+        value.len() == N * 2,
+        "{label} must contain {} hex digits",
+        N * 2
+    );
+    ensure!(
+        value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{label} contains invalid hex"
+    );
+    let mut bytes = [0; N];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16)
+            .with_context(|| format!("{label} contains invalid hex"))?;
+    }
+    Ok(bytes)
+}
 
 #[derive(Clone, Debug)]
 pub struct WireFrame {
@@ -58,23 +81,20 @@ pub fn version_request(host: u8, motor: u8) -> WireFrame {
     f.data[1] = 0xc4;
     f
 }
-/// Model families used by the official firmware release filenames (0.N.x.y).
-/// Unknown version schemes are not guessed. This is firmware identity, not a
-/// verification of the physical motor label or correct flashing.
+pub fn version_parts(version: &str) -> Option<[u8; 4]> {
+    let mut parts = version.split('.');
+    let mut result = [0; 4];
+    for part in &mut result {
+        *part = parts.next()?.parse().ok()?;
+    }
+    parts.next().is_none().then_some(result)
+}
+
 pub fn firmware_model(version: &str) -> Option<String> {
-    let v: Vec<u8> = version
-        .split('.')
-        .map(str::parse)
-        .collect::<Result<_, _>>()
-        .ok()?;
-    if v.len() != 4 || v[0] != 0 {
+    let [0, family, _, _] = version_parts(version)? else {
         return None;
-    }
-    match v[1] {
-        0..=6 => Some(format!("RS-{:02}", v[1])),
-        10 => Some("RS-10P".into()),
-        _ => None,
-    }
+    };
+    Profile::model_for_family(family).map(str::to_owned)
 }
 pub fn firmware_version(f: &WireFrame, motor: u8, host: u8) -> Option<[u8; 4]> {
     if f.id >> 24 == 2
@@ -121,7 +141,7 @@ mod tests {
     use super::*;
     #[test]
     fn documented_rs00_encoding_and_feedback_use_33_and_14() {
-        let p = Profile::presets()[0].clone();
+        let p = Profile::preset("RS-00").unwrap();
         let (command, _) = torque(7, 7., &p);
         assert_eq!(command.id, 0x01bfff07);
         let f = WireFrame {
@@ -140,10 +160,7 @@ mod tests {
         assert_eq!(firmware_model("0.10.0.6").as_deref(), Some("RS-10P"));
         assert!(firmware_model("0.10.0").is_none());
         assert!(firmware_model("0.7.0.1").is_none());
-        let p = Profile::presets()
-            .into_iter()
-            .find(|p| p.model == "RS-10P")
-            .unwrap();
+        let p = Profile::preset("RS-10P").unwrap();
         let (command, _) = torque(7, 21., &p);
         assert_eq!(command.id, 0x01bfff07);
         let frame = WireFrame {
@@ -179,7 +196,7 @@ mod tests {
         assert_eq!(firmware_version(&f, 7, 253), Some([0, 0, 3, 32]));
         assert!(firmware_version(&f, 8, 253).is_none());
         assert!(firmware_version(&f, 7, 254).is_none());
-        assert!(feedback(&f, 7, 253, &Profile::presets()[0]).is_none());
+        assert!(feedback(&f, 7, 253, &Profile::preset("RS-00").unwrap()).is_none());
         let f = WireFrame {
             id: 0x150007fd,
             data: [2, 0x40, 1, 0, 1, 0, 0, 0],
@@ -201,7 +218,7 @@ mod tests {
     }
     #[test]
     fn feedback_checks_source_destination_and_faults() {
-        let p = Profile::presets()[1].clone();
+        let p = Profile::preset("RS-01").unwrap();
         let mut f = frame(2, (2 << 14) | (4 << 8) | 7, 253);
         f.data[6..].copy_from_slice(&421_u16.to_be_bytes());
         let result = feedback(&f, 7, 253, &p).unwrap();
@@ -224,11 +241,11 @@ mod tests {
         let mut report = frame(24, (2 << 14) | 7, 253);
         report.data[6..].copy_from_slice(&320_u16.to_be_bytes());
         assert_eq!(
-            active_feedback(&report, 7, 253, &Profile::presets()[0])
+            active_feedback(&report, 7, 253, &Profile::preset("RS-00").unwrap())
                 .unwrap()
                 .mode,
             2
         );
-        assert!(active_feedback(&report, 8, 253, &Profile::presets()[0]).is_none());
+        assert!(active_feedback(&report, 8, 253, &Profile::preset("RS-00").unwrap()).is_none());
     }
 }

@@ -22,15 +22,11 @@ jobs:
       matrix:
         include:
           - platform: linux-x64
-            runner: ubuntu-24.04
-            manylinux: x86_64
+            runner: ubuntu-22.04
           - platform: linux-arm64
-            runner: ubuntu-24.04-arm
-            manylinux: aarch64
+            runner: ubuntu-22.04-arm
           - platform: darwin-arm64
             runner: macos-15
-          - platform: darwin-x64
-            runner: macos-15-intel
           - platform: win32-x64
             runner: windows-2022
     runs-on: ${{ matrix.runner }}
@@ -38,13 +34,23 @@ jobs:
     env:
       MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Verify upstream firmware images
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          jq -er '.[] | [.url, .sha256] | @tsv' src/firmware_catalog.json |
+            while read -r url digest; do
+              echo "Checking ${url##*/}"
+              curl -fsSL --retry 3 --max-time 60 "$url" -o "$RUNNER_TEMP/firmware.bin"
+              echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
+            done
       - uses: dtolnay/rust-toolchain@stable
-        if: runner.os != 'Linux'
       - uses: actions/setup-python@v5
+        if: runner.os != 'Linux'
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -55,12 +61,15 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          node -e 'const fs=require("fs"); const cargo=fs.readFileSync("Cargo.toml","utf8").match(/^version = "([^"]+)"/m)[1]; const electron=require("./electron/package.json").version; if (cargo!==electron || process.env.RELEASE_TAG!==`v${cargo}`) process.exit(1)'
-      - name: Install Linux build libraries
+          cargo metadata --locked --no-deps --format-version 1 |
+            jq -e --slurpfile desktop electron/package.json '
+              .packages[] | select(.name == "motor-setup-tool") |
+              .version == $desktop[0].version and ("v" + .version == env.RELEASE_TAG)'
+      - name: Install Linux build and desktop libraries
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config fakeroot rpm
+          sudo apt-get install -y build-essential pkg-config fakeroot rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
       - name: Install macOS MuJoCo SDK
         if: runner.os == 'macOS'
         shell: bash
@@ -79,29 +88,16 @@ jobs:
           cp "$source_lib" "$sdk/libmujoco.3.12.0.dylib"
           ln -s libmujoco.3.12.0.dylib "$sdk/libmujoco.dylib"
           install_name_tool -id @rpath/libmujoco.3.12.0.dylib "$sdk/libmujoco.3.12.0.dylib"
+          codesign --force --sign - --timestamp=none "$sdk/libmujoco.3.12.0.dylib"
           hdiutil detach "$RUNNER_TEMP/mujoco-mount"
           echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
       - name: Build Rust backend
         if: runner.os != 'Linux'
         run: cargo build --locked --release
-      - name: Build Linux Rust backend and DXL worker with a glibc 2.28 baseline
+      - name: Build Linux executables with a glibc 2.28 baseline
         if: runner.os == 'Linux'
-        env:
-          MANYLINUX_ARCH: ${{ matrix.manylinux }}
-        run: |
-          mkdir -p .tools/mujoco
-          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
-            -e HOME=/work/.tools -e RUSTUP_HOME=/work/.tools/rustup \
-            -e CARGO_HOME=/work/.tools/release-cargo -e MUJOCO_DOWNLOAD_DIR=/work/.tools/mujoco \
-            "quay.io/pypa/manylinux_2_28_${MANYLINUX_ARCH}:2026.05.07-2" bash -euc '
-              curl -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh
-              sh /tmp/rustup-init.sh -y --profile minimal --no-modify-path --default-toolchain 1.98.1
-              "$CARGO_HOME/bin/cargo" build --locked --release
-              /opt/python/cp312-cp312/bin/python -m venv .tools/dxl-build-venv
-              .tools/dxl-build-venv/bin/python -m pip install -r dxl/requirements-build.txt
-              .tools/dxl-build-venv/bin/python dxl/build.py
-            '
-      - name: Build and test the Windows or macOS DXL worker
+        run: bash packaging/build-linux-release.sh --locked
+      - name: Build and test the native DXL worker
         if: runner.os != 'Linux'
         run: |
           python -m pip install -r dxl/requirements-build.txt pytest
@@ -112,34 +108,20 @@ jobs:
         run: npm ci
       - name: Check Electron code
         working-directory: electron
+        env:
+          TEST_NATIVE_BACKEND: '1'
         run: npm run check
       - name: Build desktop installers
         working-directory: electron
-        run: npm run package:installers
-      - name: Test Windows silent upgrade
-        if: runner.os == 'Windows'
-        shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          gh release download v0.1.15 --repo MotomindKR/motor-setup-tool --pattern 'motor-setup-tool-0.1.15-win32-x64.exe' --dir "$env:RUNNER_TEMP"
-          $oldInstaller = Join-Path $env:RUNNER_TEMP 'motor-setup-tool-0.1.15-win32-x64.exe'
-          $installer = (Get-ChildItem dist-electron -Filter '*-win32-x64.exe' -File | Select-Object -First 1).FullName
-          $version = (Get-Content electron/package.json -Raw | ConvertFrom-Json).version
-          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -Version $version
-          if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
-      - name: Upload Windows update diagnostics
-        if: runner.os == 'Windows' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-update-diagnostics
-          path: |
-            ${{ runner.temp }}/motomind-update-tests/*/*.json
-            ${{ runner.temp }}/motomind-update-tests/*/*.log
-            ${{ runner.temp }}/motomind-update-tests/*/*.txt
-            ${{ runner.temp }}/motomind-update-tests/*/*.png
-      - uses: actions/upload-artifact@v4
+          CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
+        run: npm run package:installers
+      - uses: actions/upload-artifact@v7
         with:
           name: installers-${{ matrix.platform }}
           if-no-files-found: error
@@ -147,11 +129,40 @@ jobs:
             dist-electron/*.deb
             dist-electron/*.rpm
             dist-electron/*.dmg
+            dist-electron/*.zip
             dist-electron/*.exe
             dist-electron/*.sha256
+            dist-electron/latest*.yml
+            dist-electron/*.blockmap
 
-  linux-compatibility:
-    name: Install and launch on Ubuntu ${{ matrix.ubuntu }} (${{ matrix.arch }})
+      - name: Build disposable next patch for updater tests
+        if: runner.os != 'macOS'
+        id: next
+        shell: bash
+        run: |
+          cd electron
+          npm version patch --no-git-tag-version --ignore-scripts
+          version=$(node -p "require('./package.json').version")
+          cd ..
+          sed -i "/^version = /c\version = \"$version\"" Cargo.toml
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            bash packaging/build-linux-release.sh --offline
+          else
+            cargo build --offline --release
+          fi
+          npm --prefix electron run package:installers
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        if: runner.os != 'macOS'
+        with:
+          name: next-patch-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
+
+  ubuntu-compatibility:
+    name: Launch on Ubuntu ${{ matrix.ubuntu }} (${{ matrix.arch }})
     needs: build
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 15
@@ -161,11 +172,11 @@ jobs:
         ubuntu: ['20.04', '22.04', '24.04', '26.04']
         arch: [x64, arm64]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: installers-linux-${{ matrix.arch }}
           path: dist-electron
-      - name: Check installed app and DXL worker
+      - name: Install DEB and smoke-test the bundled CAN and Dynamixel workers
         env:
           UBUNTU_VERSION: ${{ matrix.ubuntu }}
         run: |
@@ -173,46 +184,28 @@ jobs:
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
             apt-get install -y --no-install-recommends /installers/*.deb xvfb xauth
-            app="/opt/Motor Setup Tool"
-            "$app/resources/backend/motor-setup-tool" self-check
-            printf "%s\n" "{\"operation\":\"ports\",\"params\":{}}" "{\"operation\":\"connect\",\"params\":{\"demo\":true,\"port\":\"\",\"baud\":1000000}}" |
-              "$app/resources/dxl/dxl-worker" /tmp/dxl-backups > /tmp/dxl-replies
-            grep -q "\"ports\":" /tmp/dxl-replies
-            grep -q "\"motor_id\": 36" /tmp/dxl-replies
-            export MOTOMIND_SMOKE_TAB=dxl MOTOMIND_SMOKE_PATH=/tmp/smoke.png
-            timeout 45 xvfb-run -a "$app/motor-setup-tool" --no-sandbox
-            grep -q "\"tab\":\"dxl\"" /tmp/smoke.png.json
-            grep -q "\"backendReady\":true" /tmp/smoke.png.json
+            export MOTOMIND_SMOKE_PATH=/tmp/smoke.png MOTOMIND_SMOKE_DXL=1
+            timeout 45 xvfb-run -a "/opt/Motor Setup Tool/motor-setup-tool" --no-sandbox
+            grep -q "\"dxlMotors\":7" /tmp/smoke.png.json
           '
 
+  verify-installers:
+    needs: build
+    uses: ./.github/workflows/windows-update.yml
+    permissions:
+      actions: read
+      contents: read
+
+  preview:
+    name: Preview release
+    if: github.ref_type == 'branch'
+    needs: [verify-installers, ubuntu-compatibility]
+    uses: ./.github/workflows/release-assets.yml
+
   publish:
-    name: Publish desktop installers
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, linux-compatibility]
-    runs-on: ubuntu-22.04
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: [verify-installers, ubuntu-compatibility]
+    uses: ./.github/workflows/release-assets.yml
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: installers-*
-          merge-multiple: true
-          path: dist-electron
-      - name: Verify and publish
-        working-directory: dist-electron
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cat ./*.sha256 > SHA256SUMS
-          sha256sum -c SHA256SUMS
-          test "$(find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.dmg' -o -name '*.exe' \) | wc -l)" -eq 7
-          notes="$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md"
-          test -f "$notes"
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Motor Setup Tool $RELEASE_TAG" --notes-file "$notes"
-          fi
-          gh release upload "$RELEASE_TAG" ./*.deb ./*.rpm ./*.dmg ./*.exe SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --draft=false

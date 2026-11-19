@@ -1,8 +1,8 @@
 //! Moving-dynamics and delay identification; training only.
 use crate::{engine, types::*};
 use anyhow::{Context, Result, ensure};
-use nalgebra::{DMatrix, DVector, Matrix3, Matrix4, Vector3, Vector4};
-use std::sync::atomic::{AtomicBool, Ordering};
+use nalgebra::{DVector, Matrix4, MatrixXx3, Vector3, Vector4};
+use std::sync::atomic::AtomicBool;
 
 pub fn validate(session: &Session) -> Result<()> {
     ensure!(
@@ -57,9 +57,9 @@ pub fn validate(session: &Session) -> Result<()> {
                 && trace.commands.last().unwrap().t <= trace.samples.last().unwrap().t + 0.05,
             "Invalid time coverage"
         );
-        let v: Vec<_> = trace.samples.iter().map(|s| s.velocity).collect();
+        let v = velocities(trace);
         ensure!(
-            stddev(&v) > 0.08
+            v.variance().sqrt() > 0.08
                 && v.iter().filter(|&&v| v > 0.1).count() >= 20
                 && v.iter().filter(|&&v| v < -0.1).count() >= 20,
             "Insufficient bidirectional motion; increase excitation within limits"
@@ -122,9 +122,11 @@ pub fn velocity_position_scale(trace: &Trace) -> Result<f64> {
     );
     Ok(xy / xx)
 }
-fn stddev(v: &[f64]) -> f64 {
-    let mean = v.iter().sum::<f64>() / v.len() as f64;
-    (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+fn velocities(trace: &Trace) -> DVector<f64> {
+    DVector::from_iterator(
+        trace.samples.len(),
+        trace.samples.iter().map(|s| s.velocity),
+    )
 }
 fn integral(v: &[f64], dt: f64) -> Vec<f64> {
     let mut out = vec![0.; v.len()];
@@ -165,10 +167,46 @@ fn seed(trace: &Trace, cancel: &AtomicBool, progress: &impl Fn(f32)) -> Result<(
         windows.len() >= 50,
         "Too little motion above breakaway friction"
     );
-    let mut best: Option<(f64, Parameters, f64)> = None;
+    let x = MatrixXx3::from_fn(windows.len(), |r, col| {
+        let a = windows[r];
+        let b = a + 40;
+        match col {
+            0 => velocities[b] - velocities[a],
+            1 => iv[b] - iv[a],
+            _ => isig[b] - isig[a],
+        }
+    });
+    let scales = Vector3::new(x.column(0).norm(), x.column(1).norm(), x.column(2).norm());
+    ensure!(
+        scales.min() >= 1e-10,
+        "Excitation cannot distinguish inertia and friction"
+    );
+    let normalized = MatrixXx3::from_fn(x.nrows(), |r, c| x[(r, c)] / scales[c]);
+    let gram = normalized.transpose() * &normalized;
+    let eig = gram.symmetric_eigen().eigenvalues;
+    ensure!(
+        eig.min() > 0.,
+        "Excitation cannot distinguish inertia and friction"
+    );
+    let condition = (eig.max() / eig.min()).sqrt();
+    ensure!(
+        condition <= 1000.,
+        "Excitation cannot distinguish inertia and friction"
+    );
+    // Each active subset uses the same regressors for every candidate delay.
+    // Only the observed torque integral changes.
+    let subsets: Vec<_> = (1..8)
+        .map(|mask| {
+            let cols: Vec<_> = (0..3).filter(|col| mask & (1 << col) != 0).collect();
+            let sub = normalized.select_columns(&cols);
+            let decomposition = (sub.transpose() * &sub).lu();
+            (cols, sub, decomposition)
+        })
+        .collect();
+    let mut best: Option<(f64, Parameters)> = None;
     for delay_step in 0..=50 {
         progress(delay_step as f32 / 51.);
-        ensure!(!cancel.load(Ordering::Relaxed), "Fit cancelled");
+        crate::cancel::check(cancel)?;
         let delay = delay_step as f64 * 0.001;
         let mut index = 0;
         let mut torque = 0.;
@@ -182,41 +220,9 @@ fn seed(trace: &Trace, cancel: &AtomicBool, progress: &impl Fn(f32)) -> Result<(
             u.push(torque);
         }
         let iu = integral(&u, dt);
-        let x = DMatrix::from_fn(windows.len(), 3, |r, col| {
-            let a = windows[r];
-            let b = a + 40;
-            match col {
-                0 => velocities[b] - velocities[a],
-                1 => iv[b] - iv[a],
-                _ => isig[b] - isig[a],
-            }
-        });
         let y = DVector::from_iterator(windows.len(), windows.iter().map(|&a| iu[a + 40] - iu[a]));
-        let scales = Vector3::new(x.column(0).norm(), x.column(1).norm(), x.column(2).norm());
-        if scales.min() < 1e-10 {
-            continue;
-        }
-        let normalized = DMatrix::from_fn(x.nrows(), 3, |r, c| x[(r, c)] / scales[c]);
-        let gram = normalized.transpose() * &normalized;
-        let eig = Matrix3::from_fn(|r, c| gram[(r, c)])
-            .symmetric_eigen()
-            .eigenvalues;
-        if eig.min() <= 0. {
-            continue;
-        }
-        let condition = (eig.max() / eig.min()).sqrt();
-        if condition > 1000. {
-            continue;
-        }
-        // Exact nonnegative least squares for only three regressors: enumerate
-        // the seven active subsets, solve each, choose the feasible minimum.
-        for mask in 1..8 {
-            let cols: Vec<_> = (0..3).filter(|c| mask & (1 << c) != 0).collect();
-            let sub = DMatrix::from_fn(x.nrows(), cols.len(), |r, c| normalized[(r, cols[c])]);
-            let Some(coeff) = (&sub.transpose() * &sub)
-                .lu()
-                .solve(&(&sub.transpose() * &y))
-            else {
+        for (cols, sub, decomposition) in &subsets {
+            let Some(coeff) = decomposition.solve(&(sub.transpose() * &y)) else {
                 continue;
             };
             if coeff.iter().any(|&c| c < 0.) {
@@ -229,7 +235,7 @@ fn seed(trace: &Trace, cancel: &AtomicBool, progress: &impl Fn(f32)) -> Result<(
             if fit[0] <= 0. {
                 continue;
             }
-            let cost = (&sub * coeff - &y).norm_squared();
+            let cost = (sub * coeff - &y).norm_squared();
             if best.as_ref().is_none_or(|b| cost < b.0) {
                 best = Some((
                     cost,
@@ -240,12 +246,11 @@ fn seed(trace: &Trace, cancel: &AtomicBool, progress: &impl Fn(f32)) -> Result<(
                         delay,
                         static_friction: 0.,
                     },
-                    condition,
                 ));
             }
         }
     }
-    let (_, p, condition) = best.context("Excitation cannot distinguish inertia and friction")?;
+    let (_, p) = best.context("Excitation cannot distinguish inertia and friction")?;
     progress(1.);
     Ok((p, condition))
 }
@@ -292,22 +297,23 @@ pub fn identify(
         windows.len() >= 8,
         "Too few clean moving windows; use the full identification suite"
     );
+    let velocity_scale = velocities(trace).variance().sqrt().max(0.1);
+    let evaluate = |windows: &[&[Sample]], p: &Parameters| {
+        residuals(&trace.commands, windows, p, velocity_scale, cancel)
+    };
     let (moving, moving_converged, moving_cost) = refine(
-        trace,
-        &windows,
+        |p| evaluate(&windows, p),
         &initial,
         torque_limit,
         cancel,
         &|f, label| progress(WorkProgress::fitting(0.1 + 0.2 * f, label)),
         "Moving-window fit",
     )?;
-    let velocity_scale =
-        stddev(&trace.samples.iter().map(|s| s.velocity).collect::<Vec<_>>()).max(0.1);
-    let score = |p: &Parameters| -> Result<f64> {
-        let r = residuals(std::slice::from_ref(trace), p, velocity_scale, cancel)?;
-        Ok(r.iter().map(|v| v * v).sum::<f64>() / r.len() as f64)
+    let trajectory = |p: &Parameters| evaluate(&[&trace.samples], p);
+    let before = {
+        let r = trajectory(&moving)?;
+        r.iter().map(|v| v * v).sum::<f64>() / r.len() as f64
     };
-    let before = score(&moving)?;
     let mut parameters = moving.clone();
     let mut converged = moving_converged;
     let mut after = before;
@@ -321,8 +327,7 @@ pub fn identify(
     .enumerate()
     {
         let (p, solved, loss) = refine(
-            trace,
-            std::slice::from_ref(trace),
+            trajectory,
             candidate,
             torque_limit,
             cancel,
@@ -358,15 +363,16 @@ pub fn identify(
     })
 }
 fn residuals(
-    windows: &[Trace],
+    commands: &[Command],
+    windows: &[&[Sample]],
     p: &Parameters,
     velocity_scale: f64,
     cancel: &AtomicBool,
 ) -> Result<Vec<f64>> {
     let mut r = Vec::new();
     for window in windows {
-        let sim = engine::replay(window, p, cancel)?;
-        for (s, model) in window.samples.iter().zip(sim).skip(1).step_by(2) {
+        let sim = engine::replay_samples(commands, window, p, cancel)?;
+        for (s, model) in window.iter().zip(sim).skip(1).step_by(2) {
             r.push((model[1] - s.velocity) / velocity_scale);
             r.push(0.3 * (model[0] - s.position) / velocity_scale);
         }
@@ -374,8 +380,7 @@ fn residuals(
     Ok(r)
 }
 fn refine(
-    trace: &Trace,
-    windows: &[Trace],
+    evaluate: impl Fn(&Parameters) -> Result<Vec<f64>>,
     initial: &Parameters,
     torque_limit: f64,
     cancel: &AtomicBool,
@@ -391,10 +396,7 @@ fn refine(
     let lo = Vector4::new(1e-6, 0., 0., 0.).component_div(&scale);
     let hi = Vector4::new(5., 10., (torque_limit * 2.).max(0.01), 0.05).component_div(&scale);
     let mut x = clipped(vector(initial).component_div(&scale), &lo, &hi);
-    let velocity_scale =
-        stddev(&trace.samples.iter().map(|s| s.velocity).collect::<Vec<_>>()).max(0.1);
-    let residual =
-        |x: Vector4<f64>| residuals(windows, &from_vector(x, scale), velocity_scale, cancel);
+    let residual = |x| evaluate(&from_vector(x, scale));
     let mut r = residual(x)?;
     let mut cost = r.iter().map(|v| v * v).sum::<f64>();
     let mut lambda = 0.001;
@@ -404,7 +406,7 @@ fn refine(
             iteration as f32 / 80.,
             format!("{label} · iteration {} / 80", iteration + 1),
         );
-        ensure!(!cancel.load(Ordering::Relaxed), "Fit cancelled");
+        crate::cancel::check(cancel)?;
         let mut jac = Vec::new();
         for col in 0..4 {
             let h = 0.001_f64.max(x[col].abs() * 0.001);
@@ -462,14 +464,7 @@ fn refine(
     Ok((from_vector(x, scale), converged, cost / r.len() as f64))
 }
 
-fn slice(trace: &Trace, a: usize, b: usize) -> Trace {
-    Trace {
-        name: trace.name.clone(),
-        commands: trace.commands.clone(),
-        samples: trace.samples[a..b].to_vec(),
-    }
-}
-fn moving_windows(trace: &Trace) -> Vec<Trace> {
+fn moving_windows(trace: &Trace) -> Vec<&[Sample]> {
     let s = &trace.samples;
     let mut ranges = Vec::new();
     for a in (0..s.len()).step_by(10) {
@@ -488,6 +483,6 @@ fn moving_windows(trace: &Trace) -> Vec<Trace> {
     ranges
         .into_iter()
         .step_by(stride)
-        .map(|(a, b)| slice(trace, a, b))
+        .map(|(a, b)| &s[a..b])
         .collect()
 }

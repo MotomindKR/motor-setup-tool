@@ -4,9 +4,7 @@ import {
   ArrowUpRight,
   Cable,
   ChevronRight,
-  CircleAlert,
   Cpu,
-  LoaderCircle,
   RefreshCw,
   Search,
   Target,
@@ -36,7 +34,7 @@ import {
   NumericInput,
 } from "../ui.jsx";
 import { numberText, registerValueText } from "../controller.mjs";
-import { conciseNumber } from "../format.mjs";
+import { conciseNumber, displayAngle } from "../format.mjs";
 
 function RegisterPanel({ s, a, c }) {
   const access = (r) =>
@@ -53,19 +51,19 @@ function RegisterPanel({ s, a, c }) {
       : r.persistence === "volatile"
         ? "Live · not stored"
         : "Persistence undocumented";
-  const registers = (s.registers || []).filter((r) =>
+  const registers = s.registers.filter((r) =>
     `${r.name} ${r.symbol} 0x${r.index.toString(16)} ${r.host_index || ""}`
       .toLowerCase()
       .includes(s.registerSearch.trim().toLowerCase()),
   );
-  const r = s.registers?.find((r) => r.index === s.registerIndex);
+  const r = s.registers.find((r) => r.index === s.registerIndex);
   return (
     <Panel
       title="Motor registers"
       className="register-panel"
       action={
         <Badge variant="secondary">
-          {s.registers ? `${registers.length} registers` : "Catalog"}
+          {registers.length} registers
         </Badge>
       }
     >
@@ -81,161 +79,134 @@ function RegisterPanel({ s, a, c }) {
           onChange={(e) => a.searchRegisters(e.target.value)}
         />
       </InputGroup>
-      {s.registersFailed ? (
-        <Empty
-          compact
-          icon={CircleAlert}
-          title="Couldn’t load the register catalog"
-          action={
-            <Button
-              variant="outline"
-              onClick={a.retryRegisters}
-              disabled={c.busy}
-            >
-              Try again
-            </Button>
-          }
-        />
-      ) : !s.registers ? (
-        <Empty compact icon={LoaderCircle} title="Loading registers…" />
-      ) : (
-        <div className="register-workspace">
-          <div className="register-list">
-            <Table aria-label="Registers">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Address</TableHead>
-                  <TableHead>Register</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {registers.map((item) => (
-                  <TableRow
-                    key={item.index}
-                    data-state={
-                      item.index === s.registerIndex ? "selected" : undefined
-                    }
-                  >
-                    <TableCell>
-                      <code>0x{item.index.toString(16).toUpperCase()}</code>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        className="register-select"
-                        aria-pressed={item.index === s.registerIndex}
-                        disabled={c.busy}
-                        onClick={() => a.selectRegister(item.index)}
-                      >
-                        <span>
-                          {item.name}
-                          <small>
-                            {item.symbol}
-                            {` · ${access(item)}${item.writable && !item.editable ? " · Protected" : ""}`}
-                          </small>
-                        </span>
-                        <ChevronRight />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {!registers.length && (
-              <p className="field-hint no-registers">No matching registers.</p>
-            )}
-          </div>
-          <div className="register-editor">
-            <h3>{r?.name || "Select a register"}</h3>
-            <p className="register-meta">
-              {r &&
-                `0x${r.index.toString(16).toUpperCase()} · ${r.value_type} · ${access(r)}`}
-            </p>
-            {r && (
-              <p className="field-hint">
-                {storage(r)}
-                {r.host_index ? ` · Host code ${r.host_index}` : ""}
-              </p>
-            )}
-            {r?.description && <p>{r.description}</p>}
-            <div className="register-current">
-              <div>
-                <span>Current value</span>
-                <strong>
-                  {s.registerRead
-                    ? registerValueText(s.registerRead.value, r)
-                    : "—"}
-                </strong>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={a.readRegister}
-                disabled={!c.registerRead}
-              >
-                <RefreshCw />
-                Read
-              </Button>
-            </div>
-            {r?.editable ? (
-              <>
-                <Field
-                  label="New value"
-                  hint={
-                    r?.editable
-                      ? `${conciseNumber(r.min)} to ${conciseNumber(r.max)}`
-                      : "Read only"
+      <div className="register-workspace">
+        <div className="register-list">
+          <Table aria-label="Registers">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Address</TableHead>
+                <TableHead>Register</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {registers.map((item) => (
+                <TableRow
+                  key={item.index}
+                  data-state={
+                    item.index === s.registerIndex ? "selected" : undefined
                   }
                 >
-                  {r?.choices?.length ? (
-                    <Choice
-                      value={s.registerValue}
-                      onChange={a.setRegisterValue}
-                      options={r.choices.map((ch) => ({
-                        value: String(ch.value),
-                        label: ch.label,
-                      }))}
-                      disabled={
-                        !s.registerRead || !r?.editable || c.busy || !c.motor
-                      }
-                      placeholder="Read first"
-                    />
-                  ) : (
-                    <NumericInput
-                      min={r?.min}
-                      max={r?.max}
-                      step="any"
-                      placeholder="Read first"
-                      value={s.registerValue}
-                      onValueChange={a.setRegisterValue}
-                      disabled={
-                        !s.registerRead || !r?.editable || c.busy || !c.motor
-                      }
-                    />
-                  )}
-                </Field>
-                <Button
-                  className="full"
-                  disabled={!c.registerWrite}
-                  onClick={a.writeRegister}
-                >
-                  <ArrowDownToLine />
-                  Save to motor
-                </Button>
-                <p className="field-hint" role="status">
-                  {s.registerMessage ||
-                    (!s.registerRead ? "Read to edit." : "")}
-                </p>
-              </>
-            ) : (
-              <p className="field-hint">
-                {r?.protected_reason ||
-                  (r?.readable ? "Read only" : "Readback unavailable")}
-              </p>
-            )}
-          </div>
+                  <TableCell>
+                    <code>0x{item.index.toString(16).toUpperCase()}</code>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      className="register-select"
+                      aria-pressed={item.index === s.registerIndex}
+                      disabled={c.busy}
+                      onClick={() => a.selectRegister(item.index)}
+                    >
+                      <span>
+                        {item.name}
+                        <small>
+                          {item.symbol}
+                          {` · ${access(item)}${item.writable && !item.editable ? " · Protected" : ""}`}
+                        </small>
+                      </span>
+                      <ChevronRight />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {!registers.length && (
+            <p className="field-hint no-registers">No matching registers.</p>
+          )}
         </div>
-      )}
+        <div className="register-editor">
+          <h3>{r?.name || "Select a register"}</h3>
+          <p className="register-meta">
+            {r &&
+              `0x${r.index.toString(16).toUpperCase()} · ${r.value_type} · ${access(r)}`}
+          </p>
+          {r && (
+            <p className="field-hint">
+              {storage(r)}
+              {r.host_index ? ` · Host code ${r.host_index}` : ""}
+            </p>
+          )}
+          {r?.description && <p>{r.description}</p>}
+          <div className="register-current">
+            <div>
+              <span>Current value</span>
+              <strong>
+                {s.registerRead
+                  ? registerValueText(s.registerRead.value, r)
+                  : "—"}
+              </strong>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={a.readRegister}
+              disabled={!c.registerRead}
+            >
+              <RefreshCw />
+              Read
+            </Button>
+          </div>
+          {r?.editable ? (
+            <>
+              <Field
+                label="New value"
+                hint={`${conciseNumber(r.min)} to ${conciseNumber(r.max)}`}
+              >
+                {r?.choices?.length ? (
+                  <Choice
+                    value={s.registerValue}
+                    onChange={a.setRegisterValue}
+                    options={r.choices.map((ch) => ({
+                      value: String(ch.value),
+                      label: ch.label,
+                    }))}
+                    disabled={!s.registerRead || c.busy}
+                    placeholder="Read first"
+                  />
+                ) : (
+                  <NumericInput
+                    min={r?.min}
+                    max={r?.max}
+                    step="any"
+                    placeholder="Read first"
+                    value={s.registerValue}
+                    onValueChange={a.setRegisterValue}
+                    disabled={!s.registerRead || c.busy}
+                  />
+                )}
+              </Field>
+              <Button
+                className="full"
+                disabled={!c.registerWrite}
+                onClick={a.writeRegister}
+              >
+                <ArrowDownToLine />
+                Save to motor
+              </Button>
+              <p className="field-hint" role="status">
+                {s.registerMessage ||
+                  (!s.registerRead ? "Read to edit." : "")}
+              </p>
+            </>
+          ) : (
+            <p className="field-hint">
+              {r?.protected_reason ||
+                (r?.readable ? "Read only" : "Readback unavailable")}
+            </p>
+          )}
+        </div>
+      </div>
     </Panel>
   );
 }
@@ -246,7 +217,6 @@ export function SetupPage({ s, a, c }) {
         Scan above to open motor settings.
       </Empty>
     );
-  const blocked = c.busy || !c.motor;
   const spec = s.preview?.spec;
   return (
     <div className="stack">
@@ -257,11 +227,11 @@ export function SetupPage({ s, a, c }) {
               label="Display angle"
               type="number"
               step="any"
-              min={s.referenceUnit === "deg" ? (-100 * 180) / Math.PI : -100}
-              max={s.referenceUnit === "deg" ? (100 * 180) / Math.PI : 100}
+              min={displayAngle(-100, s.referenceUnit)}
+              max={displayAngle(100, s.referenceUnit)}
               value={s.referenceInput}
               onValueChange={a.setReferenceInput}
-              disabled={blocked}
+              disabled={c.busy}
             />
             <Field label="Unit">
               <Choice
@@ -271,14 +241,14 @@ export function SetupPage({ s, a, c }) {
                   { value: "rad", label: "Radians" },
                   { value: "deg", label: "Degrees" },
                 ]}
-                disabled={blocked}
+                disabled={c.busy}
               />
             </Field>
           </div>
           <Button
             className="full"
             variant="outline"
-            disabled={blocked}
+            disabled={c.busy}
             onClick={() => a.zero()}
           >
             <Target />
@@ -299,21 +269,13 @@ export function SetupPage({ s, a, c }) {
             placeholder="1–254"
             value={s.newId}
             onValueChange={a.setNewId}
-            disabled={blocked}
+            disabled={c.busy}
           />
           <Button
             className="full"
             variant="outline"
             onClick={a.changeId}
-            disabled={
-              blocked ||
-              !s.newId.trim() ||
-              !Number.isInteger(Number(s.newId)) ||
-              Number(s.newId) < 1 ||
-              Number(s.newId) > 254 ||
-              Number(s.newId) === s.motor?.id ||
-              Number(s.newId) === Number(s.connection.hostId)
-            }
+            disabled={!c.changeId}
           >
             <Cpu />
             Change ID
@@ -329,7 +291,7 @@ export function SetupPage({ s, a, c }) {
           <Button
             className="full"
             variant="outline"
-            disabled={blocked}
+            disabled={c.busy}
             onClick={a.prepareFirmware}
           >
             <ArrowDownToLine />
@@ -348,7 +310,7 @@ export function SetupPage({ s, a, c }) {
             <Button
               variant="destructive"
               size="sm"
-              disabled={blocked || !s.firmware || s.firmware.id !== s.motor?.id}
+              disabled={!c.updateFirmware}
               onClick={a.updateFirmware}
             >
               <Upload />
@@ -357,7 +319,7 @@ export function SetupPage({ s, a, c }) {
           </div>
         </Panel>
       </div>
-      <RegisterPanel s={s} a={a} c={c} />
+      {s.registers && <RegisterPanel s={s} a={a} c={c} />}
       <Disclosure
         className="disclosure motor-specs"
         title="Motor specifications & CAN protocol"

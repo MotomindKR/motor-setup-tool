@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Run inside packaging/Dockerfile, with no motor or desktop required.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/ci}"

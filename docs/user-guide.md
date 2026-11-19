@@ -45,13 +45,18 @@ This mode uses the GS USB
 protocol directly. On Linux, it temporarily detaches the `gs_usb` kernel
 driver; when returning to SocketCAN, click **Bring up CAN** again.
 
-On Linux, grant your desktop user USB access once, then reconnect the adapter:
+Linux DEB/RPM installers set up USB access for the active desktop user.
+Reconnect the adapter after installing, then refresh the adapter list.
+
+For a source or unpacked build, install the rule from the repository once:
 
 ```sh
-sudo install -m 0644 "/opt/Motor Setup Tool/packaging/99-motomind-gsusb.rules" /etc/udev/rules.d/
+sudo install -m 0644 packaging/70-motomind-gsusb.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 ```
 
+The rule grants access to the active local desktop session; an SSH-only session
+needs a separately configured USB access group.
 If **USB access denied** remains, reconnect the adapter after loading the rule.
 Refresh the list after reconnecting because its USB address may change.
 
@@ -71,9 +76,9 @@ CAN ID. An unknown or unreadable firmware version blocks calibration.
 3. Wait for recording, fitting, and validation to finish. The default recording
    contains 40 seconds of training and 20 seconds of separate validation.
 
-**Motion preview** is optional. It shows the requested speed and torque bursts,
-not a prediction of the response. After reviewing results, select **New calibration**
-to run another test; review is required again.
+**Motion preview** shows the requested speed and torque bursts. Completed runs
+open in **Files**. To run another calibration, return to **Calibrate** and review
+the limits again.
 
 The motion suite uses speed steps, sweeps, torque bursts, and coast-down.
 **Stop** cancels the job. Limits, communication errors, and motor faults also
@@ -139,19 +144,6 @@ The save also commits other pending persistent settings. Access depends on the
 model; write-only and undocumented settings are protected. See the
 [register audit](registers.md) for the full permissions and persistence table.
 
-| Registers | Editing |
-| --- | --- |
-| Gains and filters · `0x7010`, `0x7011`, `0x7014`, `0x701E`–`0x7021` | Numeric input within documented ranges |
-| Speed and current limits · `0x7017`–`0x7018` | Protected (device supports R/W) |
-| Power-on position range · `zero_sta`, `0x7029` | Choose `0` (0 to 2π) or `1` (−π to π) |
-| Position offset · `add_offset`, `0x702B` | Radians, −7 to 7 |
-
-The app disables the motor, verifies its UUID and previous value, writes the
-correct parameter type, verifies readback, and sends the save command. Changes
-to the power-on range and offset apply after a power cycle. Motion targets and
-other volatile controls are excluded. Older firmware may reject newer settings;
-update the motor firmware if a documented setting is unavailable.
-
 ## Monitor and jog a motor
 
 1. Open **Test → Start monitoring**. The motor starts disabled. Live position,
@@ -200,9 +192,9 @@ reference are kept; review the limits again before starting calibration.
 ## Open, download, and delete recordings
 
 In **Files**, select a saved run or use **Open** to choose a recording folder.
-The report shows model, CAN ID and actuator UUID. This eight-byte hardware
-identity is recorded in `hardware.json` and `report.json`; the printed factory
-serial/barcode is not collected. Older runs without identity show “Not recorded”.
+The report shows model, CAN ID and the eight-byte actuator UUID. New recordings
+store the UUID with the raw samples in `session.json`. For older recordings,
+refitting reads the UUID from `hardware.json` when available.
 
 **Download** offers the entire run as a ZIP, individual training/validation CSVs,
 and calibration JSON when present. ZIPs include the original identity metadata;

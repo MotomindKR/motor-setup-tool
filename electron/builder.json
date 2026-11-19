@@ -3,8 +3,12 @@
   "productName": "Motor Setup Tool",
   "directories": { "output": "../dist-electron/installers" },
   "asar": false,
-  "publish": null,
+  "publish": [{ "provider": "github", "owner": "MotomindKR", "repo": "motor-setup-tool" }],
+  "electronUpdaterCompatibility": ">=6.8.11",
+  "npmRebuild": false,
   "linux": {
+    "target": ["deb", "rpm"],
+    "artifactName": "motor-setup-tool-${version}-linux-${arch}.${ext}",
     "category": "Utility",
     "icon": "../assets/icons/256.png",
     "executableName": "motor-setup-tool",
@@ -15,17 +19,24 @@
     "depends": [
       "libgtk-3-0 | libgtk-3-0t64", "libnotify4", "libnss3", "libxss1",
       "libxtst6", "xdg-utils", "libatspi2.0-0 | libatspi2.0-0t64", "libuuid1",
-      "libasound2 | libasound2t64", "libgbm1", "acl", "pkexec | policykit-1"
-    ]
+      "libsecret-1-0", "libasound2 | libasound2t64", "libgbm1"
+    ],
+    "recommends": ["acl", "pkexec | policykit-1"]
   },
   "mac": {
-    "identity": null,
+    "target": ["dmg", "zip"],
+    "artifactName": "motor-setup-tool-${version}-darwin-${arch}.${ext}",
+    "hardenedRuntime": true,
+    "entitlements": "../packaging/entitlements.mac.plist",
+    "entitlementsInherit": "../packaging/entitlements.mac.plist",
+    "binaries": ["Contents/Resources/backend/motor-setup-tool", "Contents/Resources/backend/lib/libmujoco.3.12.0.dylib"],
     "icon": "../assets/icons/motor-setup-tool.icns",
     "category": "public.app-category.utilities"
   },
   "dmg": { "title": "Motor Setup Tool" },
-  "win": { "target": "nsis", "icon": "../assets/icons/motor-setup-tool.ico" },
+  "win": { "target": "nsis", "artifactName": "motor-setup-tool-${version}-win32-${arch}.${ext}", "icon": "../assets/icons/motor-setup-tool.ico" },
   "nsis": {
+    "include": "../packaging/installer.nsh",
     "installerIcon": "../assets/icons/motor-setup-tool.ico",
     "uninstallerIcon": "../assets/icons/motor-setup-tool.ico",
     "oneClick": false,

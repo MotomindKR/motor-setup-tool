@@ -62,7 +62,7 @@ static-friction peak.
 | `pre_calibration.xml` | Baseline simulation model |
 | `report.json` | Fit status, parameters, diagnostics, and comparison traces |
 | `training.csv`, `validation.csv` | Measured and simulated position/velocity series |
-| `session.json` | Recorded commands, feedback, timestamps, and completion flag |
+| `session.json` | Actuator UUID, recorded commands, feedback, timestamps, and completion flag |
 | `config.json` | Motor profile, limits, and baseline used for the run |
 | `hardware.json` | Recorded motor identity, firmware, and wire profile |
 | `experiment_plan.json` | Motion stages, limits, and model specifications |

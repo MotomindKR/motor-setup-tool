@@ -10,7 +10,9 @@ export const fixture = {
     sample_hz: 200,
     sweep_start_hz: 0.1,
     sweep_end_hz: 5,
-    baseline: { armature: 0.000001, damping: 0.005, friction: 0.02, delay: 0 },
+    experiment: "Mixed",
+    excitation_revision: 1,
+    baseline: { static_friction: 0, armature: 0.000001, damping: 0.005, friction: 0.02, delay: 0 },
     profile: { position_range: 12.5, velocity_range: 50, torque_range: 17 },
   },
   preview: {
@@ -107,11 +109,12 @@ export function installBridge(data) {
     ],
     usb: data.usbAdapters ?? [],
   };
-  window.testMotor = { calls, intents, adapters };
+  window.testMotor = { calls, intents, adapters, emit: (event) => listener(event) };
   const result = {
     directory: "/recordings/1760000000000-RS-00",
+    uuid: "0102030405060708",
     report: data.report,
-    files: ["training.csv", "validation.csv", "calibration.json"],
+    files: ["session.json", "training.csv", "validation.csv", "calibration.json"],
   };
   let motor = {
     model: "RS-00",
@@ -137,8 +140,12 @@ export function installBridge(data) {
         motor = { ...motor, id: params.newId };
         return { previous_id, id: motor.id };
       }
-      if (operation === "plan") return structuredClone(data.preset);
-      if (operation === "registerList") return data.registers;
+      if (operation === "plan") {
+        const keys = Object.keys({ ...data.preset, ...data.preset.baseline });
+        const limits = Object.fromEntries(keys.map(key => [key, [0, 100]]));
+        limits.armature = [0.000001, 1];
+        return { preset: structuredClone(data.preset), limits, registers: data.registers };
+      }
       if (operation === "registerRead" || operation === "registerWrite")
         return {
           index: params.index,
@@ -174,6 +181,7 @@ export function installBridge(data) {
       if (operation === "firmwarePrepare")
         return {
           id: motor.id,
+          model: motor.model, uuid: motor.uuid, interface: params.can, host_id: Number(params.hostId),
           current_version: motor.firmware,
           version: "1.2.4",
         };
@@ -214,7 +222,7 @@ export function installBridge(data) {
     openReleaseNotes: async () => {},
     updateInfo: async () => ({ version: "0.1.17" }),
     checkUpdate: async () => ({ available: false }),
-    installUpdate: async () => {},
+    installUpdate: async version => { calls.push({ operation: "installUpdate", version }); },
     manualIntent: async (intent) => {
       intents.push(intent);
       enabled = intent.enabled;

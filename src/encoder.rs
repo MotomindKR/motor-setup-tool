@@ -132,11 +132,7 @@ mod tests {
     #[test]
     fn all_models_unwrap_both_directions_with_batched_arrivals() {
         for profile in Profile::presets() {
-            let mut config = Config {
-                profile,
-                ..Default::default()
-            };
-            config.apply_spec_limits();
+            let config = Config::preset(&profile.model).unwrap();
             let range = config.profile.position_range;
             for direction in [-1., 1.] {
                 let origin = direction * (range - 0.01);

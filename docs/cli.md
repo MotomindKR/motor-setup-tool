@@ -61,9 +61,9 @@ meaning for SocketCAN (kernel queue) and direct GS USB (USB transfer).
 "$tool" analyze /path/to/recording
 ```
 
-`plan` prints the model's single preset without contacting hardware.
+`plan` prints the model's single preset without contacting hardware. Add `--setup` to include input ranges and the model’s register catalog.
 Calibration detects the connected model from firmware, checks the watchdog,
-records 40 seconds of training and 20 seconds of validation, then fits and
+records separate training and validation traces, then fits and
 replays MuJoCo. `--yes` confirms the motor is secured, the shaft is clear, and
 the preset limits have been reviewed. Ctrl+C cancels acquisition or fitting;
 active motor control stops before exit.
@@ -114,9 +114,7 @@ update downloads and verifies the matching image. Keep power connected until
 the update finishes. Once firmware transfer starts, termination requests wait
 for it to finish rather than interrupting a flash write.
 
-Register writes accept documented persistent gains, filters, `zero_sta`
-(`0x7029`, uint8, 0 or 1), and `add_offset` (`0x702B`, float32 radians, −7 to 7).
-Use the
+Use `register list` to find the model's editable settings and bounds. Supply the
 `uuid` and `raw` fields returned by a recent `register read`; the motor is
 stopped and both are checked again before a write. A successful save means the
 motor acknowledged the save command and readback matched. Power cycle and read

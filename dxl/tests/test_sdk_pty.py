@@ -93,7 +93,10 @@ class Emulator:
 
 
 @pytest.fixture
-def wire(tmp_path):
+def wire(tmp_path, monkeypatch):
+    # The emulator is scheduled as a test thread rather than a UART device.
+    # Allow for CI scheduling delays without changing production timeouts.
+    monkeypatch.setattr("dynamixel_sdk.port_handler.LATENCY_TIMER", 60)
     emulator = Emulator()
     transport = SDKTransport(emulator.port, 115200)
     service = SettingsService(transport, tmp_path / "backups")

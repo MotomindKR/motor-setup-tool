@@ -44,6 +44,7 @@ import { SetupPage } from "./pages/Setup.jsx";
 import { DxlPage } from "./pages/Dxl.jsx";
 import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
+import { syncWindowTheme } from "./window-theme.mjs";
 
 const pages = {
   calibrate: {
@@ -96,10 +97,10 @@ function useTheme() {
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
-    window.motorApp?.setWindowTheme?.(choice)?.catch(() => {});
     try {
       localStorage.setItem("motomind-appearance", choice);
     } catch {}
+    return syncWindowTheme(window.motorApp, choice, theme);
   }, [theme, choice]);
   return { choice, setChoice };
 }
@@ -148,34 +149,17 @@ export function App({ controller }) {
     window.scrollTo(0, 0);
   }, [s.tab, s.directory]);
   useEffect(() => {
-    if (
-      s.tab === "setup" &&
-      s.motor?.model &&
-      !c.busy &&
-      !s.registers &&
-      !s.registersFailed
-    )
-      a.loadRegisters();
-  }, [s.tab, s.motor?.model, c.busy, s.registers, s.registersFailed, a]);
-  useEffect(() => {
-    if (window.motorSmoke) window.motorSmoke.setTheme = appearance.setChoice;
-  }, [appearance.setChoice]);
-  useEffect(() => {
     const cleanup = controller.start();
-    const revoke = () => a.revoke(),
-      release = () => a.release();
-    const visibility = () => {
-      if (document.hidden) revoke();
-    };
-    window.addEventListener("blur", revoke);
-    document.addEventListener("visibilitychange", visibility);
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
+    const listeners = new AbortController();
+    const options = { signal: listeners.signal };
+    window.addEventListener("blur", a.revoke, options);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) a.revoke();
+    }, options);
+    window.addEventListener("pointerup", a.release, options);
+    window.addEventListener("pointercancel", a.release, options);
     return () => {
-      window.removeEventListener("blur", revoke);
-      document.removeEventListener("visibilitychange", visibility);
-      window.removeEventListener("pointerup", release);
-      window.removeEventListener("pointercancel", release);
+      listeners.abort();
       cleanup();
     };
   }, [controller, a]);
@@ -227,6 +211,7 @@ export function App({ controller }) {
             activeTab={s.tab}
             onNavigate={a.setTab}
             onSettings={a.openSettings}
+            updateAvailable={s.updateResult?.available}
           />
           <SidebarInset className="app-body" aria-label={page.title}>
             <div id="workspace" className="workspace" tabIndex={-1}>
@@ -257,7 +242,6 @@ export function App({ controller }) {
                   "manual",
                   "interfaces",
                   "usbAdapters",
-                  "registerList",
                   "plan",
                 ].includes(s.busy) && (
                   <Panel

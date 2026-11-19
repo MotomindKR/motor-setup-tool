@@ -12,6 +12,8 @@ import {
 import { Button, Field, Choice } from "../ui.jsx";
 
 export function Settings({ s, a, appearance, c }) {
+  const result = s.updateResult;
+  const updateMessage = s.updateMessage || (result && !result.available && "You have the latest version.");
   return (
     <Dialog
       open={s.settingsOpen}
@@ -41,9 +43,10 @@ export function Settings({ s, a, appearance, c }) {
             {s.version ? `v${s.version}` : "Version unavailable"}
           </Badge>
         </div>
-        {s.updateMessage && (
+        {result?.available && <p className="field-hint" role="status">Version {result.version} is available.</p>}
+        {updateMessage && (
           <p className="field-hint" role="status">
-            {s.updateMessage}
+            {updateMessage}
           </p>
         )}
         <DialogFooter>
@@ -55,12 +58,13 @@ export function Settings({ s, a, appearance, c }) {
             <RefreshCw className={s.checkingUpdate ? "spinning" : ""} />
             Check for update
           </Button>
-          {s.updateCandidate && (
-            <Button onClick={a.installUpdate} disabled={c.busy}>
+          {result?.available && (
+            <Button
+              onClick={() => a.installUpdate(result.version)}
+              disabled={c.busy || s.checkingUpdate}
+            >
               <ArrowDownToLine />
-              {s.updateCandidate.installMode === "mac-dmg"
-                ? "Open DMG"
-                : "Install update"}
+              {result.releasePage ? "Open download page" : "Install update"}
             </Button>
           )}
         </DialogFooter>

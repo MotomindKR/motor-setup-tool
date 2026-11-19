@@ -18,11 +18,33 @@ use sha2::{Digest, Sha256};
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Id, Socket, SocketOptions};
 use std::{
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
     sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
+
+#[derive(Debug)]
+enum BusEvent {
+    Empty,
+    ControllerStatus,
+    Frame(Option<WireFrame>),
+}
+
+/// Returns true only when the transport reports an empty queue.
+fn drain_frames(
+    events: impl Iterator<Item = Result<BusEvent>>,
+    mut visit: impl FnMut(WireFrame) -> Result<()>,
+) -> Result<bool> {
+    for event in events {
+        match event? {
+            BusEvent::Empty => return Ok(true),
+            BusEvent::ControllerStatus | BusEvent::Frame(None) => {}
+            BusEvent::Frame(Some(frame)) => visit(frame)?,
+        }
+    }
+    Ok(false)
+}
 
 pub struct Bus {
     _lock: std::fs::File,
@@ -213,11 +235,7 @@ fn gsusb_id(bus_id: &str, address: u8) -> String {
     let bus_hex: String = if bus_id.is_empty() {
         "00".into()
     } else {
-        bus_id
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        protocol::hex(bus_id.as_bytes())
     };
     format!("gsusb:{bus_hex}:{address}")
 }
@@ -265,17 +283,15 @@ fn gsusb_wire_frame(frame: &UsbCanFrame) -> Option<WireFrame> {
     if let UsbCanId::Extended(id) = frame.id()
         && !frame.is_remote()
         && !frame.is_fd()
-        && frame.data().len() == 8
+        && let Ok(data) = frame.data().try_into()
     {
-        let mut data = [0; 8];
-        data.copy_from_slice(frame.data());
         Some(WireFrame { id, data })
     } else {
         None
     }
 }
 
-fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
+fn gsusb_event(event: UsbReceiveEvent) -> Result<BusEvent> {
     match event {
         UsbReceiveEvent::Frame(received) => {
             let frame = received.frame;
@@ -287,7 +303,7 @@ fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
                     frame.data()
                 );
             }
-            Ok(gsusb_wire_frame(&frame))
+            Ok(BusEvent::Frame(gsusb_wire_frame(&frame)))
         }
         UsbReceiveEvent::ErrorFrame { can_id, data, .. } => {
             if let Some(reason) = bus_error_reason(can_id, &data) {
@@ -298,7 +314,7 @@ fn gsusb_event_frame(event: UsbReceiveEvent) -> Result<Option<WireFrame>> {
             if std::env::var_os("MOTOMIND_CAN_TRACE").is_some() {
                 eprintln!("GS-USB CAN status 0x{can_id:08x} {data:02x?}");
             }
-            Ok(None)
+            Ok(BusEvent::ControllerStatus)
         }
         UsbReceiveEvent::Overflow { .. } => {
             anyhow::bail!("GS-USB adapter receive overflow; check CAN bus traffic and wiring")
@@ -389,7 +405,7 @@ impl Bus {
             }
         }
     }
-    pub(crate) fn receive(&self) -> Result<Option<WireFrame>> {
+    fn next_event(&self) -> Result<BusEvent> {
         let received = match &self.socket {
             #[cfg(target_os = "linux")]
             BusSocket::SocketCan(socket) => match socket.read_frame() {
@@ -401,33 +417,32 @@ impl Bus {
                                 self.config.interface
                             );
                         }
-                        return Ok(None);
+                        return Ok(BusEvent::ControllerStatus);
                     }
-                    if let Id::Extended(id) = f.id()
-                        && f.data().len() == 8
+                    let wire = if let Id::Extended(id) = f.id()
+                        && let Ok(data) = f.data().try_into()
                     {
-                        let mut data = [0; 8];
-                        data.copy_from_slice(f.data());
                         Some(WireFrame {
                             id: id.as_raw(),
                             data,
                         })
                     } else {
                         None
-                    }
+                    };
+                    BusEvent::Frame(wire)
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => None,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(BusEvent::Empty),
                 Err(e) => return Err(e).context("CAN receive failed"),
             },
             BusSocket::GsUsb(device) => {
                 let event = match device.receive().context("GS-USB receive failed")? {
                     Some(event) => event,
-                    None => return Ok(None),
+                    None => return Ok(BusEvent::Empty),
                 };
-                gsusb_event_frame(event)?
+                gsusb_event(event)?
             }
         };
-        if let Some(wire) = &received
+        if let BusEvent::Frame(Some(wire)) = &received
             && let Some((faults, warnings)) =
                 protocol::fault_report(wire, self.config.motor_id, self.config.host_id)
         {
@@ -439,69 +454,91 @@ impl Bus {
         }
         Ok(received)
     }
+    pub(crate) fn receive(&self) -> Result<Option<WireFrame>> {
+        match self.next_event()? {
+            BusEvent::Frame(frame) => Ok(frame),
+            BusEvent::Empty | BusEvent::ControllerStatus => Ok(None),
+        }
+    }
     pub(crate) fn flush(&self) -> Result<()> {
-        // Bounded even on a busy CAN bus.
-        for _ in 0..4096 {
-            if self.receive()?.is_none() {
-                break;
+        ensure!(
+            drain_frames((0..4096).map(|_| self.next_event()), |_| Ok(()))?,
+            "CAN receive queue did not drain before the next request"
+        );
+        Ok(())
+    }
+    pub(crate) fn require_quiet(&self, duration: Duration, cancel: &AtomicBool) -> Result<()> {
+        self.flush()?;
+        let end = Instant::now() + duration;
+        while Instant::now() < end {
+            crate::cancel::check(cancel)?;
+            match self.next_event()? {
+                BusEvent::Frame(_) => anyhow::bail!(
+                    "CAN traffic detected; close other CAN tools and disable periodic reports before updating"
+                ),
+                BusEvent::Empty => thread::sleep(Duration::from_millis(1)),
+                BusEvent::ControllerStatus => {}
             }
         }
         Ok(())
     }
-    pub(crate) fn wait_for(
+    pub(crate) fn wait_for<T>(
         &self,
         timeout: Duration,
-        accept: impl Fn(&WireFrame) -> bool,
-    ) -> Result<WireFrame> {
+        decode: impl Fn(WireFrame) -> Option<T>,
+    ) -> Result<Option<T>> {
         let end = Instant::now() + timeout;
         while Instant::now() < end {
-            if let Some(f) = self.receive()?
-                && accept(&f)
-            {
-                return Ok(f);
+            match self.next_event()? {
+                BusEvent::Frame(Some(frame)) => {
+                    if let Some(value) = decode(frame) {
+                        return Ok(Some(value));
+                    }
+                }
+                BusEvent::ControllerStatus | BusEvent::Frame(None) => {}
+                BusEvent::Empty => thread::sleep(Duration::from_micros(200)),
             }
-            thread::sleep(Duration::from_micros(200));
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "No matching response before CAN deadline",
-        )
-        .into())
+        Ok(None)
     }
+    fn verify_uuid(&self, expected: [u8; 8]) -> Result<()> {
+        let actual = self.ping(self.config.motor_id, Duration::from_millis(100))?;
+        ensure!(
+            actual == expected,
+            "Motor UUID at this ID changed; scan again"
+        );
+        Ok(())
+    }
+
     pub(crate) fn ping(&self, id: u8, timeout: Duration) -> Result<[u8; 8]> {
-        self.flush()?;
-        self.send(protocol::frame(0, self.config.host_id as u16, id))?;
-        // Type-0 replies use destination 0xFE (some firmware uses host ID).
-        let f = self.wait_for(timeout, |f| {
-            f.id >> 24 == 0
-                && (f.id >> 8) as u16 == id as u16
-                && [0xfe, self.config.host_id].contains(&(f.id as u8))
-        })?;
-        Ok(f.data)
+        self.probe(id, timeout)?
+            .context("No identity response before CAN deadline")
     }
     fn probe(&self, id: u8, timeout: Duration) -> Result<Option<[u8; 8]>> {
-        match self.ping(id, timeout) {
-            Ok(uuid) => Ok(Some(uuid)),
-            Err(e)
-                if e.downcast_ref::<std::io::Error>()
-                    .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-            {
-                Ok(None)
-            }
-            Err(e) => Err(e),
-        }
+        self.flush()?;
+        self.send(protocol::frame(0, self.config.host_id as u16, id))?;
+        // Type-0 replies use destination 0xFE or the host ID, depending on firmware.
+        self.wait_for(timeout, |f| {
+            (f.id >> 24 == 0
+                && (f.id >> 8) as u16 == id as u16
+                && [0xfe, self.config.host_id].contains(&(f.id as u8)))
+            .then_some(f.data)
+        })
     }
     pub(crate) fn read_parameter(&self, index: u16) -> Result<[u8; 4]> {
         self.flush()?;
         let mut f = protocol::frame(17, self.config.host_id as u16, self.config.motor_id);
         f.data[..2].copy_from_slice(&index.to_le_bytes());
         self.send(f)?;
-        let f = self.wait_for(Duration::from_millis(100), |f| {
-            f.id >> 24 == 17
-                && (f.id >> 8) as u8 == self.config.motor_id
-                && f.id as u8 == self.config.host_id
-                && f.data[..2] == index.to_le_bytes()
-        })?;
+        let f = self
+            .wait_for(Duration::from_millis(100), |f| {
+                (f.id >> 24 == 17
+                    && (f.id >> 8) as u8 == self.config.motor_id
+                    && f.id as u8 == self.config.host_id
+                    && f.data[..2] == index.to_le_bytes())
+                .then_some(f)
+            })?
+            .context("No parameter response before CAN deadline")?;
         ensure!(
             (f.id >> 16) & 0xff == 0,
             "Motor rejected parameter read 0x{index:04x}: status=0x{:02x}",
@@ -510,16 +547,20 @@ impl Bus {
         Ok(f.data[4..].try_into().unwrap())
     }
     pub(crate) fn firmware_version(&self) -> Result<String> {
+        self.try_firmware_version()?
+            .context("No firmware version response before CAN deadline")
+    }
+    pub(crate) fn try_firmware_version(&self) -> Result<Option<String>> {
         self.flush()?;
         self.send(protocol::version_request(
             self.config.host_id,
             self.config.motor_id,
         ))?;
-        let f = self.wait_for(Duration::from_millis(200), |f| {
-            protocol::firmware_version(f, self.config.motor_id, self.config.host_id).is_some()
-        })?;
-        let v = protocol::firmware_version(&f, self.config.motor_id, self.config.host_id).unwrap();
-        Ok(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]))
+        self.wait_for(Duration::from_millis(200), |f| {
+            let [a, b, c, d] =
+                protocol::firmware_version(&f, self.config.motor_id, self.config.host_id)?;
+            Some(format!("{a}.{b}.{c}.{d}"))
+        })
     }
     pub(crate) fn write_parameter(&self, index: u16, value: [u8; 4]) -> Result<()> {
         self.write_parameter_sized(index, value, 4)
@@ -543,25 +584,21 @@ impl Bus {
         Ok(())
     }
     pub(crate) fn feedback(&self, timeout: Duration) -> Result<Feedback> {
-        let f = self.wait_for(timeout, |f| {
+        self.try_feedback(timeout)?
+            .context("No motor feedback before CAN deadline")
+    }
+    fn try_feedback(&self, timeout: Duration) -> Result<Option<Feedback>> {
+        self.wait_for(timeout, |f| {
             protocol::feedback(
-                f,
+                &f,
                 self.config.motor_id,
                 self.config.host_id,
                 &self.config.profile,
             )
-            .is_some()
-        })?;
-        Ok(protocol::feedback(
-            &f,
-            self.config.motor_id,
-            self.config.host_id,
-            &self.config.profile,
-        )
-        .unwrap())
+        })
     }
     pub(crate) fn enable_zero_torque(&self, cancel: &AtomicBool) -> Result<Feedback> {
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         self.flush()?;
         // Consume the zero-command reply before enable. Merely flushing right
         // after send can race a reply still in flight and mistake Reset for
@@ -575,7 +612,7 @@ impl Bus {
             stopped.faults
         );
         self.flush()?;
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         self.send(protocol::frame(
             3,
             self.config.host_id as u16,
@@ -585,7 +622,7 @@ impl Bus {
         let mut next_poll = Instant::now() + Duration::from_millis(5);
         let mut last = None;
         while Instant::now() < deadline {
-            ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+            crate::cancel::check(cancel)?;
             if let Some(f) = self.receive()?
                 && let Some(fb) = protocol::feedback(
                     &f,
@@ -634,7 +671,7 @@ impl Bus {
             bus.read_parameter(0x7005)?[0] == 0,
             "Failed to select torque/operation mode"
         );
-        ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+        crate::cancel::check(cancel)?;
         bus.send(protocol::active_reporting(c.host_id, c.motor_id, true))?;
         let _reporting = ActiveReportingGuard(bus);
         bus.enable_zero_torque(cancel)
@@ -647,7 +684,7 @@ impl Bus {
         let mut quiet_frames = Vec::new();
         let mut quiet_frames_omitted = 0;
         while watchdog_start.elapsed() < Duration::from_millis(300) {
-            ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+            crate::cancel::check(cancel)?;
             if let Some(frame) = bus.receive()? {
                 let elapsed = watchdog_start.elapsed();
                 if frame.id as u8 == c.motor_id {
@@ -656,11 +693,7 @@ impl Bus {
                 let trace_frame = QuietCanFrame {
                     elapsed_ms: elapsed.as_millis(),
                     id: format!("{:08X}", frame.id),
-                    data: frame
-                        .data
-                        .iter()
-                        .map(|byte| format!("{byte:02X}"))
-                        .collect(),
+                    data: format!("{:016X}", u64::from_be_bytes(frame.data)),
                 };
                 if quiet_frames.len() == 128 {
                     // Preserve the first and last 64 frames if the bus is busy.
@@ -719,7 +752,19 @@ impl Bus {
     pub(crate) fn stopped(&self) -> Result<Feedback> {
         self.wait_until_stopped(Duration::from_secs(1), None)
     }
-    fn wait_until_stopped(
+    fn stop_and_confirm(&self) -> Result<()> {
+        self.stop()?;
+        // Stop immediately, then request a fresh status after draining queued feedback.
+        self.flush()?;
+        self.stop()?;
+        let c = &self.config;
+        self.wait_for(Duration::from_millis(100), |frame| {
+            protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile).filter(|fb| fb.mode == 0)
+        })?
+        .context("Motor did not acknowledge stopped mode")?;
+        Ok(())
+    }
+    pub(crate) fn wait_until_stopped(
         &self,
         timeout: Duration,
         cancel: Option<&AtomicBool>,
@@ -728,17 +773,18 @@ impl Bus {
         let mut check = StationaryCheck::new(self.config.profile.position_range);
         let mut last_mode = None;
         while start.elapsed() < timeout {
-            ensure!(
-                !cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)),
-                "Operation cancelled"
-            );
+            if let Some(flag) = cancel {
+                crate::cancel::check(flag)?;
+            }
             self.flush()?;
             self.stop()?;
             let remaining = timeout.saturating_sub(start.elapsed());
             if remaining.is_zero() {
                 break;
             }
-            let fb = self.feedback(remaining.min(Duration::from_millis(100)))?;
+            let Some(fb) = self.try_feedback(remaining.min(Duration::from_millis(100)))? else {
+                continue;
+            };
             last_mode = Some(fb.mode);
             check.observe(&fb, start.elapsed());
             if check.is_stationary() {
@@ -747,7 +793,7 @@ impl Bus {
             thread::sleep(Duration::from_millis(20).min(timeout.saturating_sub(start.elapsed())));
         }
         ensure!(
-            last_mode == Some(0),
+            last_mode.context("No motor feedback before CAN deadline")? == 0,
             "Motor did not acknowledge stopped mode"
         );
         anyhow::bail!("Could not confirm a stationary shaft; keep it still and retry")
@@ -974,7 +1020,7 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
     stationary.observe(&initial, Duration::ZERO);
     let mut next = Instant::now();
     for _ in 0..SAMPLES {
-        ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+        crate::cancel::check(cancel)?;
         while Instant::now() < next {
             thread::sleep(Duration::from_micros(50));
         }
@@ -987,7 +1033,7 @@ pub fn measure_feedback_latency(c: &Config, cancel: &AtomicBool) -> Result<Feedb
         send_call.push(started.elapsed().as_micros() as u64);
         let deadline = started + FEEDBACK_DEADLINE;
         loop {
-            ensure!(!cancel.load(Ordering::Relaxed), "Timing check cancelled");
+            crate::cancel::check(cancel)?;
             if let Some(frame) = bus.receive()?
                 && let Some(status) = protocol::feedback(&frame, c.motor_id, c.host_id, &c.profile)
             {
@@ -1027,30 +1073,22 @@ pub fn scan(
     let mut bus = Bus::open(c)?;
     let mut found = Vec::new();
     for id in 1..=254 {
-        ensure!(!cancel.load(Ordering::Relaxed), "Scan cancelled");
+        crate::cancel::check(cancel)?;
         if id != c.host_id
             && let Some(uuid) = bus.probe(id, Duration::from_millis(20))?
         {
             bus.config.motor_id = id;
-            let (firmware, issue) = match bus.firmware_version() {
-                Ok(version) => (Some(version), None),
-                Err(e)
-                    if e.downcast_ref::<std::io::Error>()
-                        .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-                {
-                    (
-                        None,
-                        Some("Firmware did not reply. Check motor power and scan again.".into()),
-                    )
-                }
-                Err(e) => return Err(e),
-            };
+            let firmware = bus.try_firmware_version()?;
             let model = firmware.as_deref().and_then(protocol::firmware_model);
-            let issue = issue.or_else(|| {
-                model
-                    .is_none()
-                    .then(|| "Unknown firmware family. Check firmware with Motor Studio.".into())
-            });
+            let issue = match (&firmware, &model) {
+                (None, _) => {
+                    Some("Firmware did not reply. Check motor power and scan again.".into())
+                }
+                (Some(_), None) => {
+                    Some("Unknown firmware family. Check firmware with Motor Studio.".into())
+                }
+                _ => None,
+            };
             found.push(DiscoveredMotor {
                 id,
                 uuid,
@@ -1065,9 +1103,10 @@ pub fn scan(
     }
     Ok(found)
 }
-pub fn set_zero(c: &Config) -> Result<()> {
+pub fn set_zero(c: &Config, uuid: [u8; 8]) -> Result<()> {
     let bus = Bus::open(c)?;
     bus.stopped()?;
+    bus.verify_uuid(uuid)?;
     let mut f = protocol::frame(6, c.host_id as u16, c.motor_id);
     f.data[0] = 1;
     bus.send(f)?;
@@ -1080,15 +1119,7 @@ pub fn set_zero(c: &Config) -> Result<()> {
     Ok(())
 }
 pub fn disable(c: &Config) -> Result<()> {
-    let bus = Bus::open(c)?;
-    bus.flush()?;
-    bus.stop()?;
-    let fb = bus.feedback(Duration::from_millis(100))?;
-    ensure!(
-        fb.mode == 0,
-        "Disable sent, but motor did not acknowledge stopped mode"
-    );
-    Ok(())
+    Bus::open(c)?.stop_and_confirm()
 }
 fn check_firmware_model(c: &Config, version: Option<&str>) -> Result<()> {
     let version = version.context("Firmware did not reply; scan again before calibration")?;
@@ -1101,14 +1132,14 @@ fn check_firmware_model(c: &Config, version: Option<&str>) -> Result<()> {
     );
     Ok(())
 }
-pub fn change_id(c: &Config, new_id: u8) -> Result<()> {
+pub fn change_id(c: &Config, uuid: [u8; 8], new_id: u8) -> Result<()> {
     ensure!(
         (1..=254).contains(&new_id) && new_id != c.motor_id && new_id != c.host_id,
         "Choose an unused ID from 1–254, different from host and current ID"
     );
     let bus = Bus::open(c)?;
     bus.stopped()?;
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
+    bus.verify_uuid(uuid)?;
     // Several probes reduce the chance of overlooking an occupied address.
     for _ in 0..3 {
         ensure!(
@@ -1151,49 +1182,55 @@ impl Drop for StopGuard<'_> {
     }
 }
 
+fn finish_segment(
+    session: &mut Session,
+    trace: Trace,
+    capture: Result<()>,
+    stop: Result<()>,
+) -> Result<()> {
+    session.traces.push(trace);
+    match (capture, stop) {
+        (Err(capture), Err(stop)) => {
+            Err(stop.context(format!("Motor stop command also failed after {capture:#}")))
+        }
+        (capture, stop) => capture.and(stop),
+    }
+}
+
 pub fn acquire(
     c: &Config,
+    uuid: [u8; 8],
     dir: &Path,
     cancel: &AtomicBool,
     progress: impl Fn(WorkProgress),
-    motor_state: impl Fn(bool),
 ) -> Result<()> {
     c.validate()?;
     progress(WorkProgress::recording(0., "Checking motor and watchdog"));
     crate::pipeline::write_plan(c, dir)?;
     let bus = Bus::open(c)?;
-    let _guard = StopGuard(&bus);
+    let guard = StopGuard(&bus);
     let initial = bus
         .stopped()
         .context("Motor did not answer the initial stop request")?;
-    motor_state(false);
     ensure!(initial.faults == 0, "Motor has active faults");
     ensure!(
         initial.temperature < c.temperature_limit,
         "Motor is too hot"
     );
-    let uuid = bus.ping(c.motor_id, Duration::from_millis(100))?;
-    let firmware = match bus.firmware_version() {
-        Ok(version) => Some(version),
-        Err(e)
-            if e.downcast_ref::<std::io::Error>()
-                .is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut) =>
-        {
-            None
-        }
-        Err(e) => return Err(e),
-    };
+    bus.verify_uuid(uuid)?;
+    let firmware = bus.try_firmware_version()?;
     bridge::write_json(
         &dir.join("hardware.json"),
         &serde_json::json!({
             "motor_id": c.motor_id, "uuid": uuid, "firmware_version": firmware,
             "reference_angle_rad": c.reference_angle_rad,
             "profile": c.profile, "uses_documented_ranges": c.profile.uses_documented_ranges(),
-            "documentation": "RobStride model manuals 2026-07-13; private CAN types 1 and 2"
+            "documentation": "RobStride model manuals, private CAN types 1 and 2",
+            "specification_revision": c.profile.manual_revision()
         }),
     )?;
     check_firmware_model(c, firmware.as_deref())?;
-    let preflight = bus.watchdog_preflight(cancel, &motor_state)?;
+    let preflight = bus.watchdog_preflight(cancel, |_| {})?;
     let expired = &preflight.feedback;
     bridge::write_json(
         &dir.join("watchdog_preflight.json"),
@@ -1227,10 +1264,12 @@ pub fn acquire(
     let mut session = Session {
         schema_version: 1,
         source: "hardware".into(),
+        motor_uuid: Some(uuid),
         config: c.clone(),
         traces: Vec::new(),
         complete: false,
     };
+    let mut rejected_feedback = None;
     let outcome = (|| -> Result<()> {
         for validation in [false, true] {
             let name = if validation { "validation" } else { "training" };
@@ -1254,7 +1293,6 @@ pub fn acquire(
             let enabled = bus
                 .enable_zero_torque(cancel)
                 .context("Acquisition could not enable motor at zero torque")?;
-            motor_state(true);
             let start = Instant::now();
             let duration = if validation {
                 c.validation_seconds
@@ -1279,11 +1317,10 @@ pub fn acquire(
             let mut next = start;
             let mut last_feedback = start;
             let mut last_progress = start;
-            let mut rejected_feedback = None;
             let mut exciter = crate::experiment::Exciter::new(c, validation);
             let result = (|| -> Result<()> {
                 while start.elapsed().as_secs_f64() < duration {
-                    ensure!(!cancel.load(Ordering::Relaxed), "Calibration stopped");
+                    crate::cancel::check(cancel)?;
                     ensure!(
                         last_feedback.elapsed() < Duration::from_millis(50),
                         "Feedback stale for 50 ms"
@@ -1306,15 +1343,10 @@ pub fn acquire(
                         next += Duration::from_secs_f64(1. / c.sample_hz);
                     }
                     // Bounded receive drain keeps cancellation and deadline checks responsive.
-                    let mut drained = false;
-                    for _ in 0..128 {
-                        if Instant::now() >= next {
-                            break;
-                        }
-                        let Some(f) = bus.receive()? else {
-                            drained = true;
-                            break;
-                        };
+                    let events = (0..128)
+                        .take_while(|_| Instant::now() < next)
+                        .map(|_| bus.next_event());
+                    let drained = drain_frames(events, |f| {
                         if let Some(fb) = protocol::feedback(&f, c.motor_id, c.host_id, &c.profile)
                         {
                             let received_at = Instant::now();
@@ -1354,7 +1386,8 @@ pub fn acquire(
                                 temperature: fb.temperature,
                             });
                         }
-                    }
+                        Ok(())
+                    })?;
                     if drained {
                         encoder.finish_batch();
                     }
@@ -1379,14 +1412,10 @@ pub fn acquire(
                 }
                 Ok(())
             })();
-            bus.stop()?;
-            motor_state(false);
-            if let Some(feedback) = rejected_feedback {
-                let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
+            finish_segment(&mut session, trace, result, bus.stop_and_confirm())?;
+            if !validation {
+                bridge::write_json(&dir.join("session.json"), &session)?;
             }
-            session.traces.push(trace);
-            bridge::write_json(&dir.join("session.json"), &session)?;
-            result?;
             progress(WorkProgress::recording(
                 ((recorded + duration) / total) as f32,
                 format!("{name} recorded"),
@@ -1394,6 +1423,11 @@ pub fn acquire(
         }
         Ok(())
     })();
+    drop(guard);
+    drop(bus);
+    if let Some(feedback) = rejected_feedback {
+        let _ = bridge::write_json(&dir.join("encoder_error.json"), &feedback);
+    }
     session.complete = outcome.is_ok();
     bridge::write_json(&dir.join("session.json"), &session)?;
     outcome
@@ -1402,6 +1436,75 @@ pub fn acquire(
 #[cfg(test)]
 mod diagnostics_tests {
     use super::*;
+    #[test]
+    fn failed_stop_preserves_the_partial_segment_and_is_reported_even_after_cancellation() {
+        let mut session = Session {
+            schema_version: 1,
+            source: "hardware".into(),
+            motor_uuid: None,
+            config: Config::default(),
+            traces: vec![],
+            complete: false,
+        };
+        let trace = Trace {
+            name: "training".into(),
+            commands: vec![Command { t: 0., torque: 0. }],
+            samples: vec![Sample {
+                t: 0.,
+                position: 0.,
+                velocity: 0.,
+                reported_torque: 0.,
+                temperature: 25.,
+            }],
+        };
+        let error = finish_segment(
+            &mut session,
+            trace,
+            Err(crate::cancel::Cancelled.into()),
+            Err(anyhow::anyhow!("USB disconnected")),
+        )
+        .unwrap_err();
+        assert!(!error.is::<crate::cancel::Cancelled>());
+        assert!(format!("{error:#}").contains("USB disconnected"));
+        assert_eq!(session.traces[0].samples.len(), 1);
+        assert_eq!(session.traces[0].commands.len(), 1);
+    }
+
+    #[test]
+    fn filtered_events_and_poll_limits_do_not_end_a_feedback_batch() {
+        let frame = |position: u8| {
+            let mut frame = protocol::frame(2, 0, 1);
+            frame.data[0] = position;
+            BusEvent::Frame(Some(frame))
+        };
+        let mut events = [frame(23), BusEvent::Frame(None), frame(37), BusEvent::Empty]
+            .into_iter()
+            .map(Ok);
+        let mut encoder = EncoderTracker::new(0., 4. * std::f64::consts::PI, 10.);
+        let mut position = 0.;
+        for _ in 0..2 {
+            let empty = drain_frames(events.by_ref().take(2), |f| {
+                position =
+                    encoder.update_buffered(f.data[0] as f64 / 100., Duration::from_millis(40))?;
+                Ok(())
+            })
+            .unwrap();
+            if empty {
+                encoder.finish_batch();
+            }
+        }
+        assert!((position - 0.37).abs() < 1e-12);
+
+        let events = [
+            Ok(BusEvent::ControllerStatus),
+            Err(anyhow::anyhow!("bus off")),
+        ]
+        .into_iter();
+        assert_eq!(
+            drain_frames(events, |_| Ok(())).unwrap_err().to_string(),
+            "bus off"
+        );
+    }
     fn usb_error(can_id: u32, data: [u8; 8]) -> UsbReceiveEvent {
         UsbReceiveEvent::ErrorFrame {
             channel: 0,
@@ -1411,29 +1514,17 @@ mod diagnostics_tests {
         }
     }
     #[test]
-    fn captured_gsusb_recovery_is_not_a_fault_or_motor_feedback() {
-        let recovery = usb_error(0x2000_0004, [0, 0x40, 0, 0, 0, 0, 0x7f, 1]);
-        assert!(gsusb_event_frame(recovery).unwrap().is_none());
-        let id = 0x0200_01fd;
-        let data = [1, 2, 3, 4, 5, 6, 7, 8];
-        let received = gsusb_event_frame(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
-            frame: UsbCanFrame::classic(UsbCanId::extended(id).unwrap(), &data).unwrap(),
-            channel: 0,
-            timestamp: None,
-        }))
-        .unwrap()
-        .unwrap();
-        assert_eq!(received.id, id);
-        assert_eq!(received.data, data);
-    }
-    #[test]
     fn gsusb_informational_error_events_are_not_motor_feedback() {
-        for can_id in [0x2000_0002, 0x2000_0100, 0x2000_0200] {
-            assert!(
-                gsusb_event_frame(usb_error(can_id, [0; 8]))
-                    .unwrap()
-                    .is_none()
-            );
+        for (can_id, data) in [
+            (0x2000_0002, [0; 8]),
+            (0x2000_0004, [0, 0x40, 0, 0, 0, 0, 0x7f, 1]),
+            (0x2000_0100, [0; 8]),
+            (0x2000_0200, [0; 8]),
+        ] {
+            assert!(matches!(
+                gsusb_event(usb_error(can_id, data)).unwrap(),
+                BusEvent::ControllerStatus
+            ));
         }
     }
     #[test]
@@ -1441,7 +1532,7 @@ mod diagnostics_tests {
         for (bits, controller, protocol, expected) in [
             (0x40, 0, 0, "BUS-OFF"),
             (0x20, 0, 0, "acknowledgement"),
-            (0x08, 0, 0x08, "dominant bit"),
+            (0x0c, 0x0c, 0x08, "dominant bit"),
             (0x08, 0, 0x10, "recessive bit"),
             (0x08, 0, 0x02, "protocol error"),
             (0x04, 0x20, 0, "ERROR-PASSIVE"),
@@ -1458,15 +1549,14 @@ mod diagnostics_tests {
             (0x400, 0, 0, "unknown"),
         ] {
             let can_id = 0x2000_0000 | bits;
-            let error =
-                gsusb_event_frame(usb_error(can_id, [0, controller, protocol, 0, 0, 0, 0, 0]))
-                    .unwrap_err()
-                    .to_string();
+            let error = gsusb_event(usb_error(can_id, [0, controller, protocol, 0, 0, 0, 0, 0]))
+                .unwrap_err()
+                .to_string();
             assert!(error.contains(expected), "{error}");
             assert!(error.contains(&format!("0x{can_id:08x}")), "{error}");
         }
         assert!(
-            gsusb_event_frame(UsbReceiveEvent::Overflow { channel: 0 })
+            gsusb_event(UsbReceiveEvent::Overflow { channel: 0 })
                 .unwrap_err()
                 .to_string()
                 .contains("receive overflow")
@@ -1499,13 +1589,23 @@ mod diagnostics_tests {
             &[1, 2, 3, 4, 5, 6, 7, 8],
         )
         .unwrap();
-        let wire = gsusb_wire_frame(&frame).unwrap();
+        let received = |frame| {
+            gsusb_event(UsbReceiveEvent::Frame(gsusbio::ReceivedFrame {
+                frame,
+                channel: 0,
+                timestamp: None,
+            }))
+            .unwrap()
+        };
+        let BusEvent::Frame(Some(wire)) = received(frame) else {
+            panic!("Expected a protocol frame")
+        };
         assert_eq!(wire.id, 0x1234);
         assert_eq!(wire.data, [1, 2, 3, 4, 5, 6, 7, 8]);
         let standard = UsbCanFrame::classic(UsbCanId::standard(0x123).unwrap(), &[0; 8]).unwrap();
-        assert!(gsusb_wire_frame(&standard).is_none());
+        assert!(matches!(received(standard), BusEvent::Frame(None)));
         let short = UsbCanFrame::classic(UsbCanId::extended(0x1234).unwrap(), &[0; 7]).unwrap();
-        assert!(gsusb_wire_frame(&short).is_none());
+        assert!(matches!(received(short), BusEvent::Frame(None)));
     }
     #[cfg(target_os = "linux")]
     #[test]
@@ -1592,7 +1692,7 @@ mod diagnostics_tests {
     #[test]
     fn firmware_family_mismatch_blocks_before_calibration() {
         let mut c = Config {
-            profile: Profile::presets()[0].clone(),
+            profile: Profile::preset("RS-00").unwrap(),
             ..Default::default()
         };
         assert!(check_firmware_model(&c, Some("0.0.3.32")).is_ok());
@@ -1601,7 +1701,7 @@ mod diagnostics_tests {
             .to_string();
         assert!(error.contains("RS-05") && error.contains("RS-00"));
         assert!(error.contains("no calibration motion started"));
-        c.profile = Profile::presets()[5].clone();
+        c.profile = Profile::preset("RS-05").unwrap();
         assert!(check_firmware_model(&c, Some("0.5.0.14")).is_ok());
         assert!(protocol::firmware_model("1.5.0.14").is_none());
         assert!(protocol::firmware_model("invalid").is_none());
@@ -1649,6 +1749,7 @@ mod diagnostics_tests {
     #[test]
     #[ignore = "requires an isolated vcan interface named vcalwatch"]
     fn virtual_enable_handshake_handles_reset_reply_fault_and_timeout() {
+        use std::sync::atomic::Ordering;
         // Never allow this active mock-motor test to open a physical interface.
         let device = std::fs::canonicalize("/sys/class/net/vcalwatch").unwrap();
         assert!(device.starts_with("/sys/devices/virtual/net"));
@@ -1720,23 +1821,5 @@ mod diagnostics_tests {
                 ),
             }
         }
-    }
-    #[test]
-    fn captured_adapter_fault_reports_the_dominant_bit_failure() {
-        // Observed gs_usb frame: 2000000C#000c080000006000.
-        let reason = bus_error_reason(0x0c, &[0, 0x0c, 0x08, 0, 0, 0, 0x60, 0]).unwrap();
-        assert!(reason.contains("dominant bit"));
-        assert!(bus_error_reason(0x40, &[0; 8]).unwrap().contains("BUS-OFF"));
-        assert!(
-            bus_error_reason(0x20, &[0; 8])
-                .unwrap()
-                .contains("acknowledgement")
-        );
-    }
-    #[test]
-    fn normal_arbitration_and_recovery_are_not_faults() {
-        assert!(bus_error_reason(0x02, &[0; 8]).is_none());
-        assert!(bus_error_reason(0x04, &[0, 0x40, 0, 0, 0, 0, 0, 0]).is_none());
-        assert!(bus_error_reason(0x200, &[0; 8]).is_none());
     }
 }

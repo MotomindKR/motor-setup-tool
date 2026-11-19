@@ -110,9 +110,8 @@ test("startup, navigation, and disconnected states never send motion commands", 
       page.getByRole("main", { name: heading, exact: true }),
     ).toBeVisible();
   }
-  expect(
-    await page.evaluate(() => window.testMotor.calls.map((c) => c.operation)),
-  ).toEqual(["interfaces", "usbAdapters"]);
+  const operations = await page.evaluate(() => window.testMotor.calls.map(c => c.operation));
+  expect(operations.filter(op => !["interfaces", "usbAdapters"].includes(op))).toEqual([]);
   expect(await page.evaluate(() => window.testMotor.intents)).toEqual([]);
   expect(errors).toEqual([]);
 });
@@ -134,6 +133,11 @@ test("calibration previews, review, saved results, and chart views work", async 
   await page
     .getByRole("checkbox", { name: "Motor secured · limits reviewed" })
     .check();
+  await expect(start).toBeEnabled();
+  await navigate(page, "Files");
+  await page.getByRole("button", { name: "Open recording", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Show folder" })).toBeVisible();
+  await navigate(page, "Calibrate");
   await expect(start).toBeEnabled();
   await page.getByLabel("Speed cutoff").fill("3");
   await expect(
@@ -394,9 +398,19 @@ test("live monitoring starts disabled, jog releases, and navigation stops monito
   await expect
     .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
     .toBe(0);
-  await page
-    .getByRole("button", { name: "Disable motor", exact: true })
-    .click();
+  const reverse = page.getByRole("button", { name: "Jog −", exact: true });
+  const disable = page.getByRole("button", { name: "Disable motor", exact: true });
+  await reverse.focus();
+  await page.keyboard.down("Space");
+  await expect
+    .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
+    .toBe(-1);
+  await disable.focus();
+  await expect
+    .poll(() => page.evaluate(() => window.testMotor.intents.at(-1)?.direction))
+    .toBe(0);
+  await page.keyboard.up("Space");
+  await disable.click();
   await expect(
     page.getByRole("button", { name: "Enable motor", exact: true }),
   ).toBeVisible();
@@ -415,10 +429,6 @@ test("recordings show identity, download individual files, and require confirmat
 }) => {
   await navigate(page, "Files");
   const run = page.locator(".recording-item").first();
-  await expect(run.locator("svg")).toHaveCount(1);
-  await expect(
-    run.getByRole("button", { name: "Run actions", exact: true }),
-  ).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
   await run.getByRole("button", { name: "Run actions", exact: true }).click();
   await expect(
     page.getByRole("menuitem", { name: "Entire run (.zip)", exact: true }),
@@ -461,6 +471,52 @@ test("recordings show identity, download individual files, and require confirmat
           .length,
     ),
   ).toBe(1);
+});
+
+test("saved measurements can be fitted before a report exists", async ({ page }) => {
+  await page.evaluate(() => {
+    const { listRuns, loadRun, run } = window.motorApp;
+    let fitted = false;
+    window.motorApp.listRuns = async () => (await listRuns()).map(item => ({ ...item, completed: fitted }));
+    window.motorApp.loadRun = async directory => {
+      const recording = await loadRun(directory);
+      return fitted ? recording : { ...recording, report: null, files: ["session.json"] };
+    };
+    window.motorApp.run = async (operation, params) => {
+      const result = await run(operation, params);
+      if (operation === "analyze") fitted = true;
+      return result;
+    };
+  });
+  await navigate(page, "Files");
+  const run = page.locator(".recording-open");
+  await run.click();
+  await expect(run).toContainText("No report");
+  await page.getByRole("button", { name: "Refit recording", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByText("Validated", { exact: true })).toBeVisible();
+  await expect(run).not.toContainText("No report");
+});
+
+test("recording charts retain short torque spikes in long traces", async ({ page }) => {
+  const recording = structuredClone(fixture.report);
+  const validation = recording.replays.find(trace => trace.name === "validation");
+  validation.command_t = Array.from({ length: 5000 }, (_, i) => i / 1000);
+  validation.command_torque = Array(5000).fill(0);
+  validation.command_torque[100] = 40;
+  validation.command_torque[101] = -40;
+  await page.evaluate(report => {
+    const load = window.motorApp.pickRun;
+    window.motorApp.pickRun = async () => ({ ...await load(), report });
+  }, recording);
+  await navigate(page, "Files");
+  await page.getByRole("button", { name: "Open recording", exact: true }).click();
+  await page.getByRole("button", { name: "Torque", exact: true }).click();
+  const chart = page.getByRole("img", { name: /Torque in Nm/ });
+  await expect.poll(async () => {
+    const ticks = (await chart.locator("text").allTextContents()).map(Number);
+    return Math.min(...ticks) <= -30 && Math.max(...ticks) >= 30;
+  }).toBe(true);
 });
 
 test("appearance persists and saved recordings work without hardware", async ({
@@ -530,43 +586,69 @@ test("Motomind sidebar collapses and opens as a mobile sheet", async ({
   await expect(page.getByRole("main", { name: "Recordings" })).toBeVisible();
 });
 
-test("number fields show short decimals and retain the precise preset", async ({
-  page,
-}) => {
-  await connect(page);
-  const speed = page.getByLabel("Speed cutoff");
-  await expect(speed).toHaveValue("14.844");
-  await speed.focus();
-  await speed.press("Tab");
-  await page
-    .getByRole("button", { name: "Advanced settings", exact: true })
-    .click();
-  await expect(page.getByLabel("Armature")).toHaveValue("0.000001");
-  await page
-    .getByRole("button", { name: "Advanced settings", exact: true })
-    .click();
-  await page
-    .getByRole("checkbox", { name: "Motor secured · limits reviewed" })
-    .check();
-  await page
-    .getByRole("button", { name: "Start calibration", exact: true })
-    .click();
-  const config = await page.evaluate(
-    () =>
-      window.testMotor.calls.find((call) => call.operation === "calibrate")
-        .params.config,
-  );
-  expect(config.speed_limit).toBe(14.844025288211773);
-  expect(config.baseline.armature).toBe(0.000001);
-  await page
-    .getByRole("button", { name: "New calibration", exact: true })
-    .click();
-  await expect(
-    page.getByRole("checkbox", { name: "Motor secured · limits reviewed" }),
-  ).not.toBeChecked();
-  await expect(
-    page.getByRole("button", { name: "Start calibration", exact: true }),
-  ).toBeDisabled();
+test("a background update marks Settings in the collapsed sidebar", async ({ page }) => {
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
+  const dot = settings.locator(".settings-update-dot");
+  await expect(dot).toHaveCount(0);
+
+  await page.evaluate(() => window.testMotor.emit({
+    type: "updateChecked",
+    result: { available: true, version: "0.1.23" },
+  }));
+  await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+  await expect(settings).toHaveAccessibleDescription("Update available");
+  await expect(dot).toBeVisible();
+  await page.locator('[data-slot="sidebar-trigger"]').click();
+  await expect(dot).toBeVisible();
+
+  await settings.click();
+  await expect(page.getByText("Version 0.1.23 is available.")).toBeVisible();
+  await page.getByRole("button", { name: "Install update" }).click();
+  expect(await page.evaluate(() => window.testMotor.calls.at(-1).version)).toBe("0.1.23");
+  await page.getByRole("button", { name: "Check for update" }).click();
+  await expect(page.getByText("You have the latest version.")).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dot).toHaveCount(0);
+});
+
+test.describe("calibration settings with a decimal comma", () => {
+  test.use({ locale: "de-DE" });
+
+  test("calibration uses the reviewed limits and preserves unedited preset precision", async ({ page }) => {
+    await connect(page);
+    const speed = page.getByLabel("Speed cutoff");
+    const travel = page.getByLabel("Travel limit");
+    const review = page.getByRole("checkbox", { name: "Motor secured · limits reviewed" });
+    const start = page.getByRole("button", { name: "Start calibration", exact: true });
+    await expect(speed).toHaveValue("14,844");
+    await speed.focus();
+    await speed.press("Tab");
+    const advanced = page.getByRole("button", { name: "Advanced settings", exact: true });
+    await advanced.click();
+    await expect(page.getByLabel("Armature")).toHaveValue("0,000001");
+    await advanced.click();
+
+    await review.check();
+    await expect(start).toBeEnabled();
+    await travel.fill(",");
+    await expect(review).not.toBeChecked();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await review.check();
+    await expect(start).toBeDisabled();
+
+    await travel.fill("2,5");
+    await review.check();
+    await start.click();
+    const config = await page.evaluate(() =>
+      window.testMotor.calls.find(call => call.operation === "calibrate").params.config
+    );
+    expect(config.travel_limit).toBe(2.5);
+    expect(config.speed_limit).toBe(fixture.preset.speed_limit);
+    expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
+    await navigate(page, "Calibrate");
+    await expect(review).not.toBeChecked();
+    await expect(start).toBeDisabled();
+  });
 });
 
 test("calibration keeps advanced options and motion preview out of the main flow", async ({

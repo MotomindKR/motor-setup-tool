@@ -1,0 +1,79 @@
+'use strict';
+// Run in an isolated CI runner as root under Xvfb. Only disposable packaged
+// installations are used; no motor commands are issued.
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+const { setTimeout: delay } = require('node:timers/promises');
+
+(async () => {
+  assert.equal(process.getuid(), 0);
+  const [oldInstaller, candidate, nextInstaller] = process.argv.slice(2);
+  const packageVersion = file => execFileSync('dpkg-deb', ['--field', file, 'Version'], { encoding: 'utf8' }).trim();
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motor-linux-updater-'));
+  const executable = '/opt/Motor Setup Tool/motor-setup-tool';
+  const appRoot = path.join(path.dirname(executable), 'resources', 'app');
+  const userData = path.join(directory, 'state');
+  await fs.mkdir(userData);
+  execFileSync('dpkg', ['-i', oldInstaller], { stdio: 'inherit' });
+  for (const [sourceInstaller, installer, badChecksum] of [
+    [oldInstaller, candidate, false],
+    [candidate, candidate, true],
+    [candidate, nextInstaller, false],
+  ]) {
+    const previous = packageVersion(sourceInstaller);
+    const version = packageVersion(installer);
+    const caseDirectory = path.join(directory, badChecksum ? 'checksum-failure' : `upgrade-${previous}-to-${version}`);
+    await fs.mkdir(caseDirectory);
+    await fs.copyFile(path.join(__dirname, 'packaged-update-worker.js'), path.join(appRoot, 'electron', 'packaged-update-worker.js'));
+    const manifestFile = path.join(appRoot, 'package.json');
+    const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+    const entry = manifest.main;
+    manifest.main = 'electron/packaged-update-worker.js';
+    await fs.writeFile(manifestFile, JSON.stringify(manifest));
+    const screenshot = path.join(caseDirectory, 'restarted.png');
+    const handoff = path.join(caseDirectory, 'handoff.json');
+    const configFile = path.join(caseDirectory, 'request.json');
+    await fs.writeFile(configFile, JSON.stringify({ installer, entry, version: badChecksum ? '99.0.0' : version, directory: userData, screenshot, handoff, badChecksum }));
+    const log = await fs.open(path.join(caseDirectory, 'app.log'), 'w');
+    try {
+      execFileSync(executable, ['--no-sandbox', `--user-data-dir=${userData}`], {
+        env: { ...process.env, MOTOMIND_UPDATE_TEST_CONFIG: configFile },
+        stdio: ['ignore', log.fd, log.fd], timeout: 60_000,
+      });
+    } catch (error) {
+      console.error(await fs.readFile(path.join(caseDirectory, 'app.log'), 'utf8'));
+      throw error;
+    } finally { await log.close(); }
+    const deadline = Date.now() + 30_000;
+    let runtime;
+    while (Date.now() < deadline) {
+      try { runtime = JSON.parse(await fs.readFile(`${screenshot}.json`, 'utf8')); break; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await delay(200);
+    }
+    assert.equal(runtime?.version, version, `Updated app did not restart; see ${caseDirectory}`);
+    if (badChecksum) {
+      assert.match(runtime.updateError, /checksum mismatch/i);
+    } else {
+      const source = JSON.parse(await fs.readFile(handoff, 'utf8'));
+      assert.equal(source.version, previous);
+      assert.equal(source.target, version);
+      assert.equal(runtime.backendVersion, version);
+      assert.equal(runtime.updateError, null);
+      const rule = '/usr/lib/udev/rules.d/70-motomind-gsusb.rules';
+      assert.deepEqual(await fs.readFile(rule), await fs.readFile(path.join(__dirname, '..', 'packaging', path.basename(rule))));
+      const stat = await fs.stat(rule);
+      assert.equal(stat.uid, 0);
+      assert.equal(stat.mode & 0o777, 0o644);
+    }
+    console.log(`Passed ${badChecksum ? 'checksum rejection' : 'installed DEB upgrade'}: ${previous} -> ${version}`);
+  }
+  const packageName = execFileSync('dpkg-deb', ['--field', candidate, 'Package'], { encoding: 'utf8' }).trim();
+  execFileSync('dpkg', ['--remove', packageName], { stdio: 'inherit' });
+  await assert.rejects(fs.access('/usr/lib/udev/rules.d/70-motomind-gsusb.rules'), { code: 'ENOENT' });
+  console.log('USB rule installed by the update and removed with the package.');
+  console.log(`Updater diagnostics: ${directory}`);
+})().catch(error => { console.error(error); process.exitCode = 1; });
