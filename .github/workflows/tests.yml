@@ -68,14 +68,13 @@ jobs:
         with:
           path: |
             .tools/ci-cargo
-            .tools/packaging
             .tools/mujoco
             target/ci
-          key: native-${{ matrix.os }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'packaging/downloads.json') }}
+          key: native-${{ matrix.os }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'packaging/mujoco.sha256') }}
           restore-keys: native-${{ matrix.os }}-${{ env.RUSTUP_TOOLCHAIN }}-
-      - name: Install macOS MuJoCo SDK
-        if: runner.os == 'macOS'
-        run: bash scripts/install-macos-mujoco.sh
+      - name: Install MuJoCo SDK
+        if: runner.os != 'Windows'
+        run: bash scripts/install-mujoco.sh
       - shell: bash
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy
       - shell: bash

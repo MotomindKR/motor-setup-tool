@@ -73,9 +73,7 @@ let window;
 let backend;
 let backendError;
 let quitting = false;
-let checkedUpdate = null;
 let updateCheck = null;
-let installingUpdate = false;
 let updateError = null;
 let managedUpdater = null;
 let recordingOperation = false;
@@ -101,7 +99,6 @@ function requireIdleForUpdate() {
 
 function checkForUpdate() {
   updateCheck ??= managedUpdater.check().then(result => {
-    checkedUpdate = result;
     send({ type: 'updateChecked', result });
     return result;
   }).finally(() => { updateCheck = null; });
@@ -121,7 +118,7 @@ function handleRecordingWrite(channel, handler) {
   handle(channel, async (directory, ...args) => {
     requireKnownRun(directory);
     if (backendError) throw backendError;
-    if (backend?.active || installingUpdate || recordingOperation) throw new Error(t("Finish the current operation first"));
+    if (backend?.active || managedUpdater?.installing || recordingOperation) throw new Error(t("Finish the current operation first"));
     recordingOperation = true;
     try { return await handler(directory, ...args); }
     finally { recordingOperation = false; }
@@ -234,8 +231,6 @@ app.whenReady().then(async () => {
     updateError = await updater.readUpdateError(app);
   } catch (error) { updateError = t("Could not verify the previous update: {{error}}", { error: error.message }); }
   managedUpdater = updater.createUpdater(app, error => {
-    if (!installingUpdate) return;
-    installingUpdate = false;
     send({ type: 'updateFailure', message: error.message, version: app.getVersion() });
   });
   try {
@@ -248,7 +243,7 @@ app.whenReady().then(async () => {
   });
 
   handle('dxl:run', async (operation, params) => {
-    if (quitting || installingUpdate) throw new Error(t("Wait for the app to finish"));
+    if (quitting || managedUpdater?.installing) throw new Error(t("Wait for the app to finish"));
     if (dxlDialog && operation !== 'poll') throw new Error(t("Finish the current DXL operation"));
     if (operation === 'disconnect') {
       await dxl.close();
@@ -285,7 +280,7 @@ app.whenReady().then(async () => {
   });
 
   handle('backend:run', async (operation, params) => {
-    if (installingUpdate) throw new Error(t("Wait for the update to finish"));
+    if (managedUpdater?.installing) throw new Error(t("Wait for the update to finish"));
     if (backendError) throw backendError;
     if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
     if (operation === 'analyze') requireKnownRun(params?.directory);
@@ -297,7 +292,7 @@ app.whenReady().then(async () => {
   });
   handle('backend:cancel', () => backend?.cancel() ?? false);
   handle('backend:manualIntent', (value) => {
-    if (installingUpdate) throw new Error(t("Wait for the update to finish"));
+    if (managedUpdater?.installing) throw new Error(t("Wait for the update to finish"));
     if (backendError) throw backendError;
     backend.manualIntent(value);
   });
@@ -343,29 +338,23 @@ app.whenReady().then(async () => {
     await fs.rename(temp, referenceFile());
   });
   handle('updates:info', () => {
-    return { version: app.getVersion(), updateError, updateResult: checkedUpdate };
+    return {
+      version: app.getVersion(), updateError,
+      updateResult: managedUpdater?.offer ?? null,
+      installingUpdate: managedUpdater?.installing ?? false,
+    };
   });
   handle('updates:check', async () => {
     if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
-    if (installingUpdate) throw new Error(t("Update already in progress"));
     if (!managedUpdater) throw new Error(t("In-app updates are available in release builds."));
     return checkForUpdate();
   });
   handle('updates:install', async version => {
     // A check can change the updater's selected release. Let it finish before downloading.
     if (updateCheck) await updateCheck;
-    requireIdleForUpdate();
-    if (!checkedUpdate?.available) throw new Error(t("Check for an available update first"));
-    if (checkedUpdate.version !== version) throw new Error(t("The available update changed. Review the new version before installing."));
     if (!managedUpdater) throw new Error(t("In-app updates are available in release builds."));
-    if (installingUpdate) throw new Error(t("Update already in progress"));
-    installingUpdate = true;
     const progress = message => window?.webContents.send('updates:progress', message);
-    let handedOff = false;
-    try {
-      await managedUpdater.install(version, progress, requireIdleForUpdate);
-      handedOff = true;
-    } finally { if (!handedOff) installingUpdate = false; }
+    await managedUpdater.install(version, progress, requireIdleForUpdate);
   });
   handle('runs:list', listRuns);
   handle('runs:pick', async () => {
@@ -412,7 +401,7 @@ app.whenReady().then(async () => {
   createWindow();
   if (managedUpdater && !process.env.MOTOMIND_SMOKE_PATH) {
     const checkInBackground = () => {
-      if (!installingUpdate && !quitting) checkForUpdate().catch(() => {});
+      if (!managedUpdater.installing && !quitting) checkForUpdate().catch(() => {});
     };
     checkInBackground();
     const timer = setInterval(checkInBackground, updateCheckInterval);

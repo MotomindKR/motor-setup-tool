@@ -122,6 +122,14 @@ def atomic_json(path: Path, data: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def record_journal_failure(path: Path, journal: dict, error: Exception) -> None:
+    journal.update(status="failed", error=str(error))
+    try:
+        atomic_json(path, journal)
+    except OSError:
+        pass  # Preserve the original error and the last durable write record.
+
+
 class SettingsService:
     """Call from a single serialized worker; no internal polling or motion."""
 
@@ -252,15 +260,9 @@ class SettingsService:
         if self.transport.ping(new_id) is not None:
             raise DeviceError("ID {new_id} is already in use. Choose another ID.", new_id=new_id)
 
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        prefix = 'demo' if self.transport.simulated else 'motor'
-        path = self.backup_dir / f"{prefix}-{stamp}-{uuid4().hex[:8]}.json"
-        journal = self._document((before,), "write_backup")
         change = {"motor_id": motor_id, "address": 7, "size": 1,
                   "value": new_id, "status": "pending"}
-        journal.update(operation="id", status="prepared", old_id=motor_id,
-                       new_id=new_id, changes=[change])
-        atomic_json(path, journal)
+        path, journal = self._start_journal((before,), "id", [change], old_id=motor_id, new_id=new_id)
         write_unverified = False
         try:
             now = self.read_state(motor_id)
@@ -301,11 +303,7 @@ class SettingsService:
                 )
             else:
                 recovery = translate("Read the motor settings again before retrying.")
-            journal.update(status="failed", error=str(exc))
-            try:
-                atomic_json(path, journal)
-            except OSError:
-                pass
+            record_journal_failure(path, journal, exc)
             raise DeviceError("ID change stopped: {error}\n{recovery}\nBackup: {path}", error=exc, recovery=recovery, path=path) from exc
         return IdChangeResult(motor_id, after, path)
 
@@ -330,16 +328,12 @@ class SettingsService:
             return None, before
         self._editable((before,))
 
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        prefix = 'demo' if transport.simulated else 'motor'
-        path = self.backup_dir / f"{prefix}-{stamp}-{uuid4().hex[:8]}.json"
         change = {"motor_id": motor_id, "address": BAUD_RATE_ADDRESS, "size": 1,
                   "value": TARGET_BAUD_CODE, "status": "pending"}
-        journal = self._document((before,), "write_backup")
-        journal.update(operation="baud", status="prepared", old_baud=old_baud,
-                       old_baud_code=before.baud_code, new_baud=TARGET_BAUD,
-                       changes=[change], timings_ms=timings)
-        atomic_json(path, journal)
+        path, journal = self._start_journal(
+            (before,), "baud", [change], old_baud=old_baud, old_baud_code=before.baud_code,
+            new_baud=TARGET_BAUD, timings_ms=timings,
+        )
         record_step("initial_checks_and_backup")
         write_unverified = False
         adapter_speed_restored = False
@@ -384,12 +378,8 @@ class SettingsService:
         except Exception as exc:
             if write_unverified or not adapter_speed_restored:
                 self.faulted = True
-            journal.update(status="failed", error=str(exc),
-                           elapsed_ms=round((time.monotonic() - started) * 1000))
-            try:
-                atomic_json(path, journal)
-            except OSError:
-                pass
+            journal["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            record_journal_failure(path, journal, exc)
             if write_unverified:
                 recovery = translate(
                     "Reconnect and check both {baud} bps and the previous speed of {old_baud} bps.",
@@ -424,6 +414,15 @@ class SettingsService:
             "simulated": self.transport.simulated,
             "motors": [asdict(s) for s in states],
         }
+
+    def _start_journal(self, states, operation, changes, **details):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        prefix = "demo" if self.transport.simulated else "motor"
+        path = self.backup_dir / f"{prefix}-{stamp}-{uuid4().hex[:8]}.json"
+        journal = self._document(states, "write_backup")
+        journal.update(operation=operation, status="prepared", changes=changes, **details)
+        atomic_json(path, journal)
+        return path, journal
 
     def export(self, ids, path: Path) -> Path:
         states = self.read_states(ids)
@@ -469,15 +468,9 @@ class SettingsService:
 
     def _commit(self, kind, states, changes, target=None) -> tuple[Path, tuple[MotorState, ...]]:
         """All motors preflighted before first write; never auto-roll back on failure."""
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        name = f"{'demo' if self.transport.simulated else 'motor'}-{stamp}-{uuid4().hex[:8]}.json"
-        path = self.backup_dir / name
-        journal = self._document(states, "write_backup")
-        journal.update(operation=kind, status="prepared", target=target, changes=[
-            {"motor_id": i, "address": a, "size": size, "value": value, "status": "pending"}
-            for i, a, size, value in changes
-        ])
-        atomic_json(path, journal)  # Must succeed before touching EEPROM.
+        entries = [{"motor_id": i, "address": a, "size": size, "value": value, "status": "pending"}
+                   for i, a, size, value in changes]
+        path, journal = self._start_journal(states, kind, entries, target=target)
         expected = {s.motor_id: s for s in states}
         write_unverified = False
         try:
@@ -547,11 +540,7 @@ class SettingsService:
                 recovery = translate("Some values may have been saved. Reconnect and check the motor settings.")
             else:
                 recovery = translate("Read the motor settings again before retrying.")
-            journal.update(status="failed", error=str(exc))
-            try:
-                atomic_json(path, journal)
-            except OSError:
-                pass  # Pre-write journal still records the possibly attempted write.
+            record_journal_failure(path, journal, exc)
             completed = [f'ID {c["motor_id"]} @{c["address"]}' for c in journal["changes"]
                          if c["status"] in ("verified", "unchanged")]
             raise DeviceError(

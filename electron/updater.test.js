@@ -7,7 +7,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { ManagedUpdater, createUpdater, readUpdateError } = require('./updater');
 
-async function fixture(t) {
+async function fixture(t, onError) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'motomind-updater-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const native = new EventEmitter();
@@ -16,7 +16,7 @@ async function fixture(t) {
   native.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: { version: '0.1.20' } });
   native.downloadUpdate = async () => { calls.push('download'); native.emit('download-progress', { percent: 42.4 }); };
   native.quitAndInstall = () => calls.push('install');
-  const updater = new ManagedUpdater(native, app);
+  const updater = new ManagedUpdater(native, app, onError);
   return { directory, native, calls, app, updater, pending: path.join(directory, 'pending-update.json') };
 }
 
@@ -37,7 +37,7 @@ test('only the offered release can be installed and its download reports progres
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Check for an available update/);
   const offered = await updater.check();
   assert.equal(offered.version, '0.1.20');
-  await assert.rejects(updater.install('0.1.21', () => {}, () => {}), /Check for an available update/);
+  await assert.rejects(updater.install('0.1.21', () => {}, () => {}), /available update changed/);
   const progress = [];
   await updater.install(offered.version, value => progress.push(value), () => {});
   assert.deepEqual(calls, ['download', 'install']);
@@ -75,7 +75,8 @@ test('a failed download keeps the app running and a retry reports fresh progress
 });
 
 test('native installation failures are logged and clear pending update state', async t => {
-  const { native, updater, directory, app } = await fixture(t);
+  const failures = [];
+  const { native, updater, directory, app } = await fixture(t, error => failures.push(error.message));
   await updater.check();
   native.quitAndInstall = () => native.emit('error', new Error('Installation was denied'));
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Installation was denied/);
@@ -84,6 +85,13 @@ test('native installation failures are logged and clear pending update state', a
   native.quitAndInstall = () => { throw new Error('Could not start installer'); };
   await assert.rejects(updater.install('0.1.20', () => {}, () => {}), /Could not start installer/);
   assert.equal(await readUpdateError(app), null);
+  native.quitAndInstall = () => {};
+  await updater.install('0.1.20', () => {}, () => {});
+  await assert.rejects(updater.check(), /already in progress/);
+  native.emit('error', new Error('Installer failed after handoff'));
+  assert.deepEqual(failures, ['Installation was denied', 'Could not start installer', 'Installer failed after handoff']);
+  assert.equal(await readUpdateError(app), null);
+  await updater.install('0.1.20', () => {}, () => {});
 });
 
 test('restart verification reports an incomplete update once and consumes old helper errors', async t => {

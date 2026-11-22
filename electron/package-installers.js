@@ -63,8 +63,7 @@ if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
-  const source = path.join(sdkDir, '..', name);
-  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(backend, name));
+  fs.copyFileSync(path.join(sdkDir, '..', name), path.join(backend, name));
 }
 
 const config = structuredClone(require('./builder.json'));

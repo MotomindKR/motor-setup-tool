@@ -542,6 +542,7 @@ export function createController(bridge, env = {}) {
     else if (event.type === "updateFailure")
       set({
         settingsOpen: true,
+        installingUpdate: false,
         version: event.version,
         updateMessage: event.message,
       });
@@ -1045,9 +1046,7 @@ export function createController(bridge, env = {}) {
       try {
         await bridge.installUpdate(version);
       } catch (error) {
-        set({ updateMessage: readableError(error.message) });
-      } finally {
-        set({ installingUpdate: false });
+        set({ installingUpdate: false, updateMessage: readableError(error.message) });
       }
     },
   };
@@ -1061,6 +1060,7 @@ export function createController(bridge, env = {}) {
       .then((info) => {
         set({
           version: info.version,
+          installingUpdate: s.installingUpdate || Boolean(info.installingUpdate),
           updateResult: s.updateResult ?? info.updateResult ?? null,
           updateMessage: s.updateMessage || info.updateError || "",
         });

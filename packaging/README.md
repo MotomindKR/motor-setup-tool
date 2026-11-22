@@ -35,11 +35,10 @@ using existing artifacts, enter the source run ID in the workflow’s
 
 ## Build locally
 
-Build on the target OS. On Linux and Windows, set `MUJOCO_DOWNLOAD_DIR` to
-`.tools/mujoco` for Cargo to download the pinned SDK. On macOS, copy the
-versioned dylib from the MuJoCo DMG into `.tools/mujoco/mujoco-3.12.0/lib`,
-add a `libmujoco.dylib` symlink, and set `MUJOCO_DYNAMIC_LINK_DIR` there. CI
-handles this. RPM packaging needs `rpmbuild` (the `rpm` package).
+Build on the target OS. On Linux and macOS, run `bash scripts/install-mujoco.sh`
+from the repository root and set `MUJOCO_DYNAMIC_LINK_DIR` to the library
+directory it prints. On Windows, Cargo downloads the SDK automatically.
+RPM packaging needs `rpmbuild` (the `rpm` package).
 
 ```sh
 cargo build --locked --release

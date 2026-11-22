@@ -63,9 +63,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config fakeroot rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
-      - name: Install macOS MuJoCo SDK
-        if: runner.os == 'macOS'
-        run: bash scripts/install-macos-mujoco.sh
+      - name: Install MuJoCo SDK
+        if: runner.os != 'Windows'
+        run: bash scripts/install-mujoco.sh
       - name: Build Rust backend
         run: cargo build --locked --release
       - name: Build and test the native DXL worker
