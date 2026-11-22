@@ -28,7 +28,10 @@ Windows and Linux DEB. It installs the previous stable release, updates to the
 candidate, then uses the candidate to install a disposable next patch.
 On macOS it installs the signed DMG, checks Gatekeeper acceptance, then updates
 to a signed next-patch ZIP and verifies that the app relaunches.
-The run summary previews the download links and release notes.
+Each platform starts verification as soon as its installers are built. The run
+summary previews the download links and release notes. To rerun verification
+using existing artifacts, enter the source run ID in the workflow’s
+`installer_run` field.
 
 ## Build locally
 
