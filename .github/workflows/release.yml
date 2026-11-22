@@ -106,13 +106,13 @@ jobs:
         run: npm run check
       - name: Build desktop installers
         working-directory: electron
-        env:
-          CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
-          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && '1' || '0' }}
+        env: &installer_signing
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+          MOTOMIND_REQUIRE_SIGNING: ${{ runner.os == 'macOS' && '1' || '0' }}
         run: npm run package:installers
       - uses: actions/upload-artifact@v7
         with:
@@ -129,7 +129,6 @@ jobs:
             dist-electron/*.blockmap
 
       - name: Build disposable next patch for updater tests
-        if: runner.os != 'macOS'
         id: next
         shell: bash
         run: |
@@ -137,18 +136,21 @@ jobs:
           npm version patch --no-git-tag-version --ignore-scripts
           version=$(node -p "require('./package.json').version")
           cd ..
-          sed -i "/^version = /c\version = \"$version\"" Cargo.toml
+          sed -i.bak "s/^version = .*/version = \"$version\"/" Cargo.toml
           cargo build --offline --release
-          npm --prefix electron run package:installers
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Package disposable next patch
+        env: *installer_signing
+        run: npm --prefix electron run package:installers
       - uses: actions/upload-artifact@v7
-        if: runner.os != 'macOS'
         with:
           name: next-patch-${{ matrix.platform }}
           if-no-files-found: error
           path: |
             dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
             dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
+            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.zip
+            dist-electron/latest-mac.yml
 
   verify-installers:
     needs: build
@@ -157,16 +159,23 @@ jobs:
       actions: read
       contents: read
 
+  verify-macos:
+    needs: build
+    uses: ./.github/workflows/macos-update.yml
+    permissions:
+      actions: read
+      contents: read
+
   preview:
     name: Preview release
-    if: github.ref_type == 'branch'
-    needs: verify-installers
+    if: github.event_name == 'workflow_dispatch'
+    needs: [verify-installers, verify-macos]
     uses: ./.github/workflows/release-assets.yml
 
   publish:
     name: Publish release
-    if: github.ref_type == 'tag'
-    needs: verify-installers
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [verify-installers, verify-macos]
     uses: ./.github/workflows/release-assets.yml
     permissions:
       contents: write

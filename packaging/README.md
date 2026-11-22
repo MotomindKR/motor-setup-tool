@@ -26,6 +26,8 @@ does not publish a Windows ARM64 library.
 A manual release workflow run on a branch exercises both upgrade directions on
 Windows and Linux DEB. It installs the previous stable release, updates to the
 candidate, then uses the candidate to install a disposable next patch.
+On macOS it installs the signed DMG, checks Gatekeeper acceptance, then updates
+to a signed next-patch ZIP and verifies that the app relaunches.
 The run summary previews the download links and release notes.
 
 ## Build locally
@@ -80,7 +82,7 @@ required; MSIX would need a trusted Windows signing certificate or Store setup.
 
 ### macOS signing setup
 
-Tagged macOS releases require Developer ID signing and Apple notarization.
+Release builds and manual release previews require Developer ID signing and Apple notarization.
 Configure these GitHub Actions repository secrets:
 
 - `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
@@ -88,7 +90,7 @@ Configure these GitHub Actions repository secrets:
 - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
 
 Install the first Developer ID–signed DMG manually over v0.1.26 or earlier.
-Subsequent releases update in the app. Local and preview builds made with
+Subsequent releases update in the app. Local builds made with
 ad-hoc signing have in-app updates disabled.
 
 Sign the bundled MuJoCo library and Rust executable after all Mach-O changes,

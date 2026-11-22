@@ -1,0 +1,60 @@
+name: Verify macOS installer and updater
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      installer_run:
+        description: Release CI run containing the signed DMG and next-patch ZIP
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  macos-update:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+        working-directory: electron
+      - uses: actions/download-artifact@v8
+        with:
+          name: installers-darwin-arm64
+          run-id: ${{ inputs.installer_run || github.run_id }}
+          github-token: ${{ github.token }}
+          path: dist-electron
+      - uses: actions/download-artifact@v8
+        with:
+          name: next-patch-darwin-arm64
+          run-id: ${{ inputs.installer_run || github.run_id }}
+          github-token: ${{ github.token }}
+          path: next-patch
+      - name: Install from DMG and verify Gatekeeper acceptance
+        run: |
+          mount="$RUNNER_TEMP/motor-dmg"
+          mkdir -p "$mount" "$HOME/Applications"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" dist-electron/*.dmg
+          trap 'hdiutil detach "$mount"' EXIT
+          app="$HOME/Applications/Motor Setup Tool.app"
+          ditto "$mount/Motor Setup Tool.app" "$app"
+          codesign --verify --deep --strict "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose "$app"
+      - name: Install the signed ZIP through Settings and verify relaunch
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory next-patch &
+          server=$!
+          trap 'kill "$server"' EXIT
+          node electron/test-macos-update.js "$HOME/Applications/Motor Setup Tool.app" next-patch/latest-mac.yml http://127.0.0.1:8765
+      - name: Show updater diagnostics
+        if: failure()
+        run: |
+          tail -100 "$HOME/Library/Application Support/Motor Setup Tool/update.log" || true
+          tail -100 "$HOME/Library/Caches/com.motomind.MotorSetup.ShipIt/ShipIt_stderr.log" || true
