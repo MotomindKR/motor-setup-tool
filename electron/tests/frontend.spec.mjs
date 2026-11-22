@@ -657,6 +657,11 @@ test("a background update marks Settings in the collapsed sidebar", async ({ pag
   await expect(page.getByText("Version 0.1.23 is available.")).toBeVisible();
   await page.getByRole("button", { name: "Install update" }).click();
   expect(await page.evaluate(() => window.testMotor.calls.at(-1).version)).toBe("0.1.23");
+  await expect(page.getByRole("button", { name: "Check for update" })).toBeDisabled();
+  await page.evaluate(() => window.testMotor.emit({
+    type: "updateFailure", version: "0.1.17", message: "Installation was denied",
+  }));
+  await expect(page.getByText("Installation was denied")).toBeVisible();
   await page.getByRole("button", { name: "Check for update" }).click();
   await expect(page.getByText("You have the latest version.")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();
