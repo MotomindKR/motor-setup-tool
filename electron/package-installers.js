@@ -62,9 +62,10 @@ fs.copyFileSync(sourceBinary, path.join(backend, backendName));
 if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
-for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
-  fs.copyFileSync(path.join(sdkDir, '..', name), path.join(backend, name));
-}
+const sdkRoot = path.dirname(sdkDir);
+const notices = platform === 'win32' ? 'THIRD_PARTY_NOTICES.txt' : 'THIRD_PARTY_NOTICES';
+fs.copyFileSync(path.join(sdkRoot, 'LICENSE'), path.join(backend, 'LICENSE'));
+fs.copyFileSync(path.join(sdkRoot, notices), path.join(backend, 'THIRD_PARTY_NOTICES'));
 
 const config = structuredClone(require('./builder.json'));
 config.directories.app = app;
