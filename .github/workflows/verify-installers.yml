@@ -264,5 +264,6 @@ jobs:
       - name: Show updater diagnostics
         if: failure() && runner.os == 'macOS'
         run: |
-          tail -100 "$HOME/Library/Application Support/Motor Setup Tool/update.log" || true
+          app_name=$(node -p "require('./electron/package.json').name")
+          tail -100 "$HOME/Library/Application Support/$app_name/update.log" || true
           tail -100 "$HOME/Library/Caches/com.motomind.MotorSetup.ShipIt/ShipIt_stderr.log" || true

@@ -11,7 +11,7 @@ async function main() {
   const target = yaml.load(fs.readFileSync(manifest, 'utf8')).version;
   const executablePath = path.join(bundle, 'Contents/MacOS/Motor Setup Tool');
   const application = await _electron.launch({ executablePath });
-  const originalPid = application.process().pid;
+  const original = application.process();
   try {
     const page = await application.firstWindow();
     await page.locator('.app-header').waitFor();
@@ -32,7 +32,7 @@ async function main() {
       const processes = execFileSync('ps', ['-axo', 'pid=,comm='], { encoding: 'utf8' });
       return processes.split('\n').some(line => {
         const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-        return match && Number(match[1]) !== originalPid && match[2] === executablePath;
+        return match && Number(match[1]) !== original.pid && match[2] === executablePath;
       });
     }, { timeout: 90000, message: 'Squirrel did not relaunch the installed app' }).toBe(true);
     const version = execFileSync('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', path.join(bundle, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
@@ -41,7 +41,7 @@ async function main() {
     execFileSync('spctl', ['--assess', '--type', 'execute', bundle], { stdio: 'inherit' });
     console.log(`Updated and relaunched Motor Setup Tool ${version}`);
   } finally {
-    if (application.process().exitCode === null) await application.close();
+    if (original.exitCode === null && original.signalCode === null) await application.close();
   }
 }
 
