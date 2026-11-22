@@ -8,10 +8,9 @@ const path = require('node:path');
 const { format } = require('node:util');
 
 class ManagedUpdater {
-  constructor(native, app, onError = () => {}, manualUpdateReleases) {
+  constructor(native, app, onError = () => {}) {
     this.native = native;
     this.app = app;
-    this.manualUpdateReleases = manualUpdateReleases;
     this.candidate = null;
     this.failure = null;
     native.autoDownload = false;
@@ -37,13 +36,10 @@ class ManagedUpdater {
 
   async check() {
     const result = await this.native.checkForUpdates();
-    if (!result) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
+    if (!result) throw new Error(t("In-app updates are available in release builds."));
     const available = result.isUpdateAvailable;
     const version = result.updateInfo.version;
-    this.candidate = available && !this.manualUpdateReleases ? version : null;
-    if (available && this.manualUpdateReleases) {
-      return { available, version, releasePage: `${this.manualUpdateReleases}/tag/v${encodeURIComponent(version)}` };
-    }
+    this.candidate = available ? version : null;
     return { available, version };
   }
 
@@ -75,8 +71,8 @@ class ManagedUpdater {
 
 function createUpdater(app, onError) {
   if (!app.isPackaged) return null;
-  const { manualUpdateReleases } = require(path.join(app.getAppPath(), 'package.json'));
-  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError, manualUpdateReleases);
+  if (require(path.join(app.getAppPath(), 'package.json')).disableUpdates) return null;
+  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError);
 }
 
 async function optionalText(file) {

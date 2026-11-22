@@ -348,7 +348,7 @@ app.whenReady().then(async () => {
   handle('updates:check', async () => {
     if (recordingOperation) throw new Error(t("Wait for the recording file operation to finish"));
     if (installingUpdate) throw new Error(t("Update already in progress"));
-    if (!managedUpdater) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
+    if (!managedUpdater) throw new Error(t("In-app updates are available in release builds."));
     return checkForUpdate();
   });
   handle('updates:install', async version => {
@@ -357,9 +357,8 @@ app.whenReady().then(async () => {
     requireIdleForUpdate();
     if (!checkedUpdate?.available) throw new Error(t("Check for an available update first"));
     if (checkedUpdate.version !== version) throw new Error(t("The available update changed. Review the new version before installing."));
-    if (!managedUpdater) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
+    if (!managedUpdater) throw new Error(t("In-app updates are available in release builds."));
     if (installingUpdate) throw new Error(t("Update already in progress"));
-    if (checkedUpdate.releasePage) return shell.openExternal(checkedUpdate.releasePage);
     installingUpdate = true;
     const progress = message => window?.webContents.send('updates:progress', message);
     let handedOff = false;

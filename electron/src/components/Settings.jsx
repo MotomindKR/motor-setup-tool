@@ -87,9 +87,7 @@ export function Settings({ s, a, appearance, c }) {
               disabled={c.busy || s.checkingUpdate}
             >
               <ArrowDownToLine />
-              {result.releasePage
-                ? t("Open download page")
-                : t("Install update")}
+              {t("Install update")}
             </Button>
           )}
         </DialogFooter>

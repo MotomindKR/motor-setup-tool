@@ -80,23 +80,16 @@ required; MSIX would need a trusted Windows signing certificate or Store setup.
 
 ### macOS signing setup
 
-macOS auto-updates require Developer ID signing and notarization. Releases use
-ad-hoc signing until a certificate is configured. On these builds, **Open download page**
-opens the available release so users can install its DMG.
-If macOS blocks launch, open **System Settings → Privacy & Security → Open Anyway**
-after attempting to launch the app.
-
-Configure these GitHub repository secrets to enable Developer ID releases:
+Tagged macOS releases require Developer ID signing and Apple notarization.
+Configure these GitHub Actions repository secrets:
 
 - `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12` certificate.
 - `MAC_CSC_KEY_PASSWORD`: certificate password.
 - `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: notarization credentials.
 
-Once `MAC_CSC_LINK` is configured, tagged macOS builds require signing and
-notarization and fail if the remaining credentials are missing. Local builds
-and manual workflow runs without a certificate also use ad-hoc signing.
-The macOS ZIP and `latest-mac.yml` must be published alongside the DMG.
-The first signed build must be installed manually over the existing ad-hoc app.
+Install the first Developer ID–signed DMG manually over v0.1.26 or earlier.
+Subsequent releases update in the app. Local and preview builds made with
+ad-hoc signing have in-app updates disabled.
 
 Sign the bundled MuJoCo library and Rust executable after all Mach-O changes,
 then sign the outer app. `codesign --deep` alone does not repair binaries under

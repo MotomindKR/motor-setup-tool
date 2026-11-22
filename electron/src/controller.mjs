@@ -1040,7 +1040,7 @@ export function createController(bridge, env = {}) {
       if (s.updateResult.version !== version) return;
       set({
         installingUpdate: true,
-        updateMessage: s.updateResult.releasePage ? "" : "Downloading update…",
+        updateMessage: "Downloading update…",
       });
       try {
         await bridge.installUpdate(version);
