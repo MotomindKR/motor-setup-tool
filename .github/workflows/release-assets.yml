@@ -32,7 +32,7 @@ jobs:
           node "$GITHUB_WORKSPACE/packaging/render-release-notes.mjs" "$GH_REPO" "$tag" "$GITHUB_WORKSPACE/docs/releases/$tag.md" SHA256SUMS > "$RUNNER_TEMP/release-notes.md"
           cat "$RUNNER_TEMP/release-notes.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Publish desktop installers
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         working-directory: dist-electron
         env:
           GH_TOKEN: ${{ github.token }}

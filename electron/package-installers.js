@@ -62,10 +62,10 @@ fs.copyFileSync(sourceBinary, path.join(backend, backendName));
 if (process.platform !== 'win32') fs.chmodSync(path.join(backend, backendName), 0o755);
 fs.copyFileSync(mujoco, path.join(backend, 'lib', mujocoName));
 fs.cpSync(path.join(root, 'packaging', 'licenses'), path.join(backend, 'licenses'), { recursive: true });
-for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES']) {
-  const source = path.join(sdkDir, '..', name);
-  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(backend, name));
-}
+const sdkRoot = path.dirname(sdkDir);
+const notices = platform === 'win32' ? 'THIRD_PARTY_NOTICES.txt' : 'THIRD_PARTY_NOTICES';
+fs.copyFileSync(path.join(sdkRoot, 'LICENSE'), path.join(backend, 'LICENSE'));
+fs.copyFileSync(path.join(sdkRoot, notices), path.join(backend, 'THIRD_PARTY_NOTICES'));
 
 const config = structuredClone(require('./builder.json'));
 config.directories.app = app;
@@ -94,7 +94,7 @@ for (const name of ['CSC_LINK', 'CSC_NAME', 'WIN_CSC_LINK']) {
   if (!buildEnv[name]) delete buildEnv[name];
 }
 if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
-  for (const name of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
+  for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
     if (!process.env[name]) throw new Error(`macOS release auto-updates require Developer ID signing and notarization. Missing ${name}; see packaging/README.md.`);
   }
   config.forceCodeSigning = true;
@@ -102,7 +102,7 @@ if (platform === 'darwin' && process.env.MOTOMIND_REQUIRE_SIGNING === '1') {
 } else if (platform === 'darwin' && !buildEnv.CSC_LINK && !buildEnv.CSC_NAME) {
   config.mac.identity = '-';
   config.mac.notarize = false;
-  config.extraMetadata = { manualUpdateReleases: `${pkg.homepage}/releases` };
+  config.extraMetadata = { disableUpdates: true };
   // Ad-hoc test signatures have no Team ID for hardened library validation.
   // Signed production builds keep the hardened runtime enabled.
   config.mac.hardenedRuntime = false;
@@ -121,6 +121,7 @@ const library = path.join(resources, 'backend', 'lib');
 const runtimeEnv = { ...process.env };
 if (platform === 'darwin') {
   delete runtimeEnv.DYLD_LIBRARY_PATH;
+  if (config.mac.notarize) execFileSync('xcrun', ['stapler', 'validate', bundle], { stdio: 'inherit' });
   for (const binary of [bundle, executable, path.join(library, mujocoName), path.join(resources, 'dxl', dxlName)]) {
     execFileSync('codesign', ['--verify', '--strict', binary]);
   }

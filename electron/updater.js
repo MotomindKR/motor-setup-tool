@@ -8,12 +8,12 @@ const path = require('node:path');
 const { format } = require('node:util');
 
 class ManagedUpdater {
-  constructor(native, app, onError = () => {}, manualUpdateReleases) {
+  constructor(native, app, onError = () => {}) {
     this.native = native;
-    this.app = app;
-    this.manualUpdateReleases = manualUpdateReleases;
-    this.candidate = null;
-    this.failure = null;
+    this.pendingFile = path.join(app.getPath('userData'), 'pending-update.json');
+    this.onError = onError;
+    this.offer = null;
+    this.phase = 'idle';
     native.autoDownload = false;
     native.autoInstallOnAppQuit = false;
     native.allowDowngrade = false;
@@ -29,44 +29,53 @@ class ManagedUpdater {
     };
     native.logger = { info: log, warn: log, error: log, debug: log };
     native.on('error', error => {
-      this.failure = error;
       log(error);
-      onError(error);
+      if (this.phase === 'handed-off') this.failInstall(error);
+      else if (this.installing) this.nativeError = error;
     });
   }
 
+  get installing() { return this.phase !== 'idle'; }
+
+  failInstall(error) {
+    try { syncFs.rmSync(this.pendingFile, { force: true }); }
+    catch (cleanupError) { this.native.logger.error(cleanupError); }
+    this.phase = 'idle';
+    this.onError(error);
+  }
+
   async check() {
+    if (this.installing) throw new Error(t("Update already in progress"));
     const result = await this.native.checkForUpdates();
-    if (!result) throw new Error(t("Install a packaged copy of Motor Setup Tool to update from the app"));
+    if (!result) throw new Error(t("In-app updates are available in release builds."));
     const available = result.isUpdateAvailable;
     const version = result.updateInfo.version;
-    this.candidate = available && !this.manualUpdateReleases ? version : null;
-    if (available && this.manualUpdateReleases) {
-      return { available, version, releasePage: `${this.manualUpdateReleases}/tag/v${encodeURIComponent(version)}` };
-    }
-    return { available, version };
+    this.offer = { available, version };
+    return this.offer;
   }
 
   async install(version, progress, ensureIdle) {
-    if (!this.candidate || version !== this.candidate) throw new Error(t("Check for an available update first"));
+    if (this.installing) throw new Error(t("Update already in progress"));
+    if (!this.offer?.available) throw new Error(t("Check for an available update first"));
+    if (this.offer.version !== version) throw new Error(t("The available update changed. Review the new version before installing."));
     ensureIdle();
-    this.failure = null;
+    this.phase = 'installing';
+    this.nativeError = null;
     const onProgress = value => progress(t("Downloading update · {{percent}}%", { percent: Math.min(100, Math.round(value.percent)) }));
     this.native.on('download-progress', onProgress);
     try {
       progress(t("Downloading update…"));
       await this.native.downloadUpdate();
+      if (this.nativeError) throw this.nativeError;
       ensureIdle();
-      const pending = path.join(this.app.getPath('userData'), 'pending-update.json');
-      await fs.writeFile(pending, JSON.stringify({ version }));
+      syncFs.writeFileSync(this.pendingFile, JSON.stringify({ version }));
       progress(t("Installing update. The app will restart…"));
-      try {
-        this.native.quitAndInstall(true, true);
-        if (this.failure) throw this.failure;
-      } catch (error) {
-        await fs.rm(pending, { force: true });
-        throw error;
-      }
+      this.native.quitAndInstall(true, true);
+      if (this.nativeError) throw this.nativeError;
+      this.phase = 'handed-off';
+    } catch (error) {
+      this.failInstall(error);
+      throw error;
     } finally {
       this.native.removeListener('download-progress', onProgress);
     }
@@ -75,8 +84,8 @@ class ManagedUpdater {
 
 function createUpdater(app, onError) {
   if (!app.isPackaged) return null;
-  const { manualUpdateReleases } = require(path.join(app.getAppPath(), 'package.json'));
-  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError, manualUpdateReleases);
+  if (require(path.join(app.getAppPath(), 'package.json')).disableUpdates) return null;
+  return new ManagedUpdater(require('electron-updater').autoUpdater, app, onError);
 }
 
 async function optionalText(file) {

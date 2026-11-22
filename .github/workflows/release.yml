@@ -4,168 +4,53 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      installer_run:
+        description: Existing release CI run ID (verify its installers only)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}-${{ inputs.installer_run || 'build' }}
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build ${{ matrix.platform }}
+  verify-installers:
+    name: ${{ matrix.platform }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux-x64
-            runner: ubuntu-22.04
+            runners: '["ubuntu-22.04"]'
           - platform: linux-arm64
-            runner: ubuntu-22.04-arm
+            runners: '["ubuntu-22.04-arm"]'
           - platform: darwin-arm64
-            runner: macos-15
+            runners: '["macos-15"]'
           - platform: win32-x64
-            runner: windows-2022
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    env:
-      MUJOCO_DOWNLOAD_DIR: ${{ github.workspace }}/.tools/mujoco
-    steps:
-      - uses: actions/checkout@v7
-      - name: Verify upstream firmware images
-        if: matrix.platform == 'linux-x64'
-        shell: bash
-        run: |
-          jq -er '.[] | [.url, .sha256] | @tsv' src/firmware_catalog.json |
-            while read -r url digest; do
-              echo "Checking ${url##*/}"
-              curl -fsSL --retry 3 --max-time 60 "$url" -o "$RUNNER_TEMP/firmware.bin"
-              echo "$digest  $RUNNER_TEMP/firmware.bin" | sha256sum --check
-            done
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: electron/package-lock.json
-      - name: Verify release version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          cargo metadata --locked --no-deps --format-version 1 |
-            jq -e --slurpfile desktop electron/package.json '
-              .packages[] | select(.name == "motor-setup-tool") |
-              .version == $desktop[0].version and ("v" + .version == env.RELEASE_TAG)'
-      - name: Install Linux build and desktop libraries
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config fakeroot rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
-      - name: Install macOS MuJoCo SDK
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdk="$MUJOCO_DOWNLOAD_DIR/mujoco-3.12.0/lib"
-          mkdir -p "$sdk" "$RUNNER_TEMP/mujoco-mount"
-          asset=mujoco-3.12.0-macos-universal2.dmg
-          base=https://github.com/google-deepmind/mujoco/releases/download/3.12.0
-          curl -fL --retry 3 -o "$RUNNER_TEMP/$asset" "$base/$asset"
-          curl -fL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$base/$asset.sha256"
-          (cd "$RUNNER_TEMP" && shasum -a 256 -c "$asset.sha256")
-          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/mujoco-mount" "$RUNNER_TEMP/$asset"
-          source_lib="$(find "$RUNNER_TEMP/mujoco-mount" -name libmujoco.3.12.0.dylib -type f -print -quit)"
-          test -n "$source_lib"
-          cp "$source_lib" "$sdk/libmujoco.3.12.0.dylib"
-          ln -s libmujoco.3.12.0.dylib "$sdk/libmujoco.dylib"
-          install_name_tool -id @rpath/libmujoco.3.12.0.dylib "$sdk/libmujoco.3.12.0.dylib"
-          codesign --force --sign - --timestamp=none "$sdk/libmujoco.3.12.0.dylib"
-          hdiutil detach "$RUNNER_TEMP/mujoco-mount"
-          echo "MUJOCO_DYNAMIC_LINK_DIR=$sdk" >> "$GITHUB_ENV"
-      - name: Build Rust backend
-        run: cargo build --locked --release
-      - name: Build and test the native DXL worker
-        run: |
-          python -m pip install -r dxl/requirements-build.txt pytest
-          python -m pytest -q -o pythonpath=dxl dxl/tests
-          python dxl/build.py
-      - name: Install Electron dependencies
-        working-directory: electron
-        run: npm ci
-      - name: Check Electron code
-        working-directory: electron
-        env:
-          MOTOMIND_DXL_PYTHON: python
-          TEST_NATIVE_BACKEND: '1'
-        run: npm run check
-      - name: Build desktop installers
-        working-directory: electron
-        env:
-          CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
-          MOTOMIND_REQUIRE_SIGNING: ${{ startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS' && secrets.MAC_CSC_LINK != '' && '1' || '0' }}
-        run: npm run package:installers
-      - uses: actions/upload-artifact@v7
-        with:
-          name: installers-${{ matrix.platform }}
-          if-no-files-found: error
-          path: |
-            dist-electron/*.deb
-            dist-electron/*.rpm
-            dist-electron/*.dmg
-            dist-electron/*.zip
-            dist-electron/*.exe
-            dist-electron/*.sha256
-            dist-electron/latest*.yml
-            dist-electron/*.blockmap
-
-      - name: Build disposable next patch for updater tests
-        if: runner.os != 'macOS'
-        id: next
-        shell: bash
-        run: |
-          cd electron
-          npm version patch --no-git-tag-version --ignore-scripts
-          version=$(node -p "require('./package.json').version")
-          cd ..
-          sed -i "/^version = /c\version = \"$version\"" Cargo.toml
-          cargo build --offline --release
-          npm --prefix electron run package:installers
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
-        if: runner.os != 'macOS'
-        with:
-          name: next-patch-${{ matrix.platform }}
-          if-no-files-found: error
-          path: |
-            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.deb
-            dist-electron/motor-setup-tool-${{ steps.next.outputs.version }}-*.exe
-
-  verify-installers:
-    needs: build
-    uses: ./.github/workflows/windows-update.yml
+            runners: '["windows-2022", "windows-2025"]'
+    uses: ./.github/workflows/verify-installers.yml
+    with:
+      platform: ${{ matrix.platform }}
+      runners: ${{ matrix.runners }}
+      installer_run: ${{ inputs.installer_run || '' }}
+    secrets: inherit
     permissions:
       actions: read
       contents: read
 
   preview:
     name: Preview release
-    if: github.ref_type == 'branch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.installer_run
     needs: verify-installers
     uses: ./.github/workflows/release-assets.yml
 
   publish:
     name: Publish release
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: verify-installers
     uses: ./.github/workflows/release-assets.yml
     permissions:
