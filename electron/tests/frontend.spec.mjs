@@ -204,7 +204,7 @@ test("the sidebar workspace picker switches tools and restores the last RobStrid
 
   await picker.press("Enter");
   await expect(options).toHaveText(["RobStride", "Dynamixel", "Camera"]);
-  await expect(page.getByRole("option", { name: "RobStride", selected: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "RobStride", selected: true })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("option", { name: "Dynamixel", exact: true })).toBeFocused();
   await page.keyboard.press("Enter");
