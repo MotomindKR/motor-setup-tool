@@ -58,7 +58,7 @@
   "Not connected": "연결 안 됨",
   "RobStride · {{status}}": "RobStride · {{status}}",
   "Skip to workspace": "작업 영역으로 건너뛰기",
-  "Hardware workspaces": "하드웨어 작업 영역",
+  "Workspace": "작업 영역",
   "{{workspace}} tools": "{{workspace}} 도구",
   "Breadcrumb": "현재 위치",
   "Disable motor": "모터 비활성화",

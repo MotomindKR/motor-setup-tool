@@ -116,7 +116,6 @@ export function App({ controller }) {
   const workspaceKey = workspaceByPage.get(s.tab);
   const workspace = workspaces[workspaceKey];
   const workspaceName = t(workspace.label);
-  const pages = Object.entries(workspace.pages);
   const page = workspace.pages[s.tab];
   const showWork =
     Boolean(s.work) &&
@@ -198,30 +197,14 @@ export function App({ controller }) {
         <div className="app-layout">
           <AppSidebar
             activeWorkspace={workspaceKey}
-            onNavigate={a.setWorkspace}
+            activeTab={s.tab}
+            onWorkspaceChange={a.setWorkspace}
+            onNavigate={a.setTab}
             onSettings={a.openSettings}
             updateAvailable={s.updateResult?.available}
           />
           <SidebarInset className="app-body" aria-label={t(page.title)}>
             <div id="workspace" className="workspace" tabIndex={-1}>
-              {pages.length > 1 && (
-                <nav
-                  className="workspace-tools"
-                  aria-label={t("{{workspace}} tools", { workspace: workspaceName })}
-                >
-                  {pages.map(([key, tool]) => (
-                    <Button
-                      key={key}
-                      variant={s.tab === key ? "secondary" : "ghost"}
-                      size="sm"
-                      aria-current={s.tab === key ? "page" : undefined}
-                      onClick={() => a.setTab(key)}
-                    >
-                      {t(tool.label ?? tool.breadcrumb ?? tool.title)}
-                    </Button>
-                  ))}
-                </nav>
-              )}
               {s.notice && (
                 <Alert
                   className="app-notice"

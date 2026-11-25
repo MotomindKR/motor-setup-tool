@@ -81,6 +81,10 @@ svg {
 .app-sidebar-group {
   padding: 0 12px;
 }
+.workspace-picker {
+  width: 100%;
+  margin-bottom: 8px;
+}
 .app-sidebar-menu {
   gap: 4px;
 }
@@ -117,6 +121,19 @@ svg {
 }
 [data-slot="sidebar"][data-state="collapsed"] :is(.app-sidebar-group, .app-sidebar-footer) {
   padding-inline: 8px;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker {
+  height: 32px;
+  justify-content: center;
+  gap: 1px;
+  padding-inline: 2px;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker [data-slot="select-value"] {
+  display: none;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker > svg:last-child {
+  width: 8px;
+  height: 8px;
 }
 .app-header {
   position: sticky;
@@ -219,30 +236,6 @@ html[data-platform="darwin"] .app-header {
   margin: 0 auto;
   padding: 32px var(--page-gutter) 24px;
   outline: none;
-}
-.workspace-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-}
-.workspace-tools [data-slot="button"] {
-  min-width: 64px;
-  min-height: 36px;
-}
-.workspace-tools [aria-current="page"] {
-  position: relative;
-  font-weight: 600;
-}
-.workspace-tools [aria-current="page"]::after {
-  position: absolute;
-  inset-inline: 35%;
-  bottom: 4px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--primary);
-  content: "";
 }
 
 .stack {
