@@ -1,5 +1,6 @@
 import { message, t } from "./i18n.mjs";
 import { displayAngle, numberText } from "./format.mjs";
+import { workspaces, workspaceByPage } from "./workspaces.mjs";
 
 const operationNames = {
   interfaces: "Checking interfaces",
@@ -185,9 +186,10 @@ export function createController(bridge, env = {}) {
   const focused =
     env.focused || (() => document.hasFocus() && !document.hidden);
   const listeners = new Set();
+  const lastPages = new Map();
   let s = {
     ...emptyMotorSelection(),
-    tab: "calibrate",
+    tab: Object.keys(workspaces.robstride.pages)[0],
     connection: {
       transport: bridge.platform === "linux" ? "socketcan" : "gsusb",
       bus: "",
@@ -570,6 +572,10 @@ export function createController(bridge, env = {}) {
       set({ manualStatus: value, lastStatusAt: now(), manualHistory: history });
     } else if (event.type === "error") notice(event.message, true);
   }
+  function setPage(tab, patch) {
+    lastPages.set(workspaceByPage.get(tab), tab);
+    set({ ...patch, tab });
+  }
   async function openRun(directory, showFiles = true) {
     if (flags().busy) return false;
     const tab = s.tab;
@@ -579,8 +585,7 @@ export function createController(bridge, env = {}) {
         ? await bridge.loadRun(directory)
         : await bridge.pickRun();
       if (!result) return false;
-      set({
-        tab: showFiles && s.tab === tab ? "files" : s.tab,
+      setPage(showFiles && s.tab === tab ? "files" : s.tab, {
         directory: result.directory,
         report: result.report,
         reportFiles: result.files,
@@ -599,10 +604,15 @@ export function createController(bridge, env = {}) {
     }
   }
   async function setTab(tab) {
-    if (!["calibrate", "test", "setup", "dxl", "camera", "files"].includes(tab)) return;
-    if (s.tab === "test" && tab !== "test") await stopMonitor();
-    set({ tab, notice: s.notice?.error ? s.notice : null });
+    if (!workspaceByPage.has(tab) || s.tab === tab) return;
+    if (s.tab === "test") await stopMonitor();
+    if (s.tab === tab) return;
+    setPage(tab, { notice: s.notice?.error ? s.notice : null });
     if (tab === "files") refreshRuns();
+  }
+  function setWorkspace(workspace) {
+    if (!Object.hasOwn(workspaces, workspace) || workspaceByPage.get(s.tab) === workspace) return;
+    return setTab(lastPages.get(workspace) ?? Object.keys(workspaces[workspace].pages)[0]);
   }
   let confirmation = null;
   function confirmAction(title, description, action, destructive = false) {
@@ -611,6 +621,7 @@ export function createController(bridge, env = {}) {
   }
   const actions = {
     setTab,
+    setWorkspace,
     refreshInterfaces,
     scan,
     selectMotor,

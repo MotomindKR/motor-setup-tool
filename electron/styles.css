@@ -81,6 +81,10 @@ svg {
 .app-sidebar-group {
   padding: 0 12px;
 }
+.workspace-picker {
+  width: 100%;
+  margin-bottom: 8px;
+}
 .app-sidebar-menu {
   gap: 4px;
 }
@@ -115,8 +119,21 @@ svg {
   align-items: center;
   padding: 24px 8px;
 }
-[data-slot="sidebar"][data-state="collapsed"] .app-sidebar-group {
-  padding: 0 8px;
+[data-slot="sidebar"][data-state="collapsed"] :is(.app-sidebar-group, .app-sidebar-footer) {
+  padding-inline: 8px;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker {
+  height: 32px;
+  justify-content: center;
+  gap: 1px;
+  padding-inline: 2px;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker [data-slot="select-value"] {
+  display: none;
+}
+[data-slot="sidebar"][data-state="collapsed"] .workspace-picker > svg:last-child {
+  width: 8px;
+  height: 8px;
 }
 .app-header {
   position: sticky;
@@ -154,6 +171,18 @@ html[data-platform="darwin"] .app-header {
   align-items: center;
   gap: 16px;
   min-width: 0;
+}
+.header-navigation [data-slot="breadcrumb"],
+.header-navigation [data-slot="breadcrumb-item"] {
+  min-width: 0;
+}
+.header-navigation [data-slot="breadcrumb-list"] {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.header-navigation [data-slot="breadcrumb-item"] > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .header-actions {
   flex-shrink: 0;
@@ -916,10 +945,6 @@ html[data-platform="darwin"] .app-header {
   :root {
     --page-gutter: 24px;
   }
-  .header-navigation [data-slot="breadcrumb-item"]:first-child,
-  .header-navigation [data-slot="breadcrumb-separator"] {
-    display: none;
-  }
 }
 @media (max-width: 767px) {
   :root {
@@ -936,7 +961,7 @@ html[data-platform="darwin"] .app-header {
   :root {
     --page-gutter: 16px;
   }
-  .header-navigation [data-slot="breadcrumb"] {
+  .header-disable-label {
     display: none;
   }
   .header-navigation,
@@ -957,6 +982,18 @@ html[data-platform="darwin"] .app-header {
   }
   .chart-compact [data-slot="chart"] {
     height: 160px;
+  }
+}
+@media (max-width: 420px) {
+  .header-navigation [data-slot="breadcrumb-separator"] {
+    display: none;
+  }
+  .header-navigation [data-slot="breadcrumb-item"]:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 }
 @media (prefers-reduced-motion: reduce) {

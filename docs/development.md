@@ -61,7 +61,7 @@ Python environment, install `dxl/requirements.txt` there and set
 3. Power-cycle the motor and reconnect to check the saved settings. Follow the
    [operator guide](dynamixel.md) when recovering from a write with an uncertain result.
 4. Check that the existing CAN adapter controls are available in **Setup** and
-   that the **Calibrate** workspace opens.
+   that the **RobStride** workspace opens with **Calibrate** selected.
 
 The reverse offset response was observed on an XL330 with firmware 53 in Mode 5.
 The [ROBOTIS Drive Mode](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#drive-mode10)

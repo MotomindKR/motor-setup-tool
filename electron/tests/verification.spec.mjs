@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { fixture, installBridge } from "./fixtures.mjs";
+import { selectWorkspace } from "./navigation.mjs";
 import { teachingIds } from "../src/teaching-pose.mjs";
 
 test.use({ launchOptions: { args: ["--enable-unsafe-swiftshader"] } });
@@ -31,7 +32,7 @@ test("MILLY preview renders and stops requesting positions after a failed sample
     }
   });
   await page.evaluate(() => { window.motorApp.dxl = window.mockTeaching; });
-  await page.getByRole("button", { name: "Dynamixel", exact: true }).click();
+  await selectWorkspace(page, "Dynamixel");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByRole("button", { name: "MILLY preview", exact: true }).click();
   const preview = page.getByRole("dialog", { name: "MILLY teaching preview" });
@@ -78,7 +79,7 @@ test("camera switching requests at most Full HD and shows the received frame siz
       },
     }) });
   });
-  await page.getByRole("button", { name: "Camera", exact: true }).click();
+  await selectWorkspace(page, "Camera");
   const view = page.getByRole("main", { name: "Camera verification" });
   expect(await page.evaluate(() => window.testCamera.opened)).toEqual([]);
   await expect(view.getByRole("combobox")).toHaveCount(1);
@@ -97,7 +98,7 @@ test("camera switching requests at most Full HD and shows the received frame siz
     ],
     stopped: ["camera-a"],
   });
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await selectWorkspace(page, "RobStride");
   await expect.poll(() => page.evaluate(() => window.testCamera.stopped)).toEqual(["camera-a", "camera-b"]);
 });
 
@@ -112,7 +113,7 @@ test("refreshing cameras clears discovery errors and preserves preview errors", 
       async getUserMedia() { throw new DOMException("", "NotReadableError"); },
     }) });
   });
-  await page.getByRole("button", { name: "Camera", exact: true }).click();
+  await selectWorkspace(page, "Camera");
   const view = page.getByRole("main", { name: "Camera verification" });
   const alerts = view.getByRole("alert");
   const discoveryError = alerts.filter({ hasText: "Camera list could not be refreshed." });

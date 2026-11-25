@@ -6,6 +6,12 @@
 [Results](#compare-the-result) · [Test and jog](#monitor-and-jog-a-motor) ·
 [Firmware](#update-firmware) · [Troubleshooting](#troubleshooting)
 
+Choose your hardware from the **Workspace** dropdown in the sidebar. With
+**RobStride** selected, the sidebar lists **Calibrate**, **Test**, **Setup**,
+and **Files** for saved calibration runs. Choose **Dynamixel**
+for XL330 setup and the MILLY teaching preview. Open **Camera** to check a
+video feed. You can open **Settings** from any workspace.
+
 ## Connect a motor
 
 Before scanning:

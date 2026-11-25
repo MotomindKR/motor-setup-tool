@@ -32,7 +32,10 @@ async function main() {
       const page = await application.firstWindow();
       page.setDefaultTimeout(15_000);
       await expect(page).toHaveURL(/^file:\/\//);
-      await page.getByRole('button', { name: /^(Camera|카메라)$/ }).click();
+      const workspace = page.getByRole('combobox', { name: /^(Workspace|작업 영역)$/ });
+      if (!(await workspace.isVisible())) await page.locator('[data-slot="sidebar-trigger"]').click();
+      await workspace.click();
+      await page.getByRole('listbox').getByRole('option', { name: /^(Camera|카메라)$/ }).click();
       const view = page.getByRole('main', { name: /^(Camera verification|카메라 검증)$/ });
       const video = view.getByLabel(/^(Live camera image|카메라 실시간 영상)$/);
       await view.getByRole('button', { name: /^(Start preview|미리보기 시작)$/ }).click();
