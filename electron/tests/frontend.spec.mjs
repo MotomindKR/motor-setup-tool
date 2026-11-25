@@ -84,7 +84,10 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     const selectMotor = (id) => page.getByRole("checkbox", { name: `Select ${id}`, exact: true });
     await expect(motors.getByRole("columnheader", { name: "Baud rate (bps)" })).toBeVisible();
     await expect(motors.getByRole("columnheader", { name: "Direction" })).toBeVisible();
-    await expect(motors.getByRole("columnheader", { name: "Mode" })).toHaveCount(0);
+    await expect(motors.getByRole("columnheader", { name: "Model" })).toBeVisible();
+    await expect(motors.getByRole("columnheader", { name: "Position (pulse)" })).toBeVisible();
+    await expect(motors.getByRole("columnheader", { name: "Joint angle" })).toBeVisible();
+    await expect(motors.getByRole("columnheader", { name: "Mode", exact: true })).toHaveCount(0);
     const saveZero = page.getByRole("button", { name: "Save zero" });
     await expect(saveZero).toBeDisabled();
     await selectMotor(zeroId).check();
@@ -98,11 +101,13 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await expect(page.getByText(/Zero saved and verified/)).toBeVisible();
     const zeroRow = motors.getByRole("row").filter({ has: selectMotor(zeroId) });
     await expect(zeroRow.getByRole("cell", { name: "Forward", exact: true })).toBeVisible();
-    await expect(motors.getByText("2048", { exact: true })).toHaveCount(0);
+    await expect(zeroRow.getByRole("cell", { name: discovered[0].name, exact: true })).toBeVisible();
+    await expect(zeroRow.getByRole("cell", { name: "2048", exact: true })).toBeVisible();
+    await expect(zeroRow.getByRole("cell", { name: "0.000 rad / 0.0°", exact: true })).toBeVisible();
     const details = zeroRow.getByRole("button", { name: `Details ${zeroId}`, exact: true });
+    await expect(motors.getByText("Torque", { exact: true })).toHaveCount(0);
     await details.click();
-    await expect(motors.getByText("2048", { exact: true })).toBeVisible();
-    await expect(motors.getByText("0.000 rad / 0.0°", { exact: true })).toBeVisible();
+    await expect(motors.getByText("Torque", { exact: true })).toBeVisible();
     await details.click();
 
     await page.getByLabel("New ID").fill(String(newId));

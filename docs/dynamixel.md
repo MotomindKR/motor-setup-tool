@@ -15,8 +15,9 @@ motors separately. Close other programs using the same serial port.
    uses `pkexec` and `setfacl`, supplied by polkit and acl.
 3. Click **Connect** to discover motors and select them in the **Motors**
    table. Filtering keeps the selection. Check **Selected IDs** before saving.
-   The list shows each motor's stored baud rate and direction. Open **Details**
-   on a row to see its model, mode, angles, torque, and other readings.
+   The list shows each motor's stored baud rate, direction, model, pulse
+   position, and joint angle. Open **Details** on a row to see its mode,
+   motor angle, torque, and other readings.
    **Scan bus** refreshes the list at the session's active speed.
 
 Support the mechanism before using **Torque off**. To save direction,

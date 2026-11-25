@@ -69,13 +69,31 @@ function motorColumns(t) {
       value: direction,
       cell: (row) => <strong>{direction(row)}</strong>,
     },
-    // DataTable searches its columns. Keep the previous readings searchable
-    // while displaying them in the expanded row.
+    {
+      id: "name",
+      header: t("Model"),
+      value: (row) => row.name,
+    },
+    {
+      id: "position",
+      header: t("Position (pulse)"),
+      value: (row) => row.position,
+      align: "right",
+    },
+    {
+      id: "joint_radians",
+      header: t("Joint angle"),
+      value: (row) => row.joint_radians,
+      align: "right",
+      cell: (row) =>
+        `${numberText(row.joint_radians, 3)} rad / ${numberText(row.joint_degrees, 1)}°`,
+    },
+    // Keep the expanded mode and torque fields searchable in DataTable.
     {
       id: "details",
       header: "",
       sortable: false,
-      value: (row) => [row.name, row.operating_mode, row.position, row.joint_radians, row.torque ? t("On") : t("Off")].join(" "),
+      value: (row) => [row.operating_mode, row.torque ? t("On") : t("Off")].join(" "),
       cell: () => "",
     },
   ];
@@ -84,15 +102,9 @@ function motorColumns(t) {
 function MotorDetails({ motor }) {
   const { t } = useTranslation();
   const readings = [
-    [t("Model"), motor.name],
     [t("Firmware"), motor.firmware],
     [t("Mode"), motor.operating_mode],
     [t("Torque"), motor.torque ? t("On") : t("Off")],
-    [t("Position (pulse)"), motor.position],
-    [
-      t("Joint angle"),
-      `${numberText(motor.joint_radians, 3)} rad / ${numberText(motor.joint_degrees, 1)}°`,
-    ],
     [
       t("Motor angle"),
       `${numberText(motor.radians, 3)} rad / ${numberText(motor.degrees, 1)}°`,

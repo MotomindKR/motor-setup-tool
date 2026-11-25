@@ -12,7 +12,6 @@
   "Camera focus check": "카메라 초점 확인",
   "Select a USB camera and check focus in the live image.": "USB 카메라를 선택하고 실시간 영상에서 초점을 확인하세요.",
   "Camera device": "카메라 장치",
-  "Target resolution": "목표 해상도",
   "Received video · {{resolution}}": "실제 수신 영상 · {{resolution}}",
   "Default camera": "기본 카메라",
   "Camera {{number}}": "카메라 {{number}}",
