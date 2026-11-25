@@ -100,3 +100,37 @@ test("camera switching requests at most Full HD and shows the received frame siz
   await page.getByRole("button", { name: "Setup", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.testCamera.stopped)).toEqual(["camera-a", "camera-b"]);
 });
+
+test("refreshing cameras clears discovery errors and preserves preview errors", async ({ page }) => {
+  await page.evaluate(() => {
+    const camera = window.testCamera = { deviceId: "" };
+    Object.defineProperty(window.navigator, "mediaDevices", { value: Object.assign(new EventTarget(), {
+      async enumerateDevices() {
+        if (!camera.deviceId) throw new Error("Camera discovery failed");
+        return [{ kind: "videoinput", label: camera.deviceId, deviceId: camera.deviceId }];
+      },
+      async getUserMedia() { throw new DOMException("", "NotReadableError"); },
+    }) });
+  });
+  await page.getByRole("button", { name: "Camera", exact: true }).click();
+  const view = page.getByRole("main", { name: "Camera verification" });
+  const alert = view.getByRole("alert");
+  const refresh = view.getByRole("button", { name: "Refresh cameras" });
+  const picker = view.getByRole("combobox", { name: "Camera device" });
+  await expect(alert).toHaveText("Camera list could not be refreshed.");
+
+  await page.evaluate(() => { window.testCamera.deviceId = "Camera A"; });
+  await refresh.click();
+  await picker.click();
+  await page.getByRole("option", { name: "Camera A" }).click();
+  await expect(alert).toHaveCount(0);
+
+  await view.getByRole("button", { name: "Start preview" }).click();
+  const previewError = "Camera could not start. Close other apps using it and try again.";
+  await expect(alert).toHaveText(previewError);
+  await page.evaluate(() => { window.testCamera.deviceId = "Camera B"; });
+  await refresh.click();
+  await picker.click();
+  await page.getByRole("option", { name: "Camera B" }).click();
+  await expect(alert).toHaveText(previewError);
+});
