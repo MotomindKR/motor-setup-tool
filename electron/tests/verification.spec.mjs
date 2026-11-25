@@ -50,7 +50,7 @@ test("MILLY preview renders and stops requesting positions after a failed sample
   await expect(preview).toHaveCount(0);
 });
 
-test("camera selection shows one stream and releases it on switch or navigation", async ({ page }) => {
+test("camera device and resolution changes replace the stream and show the received frame size", async ({ page }) => {
   await page.evaluate(() => {
     const calls = window.testCamera = { opened: [], stopped: [] };
     const cameras = [
@@ -63,17 +63,17 @@ test("camera selection shows one stream and releases it on switch or navigation"
       async getUserMedia({ audio, video }) {
         if (audio !== false) throw new Error("Unexpected audio capture");
         const id = video.deviceId?.exact ?? "camera-a";
-        calls.opened.push(id);
+        calls.opened.push({ id, width: video.width.ideal, height: video.height.ideal });
         const canvas = document.createElement("canvas");
-        canvas.width = 640;
-        canvas.height = 480;
+        canvas.width = video.width.ideal === 3840 ? 800 : 640;
+        canvas.height = video.width.ideal === 3840 ? 600 : 480;
         const ctx = canvas.getContext("2d");
         const stream = canvas.captureStream();
         const [track] = stream.getVideoTracks();
         track.getSettings = () => ({ deviceId: id });
         const stop = track.stop.bind(track);
         track.stop = () => { calls.stopped.push(id); stop(); };
-        requestAnimationFrame(() => ctx.fillRect(0, 0, 640, 480));
+        requestAnimationFrame(() => ctx.fillRect(0, 0, canvas.width, canvas.height));
         return stream;
       },
     }) });
@@ -83,12 +83,20 @@ test("camera selection shows one stream and releases it on switch or navigation"
   expect(await page.evaluate(() => window.testCamera.opened)).toEqual([]);
   await view.getByRole("button", { name: "Start preview" }).click();
   await expect(view.getByText("640 × 480")).toBeVisible();
+  await view.getByRole("combobox", { name: "Target resolution" }).click();
+  await page.getByRole("option", { name: "4K", exact: true }).click();
+  await expect(view.getByText("Received video · 800 × 600")).toBeVisible();
   await view.getByRole("combobox", { name: "Camera device" }).click();
   await expect(page.getByRole("option", { name: "Microphone" })).toHaveCount(0);
   await page.getByRole("option", { name: "Camera B" }).click();
   await expect.poll(() => page.evaluate(() => window.testCamera)).toEqual({
-    opened: ["camera-a", "camera-b"], stopped: ["camera-a"],
+    opened: [
+      { id: "camera-a", width: 1920, height: 1080 },
+      { id: "camera-a", width: 3840, height: 2160 },
+      { id: "camera-b", width: 3840, height: 2160 },
+    ],
+    stopped: ["camera-a", "camera-a"],
   });
   await page.getByRole("button", { name: "Setup", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => window.testCamera.stopped)).toEqual(["camera-a", "camera-b"]);
+  await expect.poll(() => page.evaluate(() => window.testCamera.stopped)).toEqual(["camera-a", "camera-a", "camera-b"]);
 });

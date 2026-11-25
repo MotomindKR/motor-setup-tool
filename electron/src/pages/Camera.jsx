@@ -5,6 +5,12 @@ import { Badge } from "@motomindkr/ui/components/badge";
 import { Button, Choice, Field, Panel } from "../ui.jsx";
 
 const defaultCamera = "system-default";
+const resolutionModes = {
+  "1080p": { width: 1920, height: 1080 },
+  "1440p": { width: 2560, height: 1440 },
+  "4K": { width: 3840, height: 2160 },
+};
+const resolutionOptions = Object.keys(resolutionModes).map((mode) => ({ value: mode, label: mode }));
 
 function cameraError(error) {
   switch (error.name) {
@@ -33,6 +39,7 @@ export function CameraPage() {
   const generation = useRef(0);
   const [devices, setDevices] = useState([]);
   const [selected, setSelected] = useState(defaultCamera);
+  const [quality, setQuality] = useState("1080p");
   const [phase, setPhase] = useState("off");
   const [resolution, setResolution] = useState("");
   const [error, setError] = useState("");
@@ -77,7 +84,7 @@ export function CameraPage() {
     };
   }, [media]);
 
-  async function start(id) {
+  async function start(id, mode) {
     const request = ++generation.current;
     release();
     setPhase("starting");
@@ -87,11 +94,13 @@ export function CameraPage() {
       const allowed = await window.motorApp?.authorizeCamera?.();
       if (request !== generation.current) return;
       if (allowed === false) throw new DOMException("", "NotAllowedError");
+      const { width, height } = resolutionModes[mode];
       const next = await media.getUserMedia({
         audio: false,
         video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: width },
+          height: { ideal: height },
+          resizeMode: { ideal: "none" },
           ...(id === defaultCamera ? {} : { deviceId: { exact: id } }),
         },
       });
@@ -144,7 +153,19 @@ export function CameraPage() {
             disabled={!media || phase === "starting"}
             onChange={(id) => {
               setSelected(id);
-              if (phase === "live") void start(id);
+              if (phase === "live") void start(id, quality);
+            }}
+          />
+        </Field>
+        <Field label={t("Target resolution")}>
+          <Choice
+            value={quality}
+            options={resolutionOptions}
+            disabled={!media || phase === "starting"}
+            onChange={(mode) => {
+              if (!Object.hasOwn(resolutionModes, mode) || mode === quality) return;
+              setQuality(mode);
+              if (phase === "live") void start(selected, mode);
             }}
           />
         </Field>
@@ -154,7 +175,7 @@ export function CameraPage() {
         {phase !== "off" ? (
           <Button variant="outline" onClick={stop}>{t("Stop preview")}</Button>
         ) : (
-          <Button disabled={!media} onClick={() => void start(selected)}>{t("Start preview")}</Button>
+          <Button disabled={!media} onClick={() => void start(selected, quality)}>{t("Start preview")}</Button>
         )}
       </div>
       {(!media || error) && (
@@ -176,7 +197,9 @@ export function CameraPage() {
         />
         {phase !== "live" && <p>{t("Start a preview to see the camera image.")}</p>}
       </div>
-      {phase === "live" && resolution && <p className="verification-caption">{resolution}</p>}
+      {phase === "live" && resolution && <p className="verification-caption">
+        {t("Received video · {{resolution}}", { resolution })}
+      </p>}
     </Panel>
   );
 }

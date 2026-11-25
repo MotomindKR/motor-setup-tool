@@ -213,8 +213,10 @@ Open **Camera**, select a video device, and click **Start preview**. Allow
 camera access if the operating system prompts. Starting the default camera
 can reveal device names if the list has not been populated yet.
 Select another device to switch the live feed. **Refresh cameras** rescans
-the device list after plugging in a camera. The resolution below the video
-shows the size of the frames delivered by the camera.
+the device list after plugging in a camera. **Target resolution** requests
+1080p, 1440p, or 4K. The camera can deliver a different resolution depending
+on the modes it supports. The value below the video shows the received
+frame size.
 
 ## Troubleshooting
 
