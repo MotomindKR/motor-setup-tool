@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('motorApp', {
   preview: config => ipcRenderer.invoke('backend:preview', config),
   dxl: (operation, params) => ipcRenderer.invoke('dxl:run', operation, params),
   dxlBackups: () => ipcRenderer.invoke('dxl:backups'),
+  authorizeCamera: () => ipcRenderer.invoke('camera:authorize'),
   pickCalibrationOutput: () => ipcRenderer.invoke('calibration:pickOutput'),
   getReferenceAngle: uuid => ipcRenderer.invoke('reference:get', uuid),
   setReferenceAngle: (uuid, angle) => ipcRenderer.invoke('reference:set', uuid, angle),

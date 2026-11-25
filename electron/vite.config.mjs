@@ -23,6 +23,7 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes("commonjsHelpers")) return "react";
           if (!id.includes("/node_modules/")) return;
+          if (id.includes("/node_modules/three/")) return "three";
           if (id.includes("/@motomindkr/ui/dist/components/chart."))
             return "charts";
           if (

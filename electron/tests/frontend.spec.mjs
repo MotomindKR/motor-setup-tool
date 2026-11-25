@@ -594,7 +594,7 @@ test("appearance persists and saved recordings work without hardware", async ({
 for (const width of [320, 720, 1050, 1440]) {
   test(`all workspaces fit a ${width}px viewport`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
-    for (const name of ["Calibrate", "Test", "Setup", "Files"]) {
+    for (const name of ["Calibrate", "Test", "Setup", "Camera", "Files"]) {
       await navigate(page, name);
       await expect(page.getByRole("main")).toBeVisible();
       await expect

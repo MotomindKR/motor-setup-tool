@@ -56,3 +56,15 @@ applied before attempting another write.
 
 The configuration service and Protocol 2.0 transport come from
 [Motomind DXL Studio](https://github.com/MotomindKR/motomind_dxl_studio/tree/d306050).
+
+## MILLY teaching preview
+
+Connect the right-hand teaching device over U2D2 in **Dynamixel** and check
+that IDs 40–46 are detected. Open **MILLY preview** and move the teaching
+device to check the pose, joint direction, and zero reference. The preview
+uses the Teaching SDK's position mapping, including its joint limits and
+estimated gripper travel. Joint readings outside the supported range show
+the measured angle and the limit applied to the model. Close and reopen
+the preview after correcting a read error.
+The preview reads encoder positions without connecting to MILLY or changing
+torque or settings. Rotate or zoom the model to inspect the pose.

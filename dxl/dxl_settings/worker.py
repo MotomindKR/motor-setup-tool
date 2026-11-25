@@ -2,11 +2,12 @@
 from dataclasses import asdict
 import json
 from pathlib import Path
+from math import tau
 import sys
 
 from dxl_settings.messages import language
 from dxl_settings.service import NoSupportedMotors, SettingsService
-from dxl_settings.transport import FACTORY_BAUD, TARGET_BAUD, DemoTransport, DeviceError, SDKTransport
+from dxl_settings.transport import FACTORY_BAUD, TARGET_BAUD, DemoTransport, DeviceError, SDKTransport, signed
 
 
 def motor_view(state):
@@ -77,6 +78,11 @@ class Session:
         ids = params["ids"]
         if not isinstance(ids, list) or not ids or any(type(i) is not int or not 0 <= i <= 252 for i in ids):
             raise DeviceError("Choose a motor ID from 0 to 252.")
+        if operation == "readPositions":
+            return {"positions": [
+                signed(service.transport.read(motor_id, 132, 4), 32) * tau / 4096
+                for motor_id in ids
+            ]}
         if operation == "export":
             return {"path": str(service.export(ids, Path(params["path"])))}
         if operation == "setMode5":

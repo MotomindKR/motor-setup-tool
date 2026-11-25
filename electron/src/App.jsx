@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import {
   Activity,
+  Camera,
   CircleAlert,
   CircleStop,
   Folder,
@@ -44,6 +45,7 @@ import { CalibratePage } from "./pages/Calibration.jsx";
 import { TestPage } from "./pages/Test.jsx";
 import { SetupPage } from "./pages/Setup.jsx";
 import { DxlPage } from "./pages/Dxl.jsx";
+import { CameraPage } from "./pages/Camera.jsx";
 import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
 import { progressText } from "./format.mjs";
@@ -69,6 +71,11 @@ const pages = {
     label: "Dynamixel",
     title: "Dynamixel setup",
     icon: Usb,
+  },
+  camera: {
+    label: "Camera",
+    title: "Camera verification",
+    icon: Camera,
   },
   files: {
     label: "Files",
@@ -188,7 +195,7 @@ export function App({ controller }) {
             </Breadcrumb>
           </div>
           <div className="header-actions">
-            {s.tab !== "dxl" && <Status s={s} c={c} />}
+            {s.tab !== "dxl" && (s.tab !== "camera" || s.motor) && <Status s={s} c={c} />}
             {s.motor && s.tab !== "test" && s.tab !== "dxl" && (
               <>
                 <Separator
@@ -239,7 +246,7 @@ export function App({ controller }) {
                   </Button>
                 </Alert>
               )}
-              {s.tab !== "files" && s.tab !== "dxl" && (
+              {s.tab !== "files" && s.tab !== "dxl" && s.tab !== "camera" && (
                 <Connection s={s} a={a} c={c} platform={controller.platform} />
               )}
               {s.work &&
@@ -279,6 +286,7 @@ export function App({ controller }) {
               {s.tab === "test" && <TestPage s={s} a={a} c={c} />}
               {s.tab === "setup" && <SetupPage s={s} a={a} c={c} />}
               <DxlPage platform={controller.platform} active={s.tab === "dxl"} />
+              {s.tab === "camera" && <CameraPage />}
               {s.tab === "files" && <FilesPage s={s} a={a} c={c} />}
             </div>
           </SidebarInset>

@@ -13,7 +13,7 @@
     "start": "npm run build && electron .",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "check": "node --check main.js && node --check preload.js && node --check dxl.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-installers.js && node --check build-icons.js && node --test recordings.test.js backend.test.js dxl.test.js updater.test.js src/controller.test.mjs && npm run build",
+    "check": "node --check main.js && node --check preload.js && node --check dxl.js && node --check updater.js && node --check runtime-dependencies.js && node --check packaged-update-worker.js && node --check test-linux-update.js && node --check test-linux-package.js && node --check capture-window-chrome.js && node --check update-metadata.js && node --check package-installers.js && node --check build-icons.js && node --test recordings.test.js backend.test.js dxl.test.js updater.test.js src/controller.test.mjs src/teaching-pose.test.mjs && npm run build",
     "test:ui": "playwright test",
     "build:icons": "node build-icons.js",
     "package:linux": "node package-linux.js",
@@ -34,6 +34,7 @@
     "react-dom": "^19.2.0",
     "react-i18next": "^18.0.3",
     "recharts": "^3.11.0",
+    "three": "^0.183.2",
     "vite": "^6.4.1"
   },
   "dependencies": {

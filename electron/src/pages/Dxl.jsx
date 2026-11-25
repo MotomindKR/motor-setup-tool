@@ -4,7 +4,7 @@ import { formatLocale } from "../language.mjs";
 import { useTranslation } from "react-i18next";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@motomindkr/ui/components/alert";
-import { Cable, RefreshCw, Search } from "lucide-react";
+import { Box, Cable, RefreshCw, Search } from "lucide-react";
 import {
   Combobox,
   ComboboxInput,
@@ -35,6 +35,8 @@ import {
 } from "@motomindkr/ui/components/dialog";
 import { FreshnessIndicator } from "@motomindkr/ui/components/freshness-indicator";
 import { Button, Choice, Field, Panel } from "../ui.jsx";
+import { MillyPreview } from "../components/MillyPreview.jsx";
+import { mapTeachingPose, teachingDevicesMatch, teachingIds } from "../teaching-pose.mjs";
 
 function motorColumns(t) {
   return [
@@ -136,6 +138,9 @@ export function DxlPage({ platform, active }) {
   const [confirm, setConfirm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewPose, setPreviewPose] = useState(null);
+  const [previewError, setPreviewError] = useState("");
   const inProgress = useRef(false);
   const pollPending = useRef(false);
   const generation = useRef(0);
@@ -148,7 +153,8 @@ export function DxlPage({ platform, active }) {
     : t("Select a motor in the table.");
   const canRead = connected && !busy;
   const hasSelection = canRead && ids.length > 0;
-  const canWrite = active && visible && hasSelection && fresh && !faulted;
+  const canWrite = active && visible && hasSelection && fresh && !faulted && !previewOpen;
+  const teachingReady = connected && teachingDevicesMatch(motors);
   const canConfirm =
     confirm?.operation === "torqueOff"
       ? active && visible && hasSelection
@@ -218,26 +224,39 @@ export function DxlPage({ platform, active }) {
   useLayoutEffect(() => {
     generation.current += 1;
     setFresh(false);
-  }, [active, visible]);
+    if (!active) setPreviewOpen(false);
+    if (!visible) setPreviewPose(null);
+  }, [active, visible, previewOpen]);
 
   useEffect(() => {
     if (!active || !visible || !connected || !motorIds) return;
+    if (previewOpen && (!teachingReady || previewError)) return;
+    let halted = false;
     async function poll() {
-      if (inProgress.current || pollPending.current || document.hidden) return;
+      if (halted || inProgress.current || pollPending.current || document.hidden) return;
       const request = generation.current;
       pollPending.current = true;
       try {
-        const reply = await api.dxl("poll", {
-          ids: motorIds.split(",").map(Number),
+        const reply = await api.dxl(previewOpen ? "readPositions" : "poll", {
+          ids: previewOpen ? teachingIds : motorIds.split(",").map(Number),
         });
         if (request !== generation.current) return;
         updateConnection(reply);
         if (reply.error) throw new Error(reply.error);
+        if (previewOpen) {
+          setPreviewPose(mapTeachingPose(reply.result.positions));
+          return;
+        }
         setPollError("");
         setMotors(reply.result.motors);
         setFresh(true);
       } catch (error) {
         if (request !== generation.current) return;
+        if (previewOpen) {
+          halted = true;
+          setPreviewError(t(error.message));
+          return;
+        }
         setFresh(false);
         setConfirm((pending) =>
           pending?.operation === "torqueOff" ? pending : null,
@@ -248,9 +267,9 @@ export function DxlPage({ platform, active }) {
       }
     }
     void poll();
-    const timer = setInterval(poll, 1200);
+    const timer = setInterval(poll, previewOpen ? 65 : 1200);
     return () => clearInterval(timer);
-  }, [active, api, connected, motorIds, visible]);
+  }, [active, api, connected, motorIds, previewOpen, previewError, t, teachingReady, visible]);
 
   function loadMotors({ motors }, selection = selected) {
     const available = new Set(motors.map(rowId));
@@ -331,6 +350,21 @@ export function DxlPage({ platform, active }) {
     </Badge>
   );
   const newIdValue = /^[0-9]{1,3}$/.test(newId.trim()) ? Number(newId) : NaN;
+  const previewButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={busy}
+      onClick={() => {
+        setPreviewPose(null);
+        setPreviewError("");
+        setPreviewOpen(true);
+      }}
+    >
+      <Box />
+      {t("MILLY preview")}
+    </Button>
+  );
   return (
     <section
       className="stack dxl-workspace"
@@ -384,6 +418,7 @@ export function DxlPage({ platform, active }) {
           </ItemContent>
           <ItemActions>
             {connectionStatus}
+            {previewButton}
             <Button
               variant="outline"
               size="sm"
@@ -495,6 +530,7 @@ export function DxlPage({ platform, active }) {
                   {t("Grant port access")}
                 </Button>
               )}
+              {previewButton}
             </div>
           </div>
         </Panel>
@@ -732,6 +768,15 @@ export function DxlPage({ platform, active }) {
             </div>
           </Panel>
         </>
+      )}
+      {active && previewOpen && (
+        <MillyPreview
+          ready={teachingReady}
+          pose={previewPose}
+          error={previewError}
+          visible={visible}
+          onClose={() => setPreviewOpen(false)}
+        />
       )}
       <Dialog
         open={Boolean(confirm)}

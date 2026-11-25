@@ -25,6 +25,17 @@ async function run(worker, operation, params) {
   return reply.result;
 }
 
+test('position-only reads return raw radians in the requested order', async t => {
+  const worker = await withWorker(t);
+  const { motors } = await run(worker, 'connect', demo);
+  const requested = [motors[1], motors[0]];
+  const { positions } = await run(worker, 'readPositions', { ids: requested.map(motor => motor.motor_id) });
+  for (let index = 0; index < positions.length; index += 1) {
+    assert.ok(Math.abs(positions[index] - requested[index].radians) < 1e-12);
+  }
+  assert.ok((await worker.run('readPositions', { ids: [253] })).error);
+});
+
 test('serial ports can be listed before connecting to a motor', async t => {
   const worker = await withWorker(t);
   const reply = await worker.run('ports');

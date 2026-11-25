@@ -207,6 +207,15 @@ confirmation and permanently removes its calibration artifacts, bypassing the
 OS Trash. Unrelated files in a custom output folder are preserved. Incomplete
 runs also appear in the list and can be downloaded or deleted.
 
+## Check a USB camera's focus
+
+Open **Camera**, select a video device, and click **Start preview**. Allow
+camera access if the operating system prompts. Starting the default camera
+can reveal device names if the list has not been populated yet.
+Select another device to switch the live feed. **Refresh cameras** rescans
+the device list after plugging in a camera. The resolution below the video
+shows the size of the frames delivered by the camera.
+
 ## Troubleshooting
 
 | Symptom | What to check |
