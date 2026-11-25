@@ -35,7 +35,8 @@ export function CameraPage() {
   const [selected, setSelected] = useState(defaultCamera);
   const [phase, setPhase] = useState("off");
   const [resolution, setResolution] = useState("");
-  const [error, setError] = useState("");
+  const [discoveryError, setDiscoveryError] = useState("");
+  const [previewError, setPreviewError] = useState("");
 
   function release() {
     const previous = stream.current;
@@ -58,8 +59,9 @@ export function CameraPage() {
       if (request !== generation.current) return;
       setDevices(available);
       setSelected((id) => available.some((device) => device.deviceId === id) ? id : defaultCamera);
+      setDiscoveryError("");
     } catch {
-      if (request === generation.current) setError("Camera list could not be refreshed.");
+      if (request === generation.current) setDiscoveryError("Camera list could not be refreshed.");
     }
   }
 
@@ -81,7 +83,7 @@ export function CameraPage() {
     const request = ++generation.current;
     release();
     setPhase("starting");
-    setError("");
+    setPreviewError("");
     setResolution("");
     try {
       const allowed = await window.motorApp?.authorizeCamera?.();
@@ -105,20 +107,21 @@ export function CameraPage() {
       track.addEventListener("ended", () => {
         if (stream.current !== next) return;
         stop();
-        setError("Camera disconnected. Refresh the list to reconnect.");
+        setPreviewError("Camera disconnected. Refresh the list to reconnect.");
       }, { once: true });
       video.current.srcObject = next;
       setPhase("live");
       const available = await videoDevices(media).catch(() => undefined);
       if (request !== generation.current || !available) return;
       setDevices(available);
+      setDiscoveryError("");
       const activeId = track.getSettings().deviceId;
       if (available.some((device) => device.deviceId === activeId)) setSelected(activeId);
     } catch (problem) {
       if (request !== generation.current) return;
       release();
       setPhase("off");
-      setError(cameraError(problem));
+      setPreviewError(cameraError(problem));
     }
   }
 
@@ -129,6 +132,7 @@ export function CameraPage() {
       label: device.label || t("Camera {{number}}", { number: index + 1 }),
     })),
   ];
+  const errors = media ? [previewError, discoveryError].filter(Boolean) : ["Camera access is unavailable."];
   return (
     <Panel
       title={t("Camera focus check")}
@@ -158,11 +162,11 @@ export function CameraPage() {
           <Button disabled={!media} onClick={() => void start(selected)}>{t("Start preview")}</Button>
         )}
       </div>
-      {(!media || error) && (
-        <Alert variant="error" role="alert">
-          <AlertDescription>{t(error || "Camera access is unavailable.")}</AlertDescription>
+      {errors.map((error) => (
+        <Alert key={error} variant="error" role="alert">
+          <AlertDescription>{t(error)}</AlertDescription>
         </Alert>
-      )}
+      ))}
       <div className="camera-image">
         <video
           ref={video}

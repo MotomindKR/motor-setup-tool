@@ -114,23 +114,31 @@ test("refreshing cameras clears discovery errors and preserves preview errors", 
   });
   await page.getByRole("button", { name: "Camera", exact: true }).click();
   const view = page.getByRole("main", { name: "Camera verification" });
-  const alert = view.getByRole("alert");
+  const alerts = view.getByRole("alert");
+  const discoveryError = alerts.filter({ hasText: "Camera list could not be refreshed." });
+  const previewError = alerts.filter({ hasText: "Camera could not start. Close other apps using it and try again." });
   const refresh = view.getByRole("button", { name: "Refresh cameras" });
   const picker = view.getByRole("combobox", { name: "Camera device" });
-  await expect(alert).toHaveText("Camera list could not be refreshed.");
+  await expect(discoveryError).toBeVisible();
 
   await page.evaluate(() => { window.testCamera.deviceId = "Camera A"; });
   await refresh.click();
   await picker.click();
   await page.getByRole("option", { name: "Camera A" }).click();
-  await expect(alert).toHaveCount(0);
+  await expect(alerts).toHaveCount(0);
 
   await view.getByRole("button", { name: "Start preview" }).click();
-  const previewError = "Camera could not start. Close other apps using it and try again.";
-  await expect(alert).toHaveText(previewError);
+  await expect(previewError).toBeVisible();
+
+  await page.evaluate(() => { window.testCamera.deviceId = ""; });
+  await refresh.click();
+  await expect(discoveryError).toBeVisible();
+  await expect(previewError).toBeVisible();
+
   await page.evaluate(() => { window.testCamera.deviceId = "Camera B"; });
   await refresh.click();
   await picker.click();
   await page.getByRole("option", { name: "Camera B" }).click();
-  await expect(alert).toHaveText(previewError);
+  await expect(discoveryError).toHaveCount(0);
+  await expect(previewError).toBeVisible();
 });
