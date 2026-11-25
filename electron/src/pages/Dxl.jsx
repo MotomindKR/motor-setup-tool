@@ -39,47 +39,44 @@ import { MillyPreview } from "../components/MillyPreview.jsx";
 import { mapTeachingPose, teachingDevicesMatch, teachingIds } from "../teaching-pose.mjs";
 
 function motorColumns(t) {
+  const direction = (motor) => motor.reverse ? t("Reverse") : t("Forward");
   return [
-    { id: "motor_id", header: t("ID"), value: (row) => row.motor_id },
     {
-      id: "name",
-      header: t("Model"),
-      value: (row) => row.name,
-      cell: (row) =>
-        row.hardware_error ? (
-          <>
-            {row.name}{" "}
+      id: "motor_id",
+      header: t("ID"),
+      value: (row) => row.motor_id,
+      cell: (row) => (
+        <span className="dxl-motor-id">
+          {row.motor_id}
+          {Boolean(row.hardware_error) && (
             <Badge variant="error">
               {t("Hardware error {{code}}", { code: row.hardware_error })}
             </Badge>
-          </>
-        ) : (
-          row.name
-        ),
+          )}
+        </span>
+      ),
     },
     {
-      id: "operating_mode",
-      header: t("Mode"),
-      value: (row) => row.operating_mode,
-    },
-    {
-      id: "position",
-      header: t("Position (pulse)"),
-      value: (row) => row.position,
+      id: "baud_rate",
+      header: t("Baud rate (bps)"),
+      value: (row) => row.baud_rate ?? "",
       align: "right",
+      cell: (row) => <strong>{row.baud_rate?.toLocaleString(formatLocale) ?? "—"}</strong>,
     },
     {
-      id: "joint_radians",
-      header: t("Joint angle"),
-      value: (row) => row.joint_radians,
-      align: "right",
-      cell: (row) =>
-        `${numberText(row.joint_radians, 3)} rad / ${numberText(row.joint_degrees, 1)}°`,
+      id: "direction",
+      header: t("Direction"),
+      value: direction,
+      cell: (row) => <strong>{direction(row)}</strong>,
     },
+    // DataTable searches its columns. Keep the previous readings searchable
+    // while displaying them in the expanded row.
     {
-      id: "torque",
-      header: t("Torque"),
-      value: (row) => (row.torque ? t("On") : t("Off")),
+      id: "details",
+      header: "",
+      sortable: false,
+      value: (row) => [row.name, row.operating_mode, row.position, row.joint_radians, row.torque ? t("On") : t("Off")].join(" "),
+      cell: () => "",
     },
   ];
 }
@@ -87,9 +84,15 @@ function motorColumns(t) {
 function MotorDetails({ motor }) {
   const { t } = useTranslation();
   const readings = [
+    [t("Model"), motor.name],
     [t("Firmware"), motor.firmware],
-    [t("Baud rate (bps)"), motor.baud_rate?.toLocaleString(formatLocale)],
-    [t("Direction"), motor.reverse ? t("Reverse") : t("Forward")],
+    [t("Mode"), motor.operating_mode],
+    [t("Torque"), motor.torque ? t("On") : t("Off")],
+    [t("Position (pulse)"), motor.position],
+    [
+      t("Joint angle"),
+      `${numberText(motor.joint_radians, 3)} rad / ${numberText(motor.joint_degrees, 1)}°`,
+    ],
     [
       t("Motor angle"),
       `${numberText(motor.radians, 3)} rad / ${numberText(motor.degrees, 1)}°`,
@@ -539,6 +542,7 @@ export function DxlPage({ platform, active }) {
         <>
           <Panel
             title={t("Motors")}
+            className="dxl-motor-table"
             action={
               <div className="dxl-actions">
                 <FreshnessIndicator quality={fresh ? "live" : "stale"} />

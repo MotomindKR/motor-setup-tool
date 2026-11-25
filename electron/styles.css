@@ -1078,6 +1078,16 @@ html[data-platform="darwin"] .app-header {
   font-size: 12px;
   color: var(--muted-foreground);
 }
+.dxl-motor-table thead th:last-child,
+.dxl-motor-table tbody tr[data-index] > td:last-child {
+  display: none;
+}
+.dxl-motor-id {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 @container workspace (max-width: 760px) {
   .dxl-connection {
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);

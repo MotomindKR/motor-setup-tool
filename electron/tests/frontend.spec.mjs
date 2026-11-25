@@ -82,6 +82,9 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     const newId = Array.from({ length: 253 }, (_, id) => id).find((id) => !takenIds.has(id));
     const motors = page.getByRole("table", { name: "Dynamixel motors" });
     const selectMotor = (id) => page.getByRole("checkbox", { name: `Select ${id}`, exact: true });
+    await expect(motors.getByRole("columnheader", { name: "Baud rate (bps)" })).toBeVisible();
+    await expect(motors.getByRole("columnheader", { name: "Direction" })).toBeVisible();
+    await expect(motors.getByRole("columnheader", { name: "Mode" })).toHaveCount(0);
     const saveZero = page.getByRole("button", { name: "Save zero" });
     await expect(saveZero).toBeDisabled();
     await selectMotor(zeroId).check();
@@ -94,8 +97,13 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await filter.clear();
     await expect(page.getByText(/Zero saved and verified/)).toBeVisible();
     const zeroRow = motors.getByRole("row").filter({ has: selectMotor(zeroId) });
-    await expect(zeroRow.getByRole("cell", { name: "2048", exact: true })).toBeVisible();
-    await expect(zeroRow.getByRole("cell", { name: "0.000 rad / 0.0°", exact: true })).toBeVisible();
+    await expect(zeroRow.getByRole("cell", { name: "Forward", exact: true })).toBeVisible();
+    await expect(motors.getByText("2048", { exact: true })).toHaveCount(0);
+    const details = zeroRow.getByRole("button", { name: `Details ${zeroId}`, exact: true });
+    await details.click();
+    await expect(motors.getByText("2048", { exact: true })).toBeVisible();
+    await expect(motors.getByText("0.000 rad / 0.0°", { exact: true })).toBeVisible();
+    await details.click();
 
     await page.getByLabel("New ID").fill(String(newId));
     await page.getByRole("button", { name: "Save ID" }).click();
@@ -130,16 +138,19 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await expect(page.getByRole("button", { name: "Set Mode 5" })).toBeDisabled();
 
     const settingsRow = motors.getByRole("row").filter({ has: selectMotor(modeId) });
-    await settingsRow.getByRole("button", { name: `Details ${modeId}` }).click();
-    await expect(motors.getByText("Baud rate (bps)", { exact: true })).toBeVisible();
-    await expect(motors.getByText("57,600", { exact: true })).toBeVisible();
+    await expect(settingsRow.getByRole("cell", { name: "57,600", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Set 1 Mbps" }).click();
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(page.getByText(`1 Mbps verified for ID ${modeId}.`, { exact: false })).toBeVisible();
     await expect(page.getByText("/dev/ttyUSB3 · 1,000,000 bps")).toBeVisible();
-    await expect(motors.getByText("1,000,000", { exact: true })).toBeVisible();
+    await expect(settingsRow.getByRole("cell", { name: "1,000,000", exact: true })).toBeVisible();
     await expect(selectMotor(modeId)).toBeChecked();
     await expect(selectMotor(newId)).toHaveCount(0);
+    await page.getByRole("combobox", { name: "Direction", exact: true }).click();
+    await page.getByRole("option", { name: "Reverse", exact: true }).click();
+    await page.getByRole("button", { name: "Save direction", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(settingsRow.getByRole("cell", { name: "Reverse", exact: true })).toBeVisible();
   } finally {
     resumePoll?.();
     await worker.close();
