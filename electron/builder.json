@@ -29,6 +29,9 @@
     "hardenedRuntime": true,
     "entitlements": "../packaging/entitlements.mac.plist",
     "entitlementsInherit": "../packaging/entitlements.mac.plist",
+    "extendInfo": {
+      "NSCameraUsageDescription": "Motor Setup Tool displays the selected USB camera to help check its focus."
+    },
     "binaries": ["Contents/Resources/backend/motor-setup-tool", "Contents/Resources/backend/lib/libmujoco.3.12.0.dylib"],
     "icon": "../assets/icons/motor-setup-tool.icns",
     "category": "public.app-category.utilities"

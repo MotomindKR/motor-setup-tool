@@ -172,12 +172,14 @@ jobs:
           installer=("$PWD"/dist-electron/*-${{ inputs.platform }}.deb)
           previous=$(python3 packaging/previous-installer.py "${installer[@]}")
           sudo -E xvfb-run -a "$(command -v node)" electron/test-linux-update.js "$previous" "${installer[@]}" "$PWD"/next-patch/*.deb
-      - name: Capture Linux window chrome
+      - name: Verify packaged Linux camera and capture window chrome
         if: runner.os == 'Linux'
         shell: bash
         run: |
           dpkg-deb --extract dist-electron/*-linux-*.deb "$RUNNER_TEMP/chrome-app"
-          xvfb-run -a node electron/capture-window-chrome.js "$RUNNER_TEMP/chrome-app/opt/Motor Setup Tool/motor-setup-tool" "$RUNNER_TEMP/window-chrome"
+          executable="$RUNNER_TEMP/chrome-app/opt/Motor Setup Tool/motor-setup-tool"
+          xvfb-run -a node electron/test-packaged-camera.js "$executable"
+          xvfb-run -a node electron/capture-window-chrome.js "$executable" "$RUNNER_TEMP/window-chrome"
       - uses: actions/upload-artifact@v7
         if: always() && runner.os == 'Linux'
         with:
@@ -198,7 +200,7 @@ jobs:
           $next = (Get-ChildItem next-patch -Filter '*.exe' -File).FullName
           & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File electron/test-windows-update.ps1 -OldInstaller $oldInstaller -Installer $installer -NextInstaller $next
           if ($LASTEXITCODE -ne 0) { throw 'Windows update regression tests failed' }
-      - name: Capture Windows window chrome
+      - name: Verify installed Windows camera and capture window chrome
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -206,7 +208,10 @@ jobs:
           $location = Join-Path $env:RUNNER_TEMP 'chrome-app'
           $process = Start-Process -FilePath $installer -ArgumentList @('/S', '/currentuser', "/D=$location") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Chrome capture installation failed' }
-          node electron/capture-window-chrome.js "$location/Motor Setup Tool.exe" "$env:RUNNER_TEMP/window-chrome"
+          $executable = Join-Path $location 'Motor Setup Tool.exe'
+          node electron/test-packaged-camera.js "$executable"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged camera test failed' }
+          node electron/capture-window-chrome.js "$executable" "$env:RUNNER_TEMP/window-chrome"
           if ($LASTEXITCODE -ne 0) { throw 'Chrome capture failed' }
       - uses: actions/upload-artifact@v7
         if: always() && runner.os == 'Windows'
@@ -236,6 +241,9 @@ jobs:
           codesign --verify --deep --strict "$app"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose "$app"
+      - name: Verify installed macOS camera preview
+        if: runner.os == 'macOS'
+        run: node electron/test-packaged-camera.js "$HOME/Applications/Motor Setup Tool.app/Contents/MacOS/Motor Setup Tool"
       - name: Install the signed ZIP through Settings and verify relaunch
         if: runner.os == 'macOS'
         run: |

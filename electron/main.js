@@ -2,8 +2,9 @@
 
 const { i18n, t } = require('./i18n.js');
 
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, session, Menu, nativeTheme, systemPreferences } = require('electron');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const { execFile } = require('node:child_process');
@@ -19,6 +20,7 @@ if (!app.isPackaged && process.env.MOTOMIND_TEST_USER_DATA) {
 }
 
 const root = path.resolve(__dirname, '..');
+const uiFile = path.join(__dirname, 'ui-dist', 'index.html');
 const titleBarHeight = 40;
 const updateCheckInterval = 4 * 60 * 60 * 1000;
 // Leave the header's bottom border below the opaque native window controls.
@@ -203,7 +205,7 @@ function createWindow() {
     },
   });
   if (process.platform === 'linux') window.setMenuBarVisibility(false);
-  window.loadFile(path.join(__dirname, 'ui-dist', 'index.html'));
+  window.loadFile(uiFile);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.on('render-process-gone', () => {
@@ -226,7 +228,16 @@ function createWindow() {
 app.whenReady().then(async () => {
   if (process.platform === 'win32') app.setAppUserModelId('com.motomind.MotorSetup');
   if (process.platform === 'linux') Menu.setApplicationMenu(null);
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  const uiUrl = pathToFileURL(uiFile).href;
+  const trustedMediaFrame = (contents, permission, details) =>
+    window && contents === window.webContents && contents.getURL() === uiUrl &&
+    permission === 'media' && details.isMainFrame &&
+    (!details.requestingUrl || details.requestingUrl === uiUrl);
+  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    Boolean(trustedMediaFrame(contents, permission, details) && details.mediaType === 'video'));
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(Boolean(trustedMediaFrame(contents, permission, details) &&
+      details.mediaTypes?.length === 1 && details.mediaTypes[0] === 'video')));
   try {
     updateError = await updater.readUpdateError(app);
   } catch (error) { updateError = t("Could not verify the previous update: {{error}}", { error: error.message }); }
@@ -237,6 +248,9 @@ app.whenReady().then(async () => {
     backend = new Backend(backendPath(root, app.isPackaged ? process.resourcesPath : null), send);
   } catch (error) { backendError = error; }
   dxl = new DxlWorker({ root, resourcesPath: app.isPackaged ? process.resourcesPath : null, backupDir: dxlBackupDir() });
+
+  handle('camera:authorize', () =>
+    process.platform !== 'darwin' || systemPreferences.askForMediaAccess('camera'));
 
   handle('app:setLanguage', language => {
     if (language === 'ko' || language === 'en') return i18n.changeLanguage(language).then(() => undefined);

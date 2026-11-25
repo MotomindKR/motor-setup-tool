@@ -11,9 +11,10 @@ const { createInterface } = require('node:readline');
 const { promisify } = require('node:util');
 
 const operations = new Set([
-  'ports', 'connect', 'disconnect', 'scan', 'poll',
+  'ports', 'connect', 'disconnect', 'scan', 'poll', 'readPositions',
   'torqueOff', 'saveZero', 'direction', 'setMode5', 'set1Mbps', 'setId', 'export', 'restore',
 ]);
+const statusReads = new Set(['poll', 'readPositions']);
 
 function developmentPython(root) {
   return process.env.MOTOMIND_DXL_PYTHON || path.join(root, '.tools', 'dxl-venv',
@@ -83,7 +84,7 @@ class DxlWorker {
     if (!operations.has(operation)) throw new Error(t("Unknown DXL operation"));
     if (this.closing) throw new Error(t("DXL worker is closing"));
     // A foreground operation can queue behind one status read.
-    if (this.active && (operation === 'poll' || this.pending.length >= 2 || this.pending[0].operation !== 'poll')) {
+    if (this.active && (statusReads.has(operation) || this.pending.length >= 2 || !statusReads.has(this.pending[0].operation))) {
       throw new Error(t("Wait for the current DXL operation"));
     }
     const line = JSON.stringify({ operation, params, language: i18n.language }) + '\n';

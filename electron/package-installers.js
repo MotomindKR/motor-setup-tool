@@ -52,7 +52,7 @@ fs.cpSync(path.join(__dirname, 'ui-dist'), path.join(app, 'electron', 'ui-dist')
 fs.copyFileSync(path.join(__dirname, 'node_modules', '@motomindkr', 'ui', 'THIRD_PARTY_NOTICES.md'), path.join(app, 'electron', 'ui-dist', 'THIRD_PARTY_NOTICES.md'));
 fs.writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: pkg.name, version: pkg.version, main: 'electron/main.js', desktopName: pkg.desktopName, description: pkg.description, author: pkg.author, homepage: pkg.homepage, dependencies: pkg.dependencies }, null, 2));
 installRuntimeDependencies(app);
-for (const relative of ['icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/OFL.txt', 'README.md']) {
+for (const relative of ['icons/256.png', 'icons/motor-setup-tool.ico', 'fonts/OFL.txt', 'milly/LICENSE', 'README.md']) {
   const target = path.join(app, 'assets', relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(path.join(root, 'assets', relative), target);
