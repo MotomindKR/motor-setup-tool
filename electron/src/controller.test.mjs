@@ -226,6 +226,29 @@ test("calibration requires a complete, reviewed configuration", async t => {
   assert.equal(call.params.config.baseline.damping, 0);
   assert.equal(call.params.config.motor_id, motor.id);
 });
+test("a calibration result that loads after switching workspaces preserves the current page", async (t) => {
+  const requested = Promise.withResolvers();
+  const loading = Promise.withResolvers();
+  const directory = "/recordings/finished";
+  const ctx = await setup(t, {
+    loadRun(path) {
+      requested.resolve(path);
+      return loading.promise;
+    },
+  });
+  await ctx.connect();
+  ctx.actions.review(true);
+  const calibration = ctx.actions.calibrate();
+  assert.equal(await Promise.race([requested.promise, calibration]), directory);
+
+  await ctx.actions.setWorkspace("camera");
+  loading.resolve({ directory, report: { accepted: true }, files: [], uuid: "" });
+  await calibration;
+  assert.equal(ctx.getSnapshot().tab, "camera");
+  assert.equal(ctx.getSnapshot().directory, directory);
+  await ctx.actions.setWorkspace("robstride");
+  assert.equal(ctx.getSnapshot().tab, "calibrate");
+});
 test("outdated preview responses cannot authorize a changed configuration", async (t) => {
   const responses = [];
   const ctx = await setup(t, {

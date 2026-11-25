@@ -115,8 +115,8 @@ svg {
   align-items: center;
   padding: 24px 8px;
 }
-[data-slot="sidebar"][data-state="collapsed"] .app-sidebar-group {
-  padding: 0 8px;
+[data-slot="sidebar"][data-state="collapsed"] :is(.app-sidebar-group, .app-sidebar-footer) {
+  padding-inline: 8px;
 }
 .app-header {
   position: sticky;
@@ -154,6 +154,18 @@ html[data-platform="darwin"] .app-header {
   align-items: center;
   gap: 16px;
   min-width: 0;
+}
+.header-navigation [data-slot="breadcrumb"],
+.header-navigation [data-slot="breadcrumb-item"] {
+  min-width: 0;
+}
+.header-navigation [data-slot="breadcrumb-list"] {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.header-navigation [data-slot="breadcrumb-item"] > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .header-actions {
   flex-shrink: 0;
@@ -207,6 +219,30 @@ html[data-platform="darwin"] .app-header {
   margin: 0 auto;
   padding: 32px var(--page-gutter) 24px;
   outline: none;
+}
+.workspace-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-tools [data-slot="button"] {
+  min-width: 64px;
+  min-height: 36px;
+}
+.workspace-tools [aria-current="page"] {
+  position: relative;
+  font-weight: 600;
+}
+.workspace-tools [aria-current="page"]::after {
+  position: absolute;
+  inset-inline: 35%;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+  content: "";
 }
 
 .stack {
@@ -916,10 +952,6 @@ html[data-platform="darwin"] .app-header {
   :root {
     --page-gutter: 24px;
   }
-  .header-navigation [data-slot="breadcrumb-item"]:first-child,
-  .header-navigation [data-slot="breadcrumb-separator"] {
-    display: none;
-  }
 }
 @media (max-width: 767px) {
   :root {
@@ -936,7 +968,7 @@ html[data-platform="darwin"] .app-header {
   :root {
     --page-gutter: 16px;
   }
-  .header-navigation [data-slot="breadcrumb"] {
+  .header-disable-label {
     display: none;
   }
   .header-navigation,
@@ -957,6 +989,18 @@ html[data-platform="darwin"] .app-header {
   }
   .chart-compact [data-slot="chart"] {
     height: 160px;
+  }
+}
+@media (max-width: 420px) {
+  .header-navigation [data-slot="breadcrumb-separator"] {
+    display: none;
+  }
+  .header-navigation [data-slot="breadcrumb-item"]:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 }
 @media (prefers-reduced-motion: reduce) {

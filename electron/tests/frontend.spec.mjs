@@ -13,11 +13,23 @@ test.beforeEach(async ({ page }) => {
     page.getByRole("button", { name: "Scan motors", exact: true }),
   ).toBeEnabled();
 });
-async function navigate(page, name) {
+const robStridePages = [
+  ["Calibrate", "Calibration"],
+  ["Test", "Motor test"],
+  ["Setup", "Motor setup"],
+  ["Files", "Recordings"],
+];
+async function navigateSidebar(page, name) {
   const button = page.getByRole("button", { name, exact: true });
   if (!(await button.isVisible()))
     await page.locator('[data-slot="sidebar-trigger"]').click();
   await button.click();
+}
+function robStrideTools(page) {
+  return page.getByRole("navigation", { name: "RobStride tools" });
+}
+async function navigateRobStride(page, name) {
+  await robStrideTools(page).getByRole("button", { name, exact: true }).click();
 }
 async function connect(page) {
   await page.getByRole("button", { name: "Scan motors", exact: true }).click();
@@ -59,7 +71,7 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
       return worker.run(operation, params);
     });
     await page.evaluate(() => { window.motorApp.dxl = window.testDxl; });
-    await navigate(page, "Dynamixel");
+    await navigateSidebar(page, "Dynamixel");
     await page.getByLabel("Serial port", { exact: true }).fill("/dev/ttyACM1");
     await page.getByRole("option", { name: "/dev/ttyACM1" }).click();
     await page.getByRole("button", { name: "Grant port access" }).click();
@@ -114,10 +126,10 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await page.getByRole("button", { name: "Save ID" }).click();
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(selectMotor(newId)).toBeChecked();
-    await navigate(page, "Setup");
+    await navigateSidebar(page, "RobStride");
     await expect(page.getByRole("button", { name: "Scan motors", exact: true })).toBeVisible();
     waitForPoll = new Promise((resolve) => { resumePoll = resolve; });
-    await navigate(page, "Dynamixel");
+    await navigateSidebar(page, "Dynamixel");
     await expect(selectMotor(newId)).toBeChecked();
     await expect(page.getByRole("button", { name: "Save zero" })).toBeDisabled();
     resumePoll();
@@ -162,18 +174,58 @@ test("Dynamixel connects through a serial port and verifies zero, mode, ID, and 
     await rm(backupDir, { recursive: true, force: true });
   }
 });
+test("workspace navigation opens hardware pages and restores the last RobStride tool", async ({ page }) => {
+  const workspaces = page.getByRole("navigation", { name: "Hardware workspaces" });
+  const robStride = workspaces.getByRole("button", { name: "RobStride", exact: true });
+  const dynamixel = workspaces.getByRole("button", { name: "Dynamixel", exact: true });
+  const camera = workspaces.getByRole("button", { name: "Camera", exact: true });
+  const tools = robStrideTools(page);
+  const breadcrumb = page.getByRole("navigation", { name: "Breadcrumb" });
+
+  await expect(workspaces.getByRole("button")).toHaveText(["RobStride", "Dynamixel", "Camera"]);
+  await expect(tools.getByRole("button")).toHaveText(robStridePages.map(([name]) => name));
+  await expect(robStride).toHaveAttribute("aria-current", "true");
+  await expect(tools.getByRole("button", { name: "Calibrate" })).toHaveAttribute("aria-current", "page");
+  await expect(breadcrumb).toContainText(/RobStride.*Calibration/);
+  await navigateRobStride(page, "Setup");
+  await expect(tools.getByRole("button", { name: "Setup" })).toHaveAttribute("aria-current", "page");
+  await expect(tools.locator('[aria-current="page"]')).toHaveCount(1);
+
+  await robStride.focus();
+  await page.keyboard.press("Tab");
+  await expect(dynamixel).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main", { name: "Dynamixel setup" })).toBeVisible();
+  await expect(dynamixel).toHaveAttribute("aria-current", "true");
+  await expect(workspaces.locator('[aria-current="true"]')).toHaveCount(1);
+  await expect(tools).toHaveCount(0);
+  await expect(breadcrumb).toContainText(/Dynamixel.*Motor setup/);
+
+  await camera.press("Space");
+  const cameraView = page.getByRole("main", { name: "Camera verification" });
+  await expect(cameraView).toBeVisible();
+  await expect(camera).toHaveAttribute("aria-current", "true");
+  await expect(tools).toHaveCount(0);
+  await expect(breadcrumb).toContainText(/Camera.*Focus check/);
+  await navigateSidebar(page, "Settings");
+  await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(cameraView).toBeVisible();
+  await expect(camera).toHaveAttribute("aria-current", "true");
+
+  await robStride.click();
+  await expect(page.getByRole("main", { name: "Motor setup" })).toBeVisible();
+  await expect(robStride).toHaveAttribute("aria-current", "true");
+  await expect(tools.getByRole("button", { name: "Setup" })).toHaveAttribute("aria-current", "page");
+  await expect(breadcrumb).toContainText(/RobStride.*Motor setup/);
+});
 test("startup, navigation, and disconnected states never send motion commands", async ({
   page,
 }) => {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  for (const [name, heading] of [
-    ["Test", "Motor test"],
-    ["Setup", "Motor setup"],
-    ["Files", "Recordings"],
-    ["Calibrate", "Calibration"],
-  ]) {
-    await navigate(page, name);
+  for (const [name, heading] of robStridePages) {
+    await navigateRobStride(page, name);
     await expect(
       page.getByRole("main", { name: heading, exact: true }),
     ).toBeVisible();
@@ -202,10 +254,10 @@ test("calibration previews, review, saved results, and chart views work", async 
     .getByRole("checkbox", { name: "Motor secured · limits reviewed" })
     .check();
   await expect(start).toBeEnabled();
-  await navigate(page, "Files");
+  await navigateRobStride(page, "Files");
   await page.getByRole("button", { name: "Open recording", exact: true }).click();
   await expect(page.getByRole("button", { name: "Show folder" })).toBeVisible();
-  await navigate(page, "Calibrate");
+  await navigateRobStride(page, "Calibrate");
   await expect(start).toBeEnabled();
   await page.getByLabel("Speed cutoff").fill("3");
   await expect(
@@ -217,6 +269,12 @@ test("calibration previews, review, saved results, and chart views work", async 
     .check();
   await expect(start).toBeEnabled();
   await start.click();
+  await expect(page.getByRole("main", { name: "Recordings" })).toBeVisible();
+  const files = robStrideTools(page).getByRole("button", { name: "Files" });
+  await expect(files).toHaveAttribute("aria-current", "page");
+  await navigateSidebar(page, "Camera");
+  await navigateSidebar(page, "RobStride");
+  await expect(files).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Validated", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Start calibration", exact: true }),
@@ -242,7 +300,7 @@ test("register reads, search, confirmation, and writes use the selected motor", 
   page,
 }) => {
   await connect(page);
-  await navigate(page, "Setup");
+  await navigateRobStride(page, "Setup");
   await page.getByRole("button", { name: "Read", exact: true }).click();
   const value = page.getByLabel("New value", { exact: true });
   await expect(value).toHaveValue("1");
@@ -267,7 +325,7 @@ test("register reads, search, confirmation, and writes use the selected motor", 
 });
 test("read-only registers show only the read action", async ({ page }) => {
   await connect(page);
-  await navigate(page, "Setup");
+  await navigateRobStride(page, "Setup");
   await page.getByRole("button", { name: /Bus voltage/ }).click();
   await expect(
     page.getByRole("button", { name: "Read", exact: true }),
@@ -291,17 +349,18 @@ test("read-only registers show only the read action", async ({ page }) => {
     page.getByRole("button", { name: "Save to motor", exact: true }),
   ).toBeDisabled();
 });
-test("switching workspaces starts at the top of the page", async ({ page }) => {
+test("switching RobStride tools starts at the top of the page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 700 });
   await connect(page);
-  await navigate(page, "Setup");
+  await navigateRobStride(page, "Setup");
+  await robStrideTools(page).getByRole("button", { name: "Test", exact: true }).focus();
   await page.evaluate(() =>
     window.scrollTo(0, document.documentElement.scrollHeight),
   );
   await expect
     .poll(() => page.evaluate(() => window.scrollY))
     .toBeGreaterThan(0);
-  await navigate(page, "Test");
+  await page.keyboard.press("Enter");
   await expect(
     page.getByRole("main", { name: "Motor test", exact: true }),
   ).toBeVisible();
@@ -337,11 +396,11 @@ test("desktop USB connection is automatic and refresh preserves the selected mot
     await expect(
       desktop.getByRole("button", { name: "Scan motors", exact: true }),
     ).toBeEnabled();
-    await navigate(desktop, "Setup");
+    await navigateRobStride(desktop, "Setup");
     await expect(
       desktop.getByRole("heading", { name: "Motor identity", exact: true }),
     ).toHaveCount(0);
-    await navigate(desktop, "Calibrate");
+    await navigateRobStride(desktop, "Calibrate");
     await connect(desktop);
     await desktop.getByLabel("Torque limit").fill("0.7");
     await desktop
@@ -377,7 +436,7 @@ test("ID and firmware changes stay connected and keep settings without another s
 }) => {
   await connect(page);
   await page.getByLabel("Torque limit").fill("0.7");
-  await navigate(page, "Setup");
+  await navigateRobStride(page, "Setup");
   await page.getByLabel("New motor ID", { exact: true }).fill("61");
   await page.getByRole("button", { name: "Change ID", exact: true }).click();
   await expect(page.getByRole("dialog")).not.toContainText("Scan again");
@@ -409,7 +468,7 @@ test("ID and firmware changes stay connected and keep settings without another s
     .getByRole("option", { name: "RS-00 · ID 61", exact: true })
     .click();
   await expect(page.locator(".firmware-version")).toHaveText("1.2.4");
-  await navigate(page, "Calibrate");
+  await navigateRobStride(page, "Calibrate");
   await expect(page.getByLabel("Torque limit")).toHaveValue("0.7");
   await expect(
     page.getByRole("checkbox", { name: "Motor secured · limits reviewed" }),
@@ -434,7 +493,7 @@ test("live monitoring starts disabled, jog releases, and navigation stops monito
   page,
 }) => {
   await connect(page);
-  await navigate(page, "Test");
+  await navigateRobStride(page, "Test");
   await page
     .getByRole("button", { name: "Start monitoring", exact: true })
     .click();
@@ -486,16 +545,19 @@ test("live monitoring starts disabled, jog releases, and navigation stops monito
     page.getByRole("button", { name: "Disable motor", exact: true }),
   ).toHaveCount(0);
   await expect(jog).toBeDisabled();
-  await navigate(page, "Files");
-  await expect(page.getByRole("main", { name: "Recordings" })).toBeVisible();
+  await navigateSidebar(page, "Camera");
+  await expect(page.getByRole("main", { name: "Camera verification" })).toBeVisible();
   expect(
     await page.evaluate(() => window.testMotor.intents.at(-1)?.enabled),
   ).toBe(false);
+  await navigateSidebar(page, "RobStride");
+  await expect(page.getByRole("main", { name: "Motor test" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start monitoring", exact: true })).toBeEnabled();
 });
 test("recordings show identity, download individual files, and require confirmation to delete", async ({
   page,
 }) => {
-  await navigate(page, "Files");
+  await navigateRobStride(page, "Files");
   const run = page.locator(".recording-item").first();
   await run.getByRole("button", { name: "Run actions", exact: true }).click();
   await expect(
@@ -556,7 +618,7 @@ test("saved measurements can be fitted before a report exists", async ({ page })
       return result;
     };
   });
-  await navigate(page, "Files");
+  await navigateRobStride(page, "Files");
   const run = page.locator(".recording-open");
   await run.click();
   await expect(run).toContainText("No report");
@@ -577,7 +639,7 @@ test("recording charts retain short torque spikes in long traces", async ({ page
     const load = window.motorApp.pickRun;
     window.motorApp.pickRun = async () => ({ ...await load(), report });
   }, recording);
-  await navigate(page, "Files");
+  await navigateRobStride(page, "Files");
   await page.getByRole("button", { name: "Open recording", exact: true }).click();
   await page.getByRole("button", { name: "Torque", exact: true }).click();
   const chart = page.getByRole("img", { name: /Torque in Nm/ });
@@ -590,14 +652,14 @@ test("recording charts retain short torque spikes in long traces", async ({ page
 test("appearance persists and saved recordings work without hardware", async ({
   page,
 }, info) => {
-  await navigate(page, "Settings");
+  await navigateSidebar(page, "Settings");
   await page.getByRole("combobox", { name: "Appearance", exact: true }).click();
   await page.getByRole("option", { name: "Dark", exact: true }).click();
   await expect(page.locator("html")).toHaveClass("dark");
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.reload();
   await expect(page.locator("html")).toHaveClass("dark");
-  await navigate(page, "Files");
+  await navigateRobStride(page, "Files");
   await page
     .getByRole("button", { name: "Open recording", exact: true })
     .click();
@@ -610,9 +672,18 @@ test("appearance persists and saved recordings work without hardware", async ({
 for (const width of [320, 720, 1050, 1440]) {
   test(`all workspaces fit a ${width}px viewport`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 1000 });
-    for (const name of ["Calibrate", "Test", "Setup", "Camera", "Files"]) {
-      await navigate(page, name);
-      await expect(page.getByRole("main")).toBeVisible();
+    for (const [name, title] of [
+      ...robStridePages,
+      ["Dynamixel", "Dynamixel setup"],
+      ["Camera", "Camera verification"],
+    ]) {
+      if (name === "Dynamixel" || name === "Camera") {
+        await navigateSidebar(page, name);
+      } else {
+        await expect(robStrideTools(page).getByRole("button", { name, exact: true })).toBeInViewport();
+        await navigateRobStride(page, name);
+      }
+      await expect(page.getByRole("main", { name: title, exact: true })).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(
@@ -626,7 +697,7 @@ for (const width of [320, 720, 1050, 1440]) {
       });
     }
     if (width === 320) {
-      await navigate(page, "Settings");
+      await navigateSidebar(page, "Settings");
       await expect(page.getByRole("dialog")).toBeVisible();
       expect(
         await page.evaluate(
@@ -641,16 +712,28 @@ test("Motomind sidebar collapses and opens as a mobile sheet", async ({
   page,
 }) => {
   const sidebar = page.locator('[data-slot="sidebar"][data-state]');
+  const trigger = page.locator('[data-slot="sidebar-trigger"]');
   await expect(sidebar).toHaveAttribute("data-state", "expanded");
-  await page.locator('[data-slot="sidebar-trigger"]').click();
+  await trigger.click();
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
-  await navigate(page, "Test");
+  await navigateRobStride(page, "Test");
+  await navigateSidebar(page, "Dynamixel");
+  await expect(page.getByRole("main", { name: "Dynamixel setup" })).toBeVisible();
+  await navigateSidebar(page, "RobStride");
   await expect(page.getByRole("main", { name: "Motor test" })).toBeVisible();
   await page.setViewportSize({ width: 320, height: 800 });
-  await page.locator('[data-slot="sidebar-trigger"]').click();
-  await expect(page.getByRole("dialog", { name: "Sidebar" })).toBeVisible();
-  await page.getByRole("button", { name: "Files", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Sidebar" })).not.toBeVisible();
+  const sheet = page.getByRole("dialog", { name: "Sidebar" });
+  await trigger.click();
+  await expect(sheet).toBeVisible();
+  const workspaces = sheet.getByRole("navigation", { name: "Hardware workspaces" });
+  await expect(workspaces.getByRole("button")).toHaveText(["RobStride", "Dynamixel", "Camera"]);
+  await workspaces.getByRole("button", { name: "Camera", exact: true }).click();
+  await expect(sheet).not.toBeVisible();
+  await expect(page.getByRole("main", { name: "Camera verification" })).toBeVisible();
+  await navigateSidebar(page, "RobStride");
+  await expect(sheet).not.toBeVisible();
+  await expect(page.getByRole("main", { name: "Motor test" })).toBeVisible();
+  await navigateRobStride(page, "Files");
   await expect(page.getByRole("main", { name: "Recordings" })).toBeVisible();
 });
 
@@ -718,7 +801,7 @@ test.describe("calibration settings with a decimal comma", () => {
     expect(config.travel_limit).toBe(2.5);
     expect(config.speed_limit).toBe(fixture.preset.speed_limit);
     expect(config.baseline.armature).toBe(fixture.preset.baseline.armature);
-    await navigate(page, "Calibrate");
+    await navigateRobStride(page, "Calibrate");
     await expect(review).not.toBeChecked();
     await expect(start).toBeDisabled();
   });
@@ -774,7 +857,7 @@ test("connected calibration stays readable at narrow widths and in dark mode", a
       fullPage: true,
     });
   }
-  await navigate(page, "Settings");
+  await navigateSidebar(page, "Settings");
   await page.getByRole("combobox", { name: "Appearance", exact: true }).click();
   await page.getByRole("option", { name: "Dark", exact: true }).click();
   await page.getByRole("button", { name: "Close", exact: true }).click();
@@ -787,22 +870,29 @@ test("connected calibration stays readable at narrow widths and in dark mode", a
 
 test("switching language preserves the motor session and persists across launches", async ({ page }) => {
   await connect(page);
-  await navigate(page, "Settings");
+  await navigateSidebar(page, "Settings");
   await page.getByRole("combobox", { name: "Language", exact: true }).click();
   await page.getByRole("option", { name: "한국어", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
   await expect(page.getByRole("dialog", { name: "앱 설정" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "보정 시작" })).toBeVisible();
-  for (const [tab, heading] of [
-    ["테스트", "모터 제어"], ["설정", "모터 레지스터"],
-    ["다이나믹셀", "다이나믹셀 연결"], ["파일", "저장된 기록"],
-  ]) {
-    await navigate(page, tab);
-    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
-  }
+  const tools = page.getByRole("navigation", { name: "RobStride 도구" });
+  const workspaces = page.getByRole("navigation", { name: "하드웨어 작업 영역" });
+  await tools.getByRole("button", { name: "테스트", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "모터 제어", exact: true })).toBeVisible();
+  await tools.getByRole("button", { name: "설정", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "모터 레지스터", exact: true })).toBeVisible();
+  await workspaces.getByRole("button", { name: "다이나믹셀", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "다이나믹셀 연결", exact: true })).toBeVisible();
+  await workspaces.getByRole("button", { name: "카메라", exact: true }).click();
+  await expect(page.getByRole("main", { name: "카메라 검증", exact: true })).toBeVisible();
+  await workspaces.getByRole("button", { name: "RobStride", exact: true }).click();
+  await expect(tools.getByRole("button", { name: "설정", exact: true })).toHaveAttribute("aria-current", "page");
+  await tools.getByRole("button", { name: "파일", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "저장된 기록", exact: true })).toBeVisible();
   await page.reload();
-  await navigate(page, "앱 설정");
+  await navigateSidebar(page, "앱 설정");
   await expect(page.getByRole("combobox", { name: "언어" })).toContainText("한국어");
   await page.getByRole("combobox", { name: "언어" }).click();
   await page.getByRole("option", { name: "English", exact: true }).click();

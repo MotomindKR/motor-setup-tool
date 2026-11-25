@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import React from "react";
-import { Settings2 } from "lucide-react";
+import { Camera, CircuitBoard, Settings2, Usb } from "lucide-react";
 import { MotomindLogo } from "@motomindkr/ui/components/motomind-logo";
 import { MotomindSymbol } from "@motomindkr/ui/components/motomind-symbol";
 import {
@@ -18,10 +18,12 @@ import {
   SidebarSeparator,
   useSidebar,
 } from "@motomindkr/ui/components/sidebar";
+import { workspaces } from "../workspaces.mjs";
+
+const workspaceIcons = { robstride: CircuitBoard, dynamixel: Usb, camera: Camera };
 
 export function AppSidebar({
-  pages,
-  activeTab,
+  activeWorkspace,
   onNavigate,
   onSettings,
   updateAvailable,
@@ -29,9 +31,9 @@ export function AppSidebar({
   const { t } = useTranslation();
   const { state, isMobile, setOpenMobile } = useSidebar();
   const compact = state === "collapsed" && !isMobile;
-  const navigate = (tab) => {
+  const navigate = (workspace) => {
     if (isMobile) setOpenMobile(false);
-    onNavigate(tab);
+    onNavigate(workspace);
   };
   return (
     <Sidebar collapsible="icon">
@@ -47,24 +49,26 @@ export function AppSidebar({
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup className="app-sidebar-group">
-          <SidebarGroupLabel>{t("Workspace")}</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("Hardware workspaces")}</SidebarGroupLabel>
           <SidebarGroupContent>
-            <nav aria-label={t("Tool sections")}>
+            <nav aria-label={t("Hardware workspaces")}>
               <SidebarMenu className="app-sidebar-menu">
-                {Object.entries(pages).map(([key, page]) => {
-                  const Icon = page.icon;
+                {Object.entries(workspaces).map(([key, workspace]) => {
+                  const Icon = workspaceIcons[key];
+                  const active = activeWorkspace === key;
+                  const label = t(workspace.label);
                   return (
                     <SidebarMenuItem key={key}>
                       <SidebarMenuButton
                         size="lg"
-                        isActive={activeTab === key}
-                        aria-current={activeTab === key ? "page" : undefined}
-                        aria-label={t(page.label)}
-                        tooltip={t(page.label)}
+                        isActive={active}
+                        aria-current={active || undefined}
+                        aria-label={label}
+                        tooltip={label}
                         onClick={() => navigate(key)}
                       >
-                        <Icon />
-                        <span>{t(page.label)}</span>
+                        <Icon aria-hidden="true" />
+                        <span>{label}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );

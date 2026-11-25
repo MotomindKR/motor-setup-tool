@@ -97,7 +97,7 @@ test("camera switching requests at most Full HD and shows the received frame siz
     ],
     stopped: ["camera-a"],
   });
-  await page.getByRole("button", { name: "Setup", exact: true }).click();
+  await page.getByRole("button", { name: "RobStride", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.testCamera.stopped)).toEqual(["camera-a", "camera-b"]);
 });
 

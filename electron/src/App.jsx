@@ -1,18 +1,7 @@
 import { messageText } from "./i18n.mjs";
 import { useTranslation } from "react-i18next";
 import React, { useEffect, useState, useSyncExternalStore } from "react";
-import {
-  Activity,
-  Camera,
-  CircleAlert,
-  CircleStop,
-  Folder,
-  Info,
-  Settings2,
-  SlidersHorizontal,
-  Usb,
-  X,
-} from "lucide-react";
+import { CircleAlert, CircleStop, Info, X } from "lucide-react";
 import { UIProvider } from "@motomindkr/ui/components/ui-provider";
 import {
   SidebarProvider,
@@ -50,39 +39,7 @@ import { FilesPage } from "./pages/Recordings.jsx";
 import { AppSidebar } from "./components/AppSidebar.jsx";
 import { progressText } from "./format.mjs";
 import { syncWindowTheme } from "./window-theme.mjs";
-
-const pages = {
-  calibrate: {
-    label: "Calibrate",
-    title: "Calibration",
-    icon: SlidersHorizontal,
-  },
-  test: {
-    label: "Test",
-    title: "Motor test",
-    icon: Activity,
-  },
-  setup: {
-    label: "Setup",
-    title: "Motor setup",
-    icon: Settings2,
-  },
-  dxl: {
-    label: "Dynamixel",
-    title: "Dynamixel setup",
-    icon: Usb,
-  },
-  camera: {
-    label: "Camera",
-    title: "Camera verification",
-    icon: Camera,
-  },
-  files: {
-    label: "Files",
-    title: "Recordings",
-    icon: Folder,
-  },
-};
+import { workspaces, workspaceByPage } from "./workspaces.mjs";
 
 function useTheme() {
   const [choice, setChoice] = useState(() => {
@@ -115,7 +72,7 @@ function useTheme() {
   return { choice, setChoice };
 }
 
-function Status({ s, c }) {
+function Status({ s, c, showOwner }) {
   const { t } = useTranslation();
   const enabled = c.manual && s.manualStatus?.enabled;
   const issue = s.motor?.issue || (c.fresh && s.manualStatus?.faults);
@@ -145,7 +102,7 @@ function Status({ s, c }) {
       }
     >
       <span className="header-status-dot" aria-hidden="true" />
-      {label}
+      {showOwner ? t("RobStride · {{status}}", { status: label }) : label}
     </span>
   );
 }
@@ -156,7 +113,21 @@ export function App({ controller }) {
   const a = controller.actions,
     appearance = useTheme();
   const c = controls(s, controller.platform);
-  const page = pages[s.tab];
+  const workspaceKey = workspaceByPage.get(s.tab);
+  const workspace = workspaces[workspaceKey];
+  const workspaceName = t(workspace.label);
+  const pages = Object.entries(workspace.pages);
+  const page = workspace.pages[s.tab];
+  const showWork =
+    Boolean(s.work) &&
+    !["manual", "interfaces", "usbAdapters", "plan"].includes(s.busy);
+  const isRobStrideWorkspace = workspaceKey === "robstride";
+  const showMotorStatus =
+    isRobStrideWorkspace || showWork || c.manual ||
+    (workspaceKey === "camera" && Boolean(s.motor));
+  const disableLabel = t(
+    isRobStrideWorkspace ? "Disable motor" : "Disable RobStride motor",
+  );
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [s.tab, s.directory]);
@@ -184,19 +155,25 @@ export function App({ controller }) {
         <header className="app-header">
           <div className="header-navigation">
             <SidebarTrigger />
-            <Breadcrumb>
+            <Breadcrumb aria-label={t("Breadcrumb")}>
               <BreadcrumbList>
-                <BreadcrumbItem>{t("Workspace")}</BreadcrumbItem>
+                <BreadcrumbItem>
+                  <span>{workspaceName}</span>
+                </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{t(page.title)}</BreadcrumbPage>
+                  <BreadcrumbPage>
+                    {t(page.breadcrumb ?? page.title)}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </div>
           <div className="header-actions">
-            {s.tab !== "dxl" && (s.tab !== "camera" || s.motor) && <Status s={s} c={c} />}
-            {s.motor && s.tab !== "test" && s.tab !== "dxl" && (
+            {showMotorStatus && (
+              <Status s={s} c={c} showOwner={!isRobStrideWorkspace} />
+            )}
+            {showMotorStatus && s.motor && s.tab !== "test" && (
               <>
                 <Separator
                   orientation="vertical"
@@ -206,12 +183,13 @@ export function App({ controller }) {
                   className="header-disable"
                   variant="ghost"
                   size="sm"
-                  aria-label={t("Disable motor")}
+                  aria-label={disableLabel}
+                  title={disableLabel}
                   onClick={a.disable}
                   disabled={!c.disable}
                 >
                   <CircleStop />
-                  {t("Disable motor")}
+                  <span className="header-disable-label">{disableLabel}</span>
                 </Button>
               </>
             )}
@@ -219,14 +197,31 @@ export function App({ controller }) {
         </header>
         <div className="app-layout">
           <AppSidebar
-            pages={pages}
-            activeTab={s.tab}
-            onNavigate={a.setTab}
+            activeWorkspace={workspaceKey}
+            onNavigate={a.setWorkspace}
             onSettings={a.openSettings}
             updateAvailable={s.updateResult?.available}
           />
           <SidebarInset className="app-body" aria-label={t(page.title)}>
             <div id="workspace" className="workspace" tabIndex={-1}>
+              {pages.length > 1 && (
+                <nav
+                  className="workspace-tools"
+                  aria-label={t("{{workspace}} tools", { workspace: workspaceName })}
+                >
+                  {pages.map(([key, tool]) => (
+                    <Button
+                      key={key}
+                      variant={s.tab === key ? "secondary" : "ghost"}
+                      size="sm"
+                      aria-current={s.tab === key ? "page" : undefined}
+                      onClick={() => a.setTab(key)}
+                    >
+                      {t(tool.label ?? tool.breadcrumb ?? tool.title)}
+                    </Button>
+                  ))}
+                </nav>
+              )}
               {s.notice && (
                 <Alert
                   className="app-notice"
@@ -246,42 +241,36 @@ export function App({ controller }) {
                   </Button>
                 </Alert>
               )}
-              {s.tab !== "files" && s.tab !== "dxl" && s.tab !== "camera" && (
+              {page.showConnection && (
                 <Connection s={s} a={a} c={c} platform={controller.platform} />
               )}
-              {s.work &&
-                ![
-                  "manual",
-                  "interfaces",
-                  "usbAdapters",
-                  "plan",
-                ].includes(s.busy) && (
-                  <Panel
-                    className="work-panel"
-                    size="md"
-                    title={t(s.work.title)}
-                    action={
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={a.cancel}
-                        disabled={s.busy === "firmwareUpdate"}
-                      >
-                        <CircleStop />
-                        {t("Stop")}
-                      </Button>
-                    }
-                  >
-                    <div className="work-message">
-                      <p role="status">{s.work.message ? progressText(s.work, t) : t("Please wait…")}</p>
-                      {s.work.percent != null && <span>{s.work.percent}%</span>}
-                    </div>
-                    <Progress
-                      value={s.work.percent}
-                      aria-label={t(s.work.title)}
-                    />
-                  </Panel>
-                )}
+              {showWork && (
+                <Panel
+                  className="work-panel"
+                  size="md"
+                  title={t(s.work.title)}
+                  action={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={a.cancel}
+                      disabled={s.busy === "firmwareUpdate"}
+                    >
+                      <CircleStop />
+                      {t("Stop")}
+                    </Button>
+                  }
+                >
+                  <div className="work-message">
+                    <p role="status">{s.work.message ? progressText(s.work, t) : t("Please wait…")}</p>
+                    {s.work.percent != null && <span>{s.work.percent}%</span>}
+                  </div>
+                  <Progress
+                    value={s.work.percent}
+                    aria-label={t(s.work.title)}
+                  />
+                </Panel>
+              )}
               {s.tab === "calibrate" && <CalibratePage s={s} a={a} c={c} />}
               {s.tab === "test" && <TestPage s={s} a={a} c={c} />}
               {s.tab === "setup" && <SetupPage s={s} a={a} c={c} />}
