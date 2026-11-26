@@ -34,7 +34,7 @@
     "react-dom": "^19.2.0",
     "react-i18next": "^18.0.3",
     "recharts": "^3.11.0",
-    "three": "^0.183.2",
+    "three": "^0.187.0",
     "vite": "^6.4.1"
   },
   "dependencies": {
