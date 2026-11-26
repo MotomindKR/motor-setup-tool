@@ -14,7 +14,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 gsusbio = { version = "=0.1.0", default-features = false, features = ["blocking", "tokio"] }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
-nalgebra = "0.34"
+nalgebra = { version = "0.34", default-features = false, features = ["std"] }
 dirs = "6"
 clap = { version = "4.6", features = ["derive"] }
 ctrlc = { version = "3.5", features = ["termination"] }
@@ -22,7 +22,7 @@ tempfile = { version = "3", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mujoco-rs = { version = "=6.1.0", features = ["auto-download-mujoco"] }
-socketcan = "3.5"
+socketcan = { version = "3.5", default-features = false, features = ["netlink"] }
 neli = "0.6.5"
 
 [target.'cfg(target_os = "windows")'.dependencies]

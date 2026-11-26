@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /electron
+    schedule:
+      interval: weekly
+    groups:
+      electron-builder:
+        patterns:
+          - electron-builder
+          - app-builder-lib
+
+  - package-ecosystem: pip
+    directory: /dxl
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
