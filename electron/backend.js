@@ -141,7 +141,7 @@ class Backend {
     this.emit = emit;
     this.active = null;
     const bundledLib = path.join(path.dirname(binary), 'lib');
-    const developmentLib = path.join(path.resolve(__dirname, '..'), '.tools', 'mujoco', 'mujoco-3.12.0', process.platform === 'win32' ? 'bin' : 'lib');
+    const developmentLib = path.join(path.resolve(__dirname, '..'), '.tools', 'mujoco', 'mujoco-3.17.0', process.platform === 'win32' ? 'bin' : 'lib');
     this.environment = { ...process.env };
     const configuredLib = process.env.MUJOCO_DYNAMIC_LINK_DIR;
     const configuredRuntime = configuredLib && process.platform === 'win32' ? path.join(path.dirname(configuredLib), 'bin') : configuredLib;
