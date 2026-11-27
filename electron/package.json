@@ -23,19 +23,19 @@
   "devDependencies": {
     "@motomindkr/ui": "file:vendor/motomindkr-ui-4.1.0.tgz",
     "@playwright/test": "^1.58.2",
-    "app-builder-lib": "26.15.3",
+    "app-builder-lib": "26.18.0",
     "electron": "44.9.0",
-    "electron-builder": "^26.15.3",
-    "fflate": "0.8.2",
-    "js-yaml": "^4.3.2",
-    "lucide-react": "^1.66.0",
+    "electron-builder": "^26.18.0",
+    "fflate": "0.8.3",
+    "js-yaml": "^5.5.0",
+    "lucide-react": "^1.78.0",
     "png2icons": "^2.0.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-i18next": "^18.0.3",
     "recharts": "^3.11.0",
-    "three": "^0.183.2",
-    "vite": "^6.4.1"
+    "three": "^0.187.0",
+    "vite": "^8.3.8"
   },
   "dependencies": {
     "electron-updater": "6.8.11",

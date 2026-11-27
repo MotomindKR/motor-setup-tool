@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-version=3.12.0
+version=3.17.0
 dir="${MUJOCO_DOWNLOAD_DIR:-$PWD/.tools/mujoco}"
 case "$(uname -s)" in
     Linux) asset="mujoco-$version-linux-$(uname -m).tar.gz" ;;
     Darwin) asset="mujoco-$version-macos-universal2.dmg" ;;
-    *) echo "This script supports Linux and macOS." >&2; exit 1 ;;
+    MINGW*|MSYS*) asset="mujoco-$version-windows-$(uname -m).zip" ;;
+    *) echo "This script supports Linux, macOS, and Windows with Git Bash." >&2; exit 1 ;;
 esac
 digest=$(awk -v asset="$asset" '$2 == asset {print $1}' packaging/mujoco.sha256)
 [[ -n "$digest" ]] || { echo "Missing checksum for $asset" >&2; exit 1; }
 mkdir -p "$dir"
 cd "$dir"
 sdk="$PWD/mujoco-$version"
-verify() { echo "$digest  $asset" | shasum -a 256 -c -; }
+verify() {
+    if command -v sha256sum >/dev/null; then
+        echo "$digest  $asset" | sha256sum -c -
+    else
+        echo "$digest  $asset" | shasum -a 256 -c -
+    fi
+}
 if [[ ! -f "$asset" ]] || ! verify >/dev/null; then
     curl -fL --retry 3 -o "$asset" "https://github.com/google-deepmind/mujoco/releases/download/$version/$asset"
     verify
@@ -29,6 +36,9 @@ if [[ "$asset" == *.dmg ]]; then
     ln -sf "$lib" "$sdk/lib/libmujoco.dylib"
     install_name_tool -id "@rpath/$lib" "$sdk/lib/$lib"
     codesign --force --sign - --timestamp=none "$sdk/lib/$lib"
+elif [[ "$asset" == *.zip ]]; then
+    python -m zipfile -e "$asset" "mujoco-$version"
+    sdk=$(cygpath -am "$sdk")
 else
     tar -xzf "$asset"
 fi

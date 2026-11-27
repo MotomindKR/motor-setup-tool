@@ -30,8 +30,9 @@ fs.rmSync(staging, { recursive: true, force: true });
 fs.rmSync(installers, { recursive: true, force: true });
 const sourceBinary = process.env.MOTOMIND_BACKEND || path.join(root, 'target', 'release', backendName);
 const sourceDxl = path.join(root, '.tools', 'dxl', 'dxl-worker');
-const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', 'mujoco-3.12.0', 'lib');
-const mujocoName = process.platform === 'darwin' ? 'libmujoco.3.12.0.dylib' : process.platform === 'win32' ? 'mujoco.dll' : 'libmujoco.so.3.12.0';
+const mujocoVersion = '3.17.0';
+const sdkDir = process.env.MUJOCO_DYNAMIC_LINK_DIR || path.join(root, '.tools', 'mujoco', `mujoco-${mujocoVersion}`, 'lib');
+const mujocoName = platform === 'darwin' ? `libmujoco.${mujocoVersion}.dylib` : platform === 'win32' ? 'mujoco.dll' : `libmujoco.so.${mujocoVersion}`;
 const mujoco = process.platform === 'win32' ? path.join(path.dirname(sdkDir), 'bin', mujocoName) : path.join(sdkDir, mujocoName);
 execFileSync(process.execPath, [path.join(path.dirname(require.resolve('vite/package.json')), 'bin', 'vite.js'), 'build'], { cwd: __dirname, stdio: 'inherit' });
 
@@ -71,7 +72,9 @@ const config = structuredClone(require('./builder.json'));
 config.directories.app = app;
 config.directories.output = installers;
 config.extraResources = [{ from: backend, to: 'backend' }, { from: dxl, to: 'dxl' }];
-if (platform === 'darwin') config.mac.binaries.push(`Contents/Resources/dxl/${dxlName}`);
+if (platform === 'darwin') {
+  config.mac.binaries.push(`Contents/Resources/backend/lib/${mujocoName}`, `Contents/Resources/dxl/${dxlName}`);
+}
 config.electronVersion = require('electron/package.json').version;
 if (platform === 'linux') {
   // FPM expands ${arch} as amd64/x86_64/aarch64 depending on package format.
@@ -132,7 +135,7 @@ if (platform === 'darwin') {
   delete runtimeEnv.LD_LIBRARY_PATH;
 }
 const result = JSON.parse(execFileSync(executable, ['self-check'], { env: runtimeEnv, encoding: 'utf8', timeout: 30_000 }));
-if (result.version !== pkg.version || result.mujoco !== '3.12.0') throw new Error('Packaged backend self-check failed');
+if (result.version !== pkg.version || result.mujoco !== mujocoVersion) throw new Error('Packaged backend self-check failed');
 const requests = [
   { operation: 'ports', params: {} },
   { operation: 'connect', params: { demo: true, port: '', baud: 1_000_000 } },

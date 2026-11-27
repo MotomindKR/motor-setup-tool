@@ -64,7 +64,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config fakeroot rpm cpio xvfb libgtk-3-0 libnss3 libxss1 libasound2 libgbm1 libnotify4 xdg-utils
       - name: Install MuJoCo SDK
-        if: runner.os != 'Windows'
+        shell: bash
         run: bash scripts/install-mujoco.sh
       - name: Build Rust backend
         run: cargo build --locked --release
