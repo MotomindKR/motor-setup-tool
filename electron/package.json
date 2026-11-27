@@ -26,7 +26,7 @@
     "app-builder-lib": "26.18.0",
     "electron": "44.9.0",
     "electron-builder": "^26.18.0",
-    "fflate": "0.8.2",
+    "fflate": "0.8.3",
     "js-yaml": "^4.3.2",
     "lucide-react": "^1.78.0",
     "png2icons": "^2.0.1",
