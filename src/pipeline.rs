@@ -210,7 +210,7 @@ fn finish(
         "coordinate_frame":"gearbox output shaft",
         "delay_semantics":"effective command-to-observation delay; avoid double-counting host delay",
         "status":if !accepted {"rejected_candidate"} else {"validated_on_bare_motor"},
-        "mujoco_version":report.mujoco_version,"mujoco_rs_version":"6.1.0",
+        "mujoco_version":report.mujoco_version,"mujoco_rs_version":"7.1.0",
         "feedback_interval_s":dt,"training_condition_number":fit.condition,"warnings":report.warnings
     });
     bridge::write_json(&stage.join("candidate.json"), &artifact)?;

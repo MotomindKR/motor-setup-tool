@@ -10,7 +10,7 @@ case "${RUNNER_OS:-Linux}" in
         export DYLD_LIBRARY_PATH="$MUJOCO_DYNAMIC_LINK_DIR${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
         ;;
     Windows)
-        export PATH="$PWD/.tools/mujoco/mujoco-3.12.0/bin:$PATH"
+        export PATH="$(cygpath -u "$MUJOCO_DYNAMIC_LINK_DIR")/../bin:$PATH"
         ;;
 esac
 source scripts/check.sh

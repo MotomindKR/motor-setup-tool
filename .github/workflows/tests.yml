@@ -73,7 +73,7 @@ jobs:
           key: native-${{ matrix.os }}-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'packaging/mujoco.sha256') }}
           restore-keys: native-${{ matrix.os }}-${{ env.RUSTUP_TOOLCHAIN }}-
       - name: Install MuJoCo SDK
-        if: runner.os != 'Windows'
+        shell: bash
         run: bash scripts/install-mujoco.sh
       - shell: bash
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt,clippy

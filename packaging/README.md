@@ -1,6 +1,6 @@
 # Desktop release guide
 
-Every installer bundles Electron, the Rust backend, MuJoCo 3.12.0, the
+Every installer bundles Electron, the Rust backend, MuJoCo 3.17.0, the
 Dynamixel serial worker, and UI assets.
 
 | System | Output |
@@ -11,7 +11,7 @@ Dynamixel serial worker, and UI assets.
 
 The release also contains a macOS ZIP for automatic updates, updater manifests
 (`latest*.yml`), block maps, and `SHA256SUMS` for all seven payloads. There is no
-AppImage or macOS x64 target. Windows ARM64 is omitted because MuJoCo 3.12.0
+AppImage or macOS x64 target. Windows ARM64 is omitted because MuJoCo 3.17.0
 does not publish a Windows ARM64 library.
 
 ## Publish
@@ -35,9 +35,9 @@ using existing artifacts, enter the source run ID in the workflow’s
 
 ## Build locally
 
-Build on the target OS. On Linux and macOS, run `bash scripts/install-mujoco.sh`
-from the repository root and set `MUJOCO_DYNAMIC_LINK_DIR` to the library
-directory it prints. On Windows, Cargo downloads the SDK automatically.
+Build on the target OS. From the repository root, run
+`bash scripts/install-mujoco.sh` and set `MUJOCO_DYNAMIC_LINK_DIR` to the
+library directory it prints. Use Git Bash on Windows.
 RPM packaging needs `rpmbuild` (the `rpm` package).
 
 ```sh
